@@ -1,0 +1,3 @@
+#define SSID_AND_PASS
+const char* ssid = "ssid";
+const char* password = "password";

@@ -1,0 +1,80 @@
+@media (max-width: 640px) { body {font-size:15px; }}
+@media (min-width: 640px) { body {font-size:16px; }}
+@media (min-width: 960px) { body {font-size:16px; }}
+@media (min-width:1100px) { body {font-size:16px; }}
+
+@media (max-width: 640px) { code {font-size:12px; }}
+@media (min-width: 640px) { code {font-size:13px; }}
+@media (min-width: 960px) { code {font-size:15px; }}
+@media (min-width:1100px) { code {font-size:17px; }}
+body {
+	/*font: 18px Tahoma, sans-serif;*/
+	font-family: Tahoma, sans-serif;
+	background-color: #cee0de;
+	margin: 3px;
+}
+code {
+	//font-family: Tahoma, sans-serif;
+	font-family: "Consolas", "Lucida Console", monospace;
+}
+p {
+	margin: 10px 0;
+}
+#wrapper {
+	max-width: 960px;
+	margin: auto;
+}
+header {
+	padding: 5px 0;
+}
+.warn {
+	background-color: #F0F000;
+}
+.crit {
+	background-color: red;
+}
+.screenshots {
+	max-height: 0px;
+	display: none;
+}
+.df {
+	max-height: 0px;
+	display: none;
+}
+
+
+header {
+	font-size: 20px;
+	padding: 10px;
+	margin: 10px;
+	margin-bottom: 0px;
+	background-color: #aec0be;
+	text-align: center;
+}
+section {
+	margin: 10px;
+	padding: 10px;
+	background-color: #f3f8f7;
+}
+.info {
+	float: left;
+	width: 170px;
+}
+.info table {
+	border-collapse: collapse;
+	border: 1px solid grey;
+	width: 100%;
+}
+.info td {
+	border-bottom: 1px solid grey;
+	padding: 5px;
+}
+.status {
+	float: none;
+	margin-left: 212px;
+}
+.sect_name td {
+	text-align: center;
+	font-weight: bold;
+	background-color: #aec0be;
+}
