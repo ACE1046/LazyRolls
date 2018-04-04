@@ -12,37 +12,28 @@ body {
 	font-family: Tahoma, sans-serif;
 	background-color: #cee0de;
 	margin: 3px;
+	text-align: center;
+}
+a, a:active, a:visited {
+ color: #426672;
 }
 code {
-	//font-family: Tahoma, sans-serif;
+	/*font-family: Tahoma, sans-serif;*/
 	font-family: "Consolas", "Lucida Console", monospace;
 }
 p {
 	margin: 10px 0;
 }
+#wrapper2 {
+	display:inline-block;
+	text-align: left;
+	min-width: 50%;
+}
 #wrapper {
 	max-width: 960px;
+	min-width: 100%;
 	margin: auto;
 }
-header {
-	padding: 5px 0;
-}
-.warn {
-	background-color: #F0F000;
-}
-.crit {
-	background-color: red;
-}
-.screenshots {
-	max-height: 0px;
-	display: none;
-}
-.df {
-	max-height: 0px;
-	display: none;
-}
-
-
 header {
 	font-size: 20px;
 	padding: 10px;
@@ -58,7 +49,7 @@ section {
 }
 .info {
 	float: left;
-	width: 170px;
+	width: 210px;
 }
 .info table {
 	border-collapse: collapse;
@@ -69,12 +60,19 @@ section {
 	border-bottom: 1px solid grey;
 	padding: 5px;
 }
-.status {
-	float: none;
-	margin-left: 212px;
-}
 .sect_name td {
 	text-align: center;
 	font-weight: bold;
 	background-color: #aec0be;
+}
+.status {
+	float: none;
+	margin-left: 252px;
+}
+.settings {
+	float: none;
+	margin-left: 252px;
+}
+.settings td {
+	padding: 5px;
 }

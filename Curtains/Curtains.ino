@@ -1,25 +1,37 @@
 /*
-  To upload through terminal you can use: curl -u admin:admin -F "image=@firmware.bin" esp8266-webupdate.local/firmware
+(C) 2018 ACE, a_c_e@mail.ru
+
+05.04.2018 v0.01 beta
+
 */
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
 #include <ArduinoOTA.h>
 #include <FS.h>
 #include <WiFiUdp.h>
+#include "settings.h"
 
+// copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
+// Or comment next string and change defaults in this file
 #include "wifi_settings.h"
 
-const char* host = "esp8266-curtains";
+#ifndef SSID_AND_PASS
+// if "wifi_settings.h" not included
+const char* def_ssid = "lazyrolls";
+const char* def_password = "";
+const char* def_ntpserver = "time.nist.gov";
+const char* def_hostname = "lazyroll";
+#endif
+
+#define VERSION "0.1 beta"
+
+//char *temp_host;
 const char* update_path = "/update";
 const char* update_username = "admin";
 const char* update_password = "admin";
-#ifndef SSID_AND_PASS
-const char* ssid = "ssid";
-const char* password = "password";
-#endif
+uint16_t def_step_delay_mks = 1500;
 #define FAV_FILE "/favicon.ico"
 #define CLASS_FILE "/styles.css"
 #define PIN_SWITCH 14
@@ -31,33 +43,62 @@ const char* password = "password";
 #define DIR_DN (1)
 #define UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
 
+const int Languages=2;
+const char *Language[Languages]={"English", "Русский"};
+const char *onoff[][Languages]={{"off", "on"}, {"выкл", "вкл"}};
+
+const uint8_t steps[3][4]={
+  {PIN_A, PIN_B, PIN_C, PIN_D},
+  {PIN_A, PIN_C, PIN_B, PIN_D},
+  {PIN_A, PIN_B, PIN_D, PIN_C}
+};
+int position; // current motor steps position. 0 - fully open, -1 - unknown.
+int roll_to; // position to go to
+
+ESP8266WebServer httpServer(80);
+ESP8266HTTPUpdateServer httpUpdater;
+
 struct {
-  char[16] hostname;
-  char[32] ssid;
-  char[32] password;
+  char hostname[16+1];
+  char ssid[32+1];
+  char password[32+1];
+  char ntpserver[32+1];
+  int lang;
+  uint8_t pinout; // index in "steps" array, according to motor wiring
+  bool reversed; // up-down reverse
+  uint16_t step_delay_mks; // delay (mks) for each step of motor
+  int timezone; // timezone in minutes relative to UTC;
+  int full_length; // steps from open to close
 } ini;
 
-uint32_t open_time=((10*60)+30)*60;
-uint32_t close_time=((3*60)+19)*60;
-bool close_alarm=false;
-bool open_alarm=false;
+//uint32_t open_time=((10*60)+30)*60;
+//uint32_t close_time=((3*60)+00)*60;
+//bool close_alarm=false;
+//bool open_alarm=false;
+
+// language functions
+const char * L(const char *s1, const char *s2)
+{
+  return (ini.lang==0) ? s1 : s2;
+}
+String SL(const char *s1, const char *s2)
+{
+  return (ini.lang==0) ? String(s1) : String(s2);
+}
 
 //===================== NTP ============================================
 
 const unsigned long NTP_WAIT=5000;
-const unsigned long NTP_SYNC=24*60*60*1000;
-unsigned long lastRequest=0;
-unsigned long lastSync=0;
+const unsigned long NTP_SYNC=24*60*60*1000;  // sync clock once a day
+unsigned long lastRequest=0; // timestamp of last request
+unsigned long lastSync=0; // timestamp of last successful synchronization
 IPAddress timeServerIP;
-//const char* NTPServerName = "time.nist.gov";
-const char* NTPServerName = "10.0.2.235";
 const int NTP_PACKET_SIZE = 48;  // NTP time stamp is in the first 48 bytes of the message
 byte NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
 // Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
 const uint32_t seventyYears = 2208988800UL;
 uint32_t UNIXTime;
 WiFiUDP UDP;
-int Timezone=3*60*60; // timezone in seconds;
 
 void setup_NTP()
 {
@@ -74,7 +115,7 @@ void SyncNTPTime()
     memset(NTPBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
     // Initialize values needed to form NTP request
     NTPBuffer[0] = 0b11100011;   // LI, Version, Mode
-    if(!WiFi.hostByName(NTPServerName, timeServerIP))
+    if(!WiFi.hostByName(ini.ntpserver, timeServerIP))
     { // Get the IP address of the NTP server failed
       return;
     }
@@ -95,7 +136,7 @@ void SyncNTPTime()
 uint32_t getTime()
 {
   if (lastSync == 0) return 0;
-  return UNIXTime+Timezone + (millis() - lastSync)/1000;
+  return UNIXTime+ini.timezone*60 + (millis() - lastSync)/1000;
 }
 
 String TimeStr()
@@ -106,45 +147,54 @@ String TimeStr()
   return String(buf);
 }
 
+String UptimeStr()
+{
+  char buf[9];
+  uint32_t t=millis()/1000;
+  sprintf(buf, "%dd %02d:%02d", t/60/60/24, t/60/60%24, t/60%60);
+  return String(buf);
+}
+
 //----------------------- Settings -------------------------------------
 
 void setup_Settings(void)
 {
-
+  memset(&ini, sizeof(ini), 0);
+  strcpy(ini.hostname  , def_hostname);
+  strcpy(ini.ssid      , def_ssid);
+  strcpy(ini.password  , def_password);
+  strcpy(ini.ntpserver , def_ntpserver);
+  ini.lang=0;
+  ini.pinout=0;
+  ini.reversed=false;
+  ini.step_delay_mks=def_step_delay_mks;
+  ini.timezone=3*60; // Default City time zone by default :)
+  ini.full_length=11300;
+  LoadSettings(&ini, sizeof(ini));
+  if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
+  if (ini.step_delay_mks < 10) ini.step_delay_mks=10;
 }
 
-//----------------------------------------------------------------------
-
-const uint8_t steps[3][4]={
-  {PIN_A, PIN_B, PIN_C, PIN_D},
-  {PIN_A, PIN_C, PIN_B, PIN_D},
-  {PIN_A, PIN_B, PIN_D, PIN_C}
-};
-uint8_t pinout=2; // index in "steps" array, according to motor wiring
-bool reversed=false; // up-down reverse
-uint16_t step_delay_mks=1500;
-int position; // current motor steps position. 0 - fully open, -1 - unknown.
-int roll_to; // position to go to
-int full_length; // steps from open to close
+//----------------------- Motor ----------------------------------------
 
 void Rotate(bool dir)
 { // dir: true - up
-  if (dir ^ reversed)
+  if (dir ^ ini.reversed)
   {
     for (int i=0; i<4; i++)
     {
-      digitalWrite(steps[pinout][(i+1)%4], HIGH);
-      delayMicroseconds(step_delay_mks);
-      digitalWrite(steps[pinout][i], LOW);
-      delayMicroseconds(step_delay_mks);
+      digitalWrite(steps[ini.pinout][(i+1)%4], HIGH);
+      delayMicroseconds(ini.step_delay_mks);
+      digitalWrite(steps[ini.pinout][i], LOW);
+      delayMicroseconds(ini.step_delay_mks);
     }
   } else {
     for (int i=4; i>0; i--)
     {
-      digitalWrite(steps[pinout][i-1], HIGH);
-      delayMicroseconds(step_delay_mks);
-      digitalWrite(steps[pinout][i%4], LOW);
-      delayMicroseconds(step_delay_mks);
+      digitalWrite(steps[ini.pinout][i-1], HIGH);
+      delayMicroseconds(ini.step_delay_mks);
+      digitalWrite(steps[ini.pinout][i%4], LOW);
+      delayMicroseconds(ini.step_delay_mks);
     }
   }
   if (dir) position--; else position++;
@@ -158,16 +208,61 @@ void Motor_off()
   digitalWrite(PIN_D, LOW);
 }
 
-ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
+bool IsSwitchPressed()
+{
+  return digitalRead(PIN_SWITCH);
+}
+
+void Open()
+{
+  roll_to=0-UP_SAFE_LIMIT; // up to 0 and beyond (a little)
+}
+
+void Close()
+{
+  if (position<0) position=0;
+  roll_to=ini.full_length;
+}
+
+void Motor_Action()
+{
+  bool dir_up;
+
+  if (position==roll_to) return; // stopped, do nothing
+
+  dir_up=(roll_to < position); // up - true
+
+  for (int i=0; i<50; i++) // Make up to 50 steps before returning control to main loop
+  {
+    Rotate(dir_up);
+    if (IsSwitchPressed() && (dir_up || position>100))
+    { // end stop hit. Ignore if going down, at least first 100 positions.
+      if (roll_to <= 0)
+      { // if opening then finish
+        position=0; // remember zero position
+      }
+      Motor_off();
+      roll_to=position;
+      break;
+    }
+    if (position==roll_to)
+    {  // finished
+      Motor_off();
+      break;
+    }
+    yield();
+  }
+}
+
+// ==================== initialization ===============================
 
 void setup_SPIFFS()
 {
-  if (SPIFFS.begin()) {
-      Serial.println("SPIFFS Active");
-//      spiffsActive = true;
+  if (SPIFFS.begin()) 
+	{
+    Serial.println("SPIFFS Active");
   } else {
-      Serial.println("Unable to activate SPIFFS");
+    Serial.println("Unable to activate SPIFFS");
   }
 }
 
@@ -180,7 +275,6 @@ void setup_OTA()
     Serial.println("\nEnd");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    //Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
@@ -191,7 +285,7 @@ void setup_OTA()
     else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
     else if (error == OTA_END_ERROR) Serial.println("End Failed");
   });
-  ArduinoOTA.setHostname(host);
+  ArduinoOTA.setHostname(ini.hostname);
   ArduinoOTA.begin();
 }
 
@@ -200,38 +294,51 @@ void setup()
   Serial.begin(115200);
   Serial.println();
   Serial.println("Booting...");
-  //sprintf(host, "ESP_%06X", ESP.getChipId());
+
+  setup_SPIFFS();
+  setup_Settings();
+
   Serial.print("Hostname: ");
-  Serial.println(host);
+  Serial.println(ini.hostname);
 
-  WiFi.hostname(host);
+  WiFi.hostname(ini.hostname);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
 
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    WiFi.begin(ssid, password);
+  int attempts=3;
+  while (attempts>0)
+  {
+    WiFi.begin(ini.ssid, ini.password);
+    if (WiFi.waitForConnectResult() == WL_CONNECTED) break;
     Serial.println("WiFi failed, retrying.");
+    attempts--;
+    if (attempts>0) delay(1000);
+    else
+    { // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
+      Serial.print("Starting access point. SSID: ");
+      Serial.println(ini.hostname);
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAP(ini.hostname); // ... but without password
+    }
   }
 
-  if (!MDNS.begin(host)) {
-    Serial.println("Error setting up MDNS responder!");
-  }
-  Serial.println("mDNS responder started");
+  if (!MDNS.begin(ini.hostname)) Serial.println("Error setting up MDNS responder!");
+	else Serial.println("mDNS responder started");
 
   httpUpdater.setup(&httpServer, update_path, update_username, update_password);
-  httpServer.on ("/", HTTP_handleRoot);
-  httpServer.on ("/open", HTTP_handleOpen);
-  httpServer.on ("/close", HTTP_handleClose);
-  httpServer.on ("/test", HTTP_handleTest);
+  httpServer.on("/",         HTTP_handleRoot);
+  httpServer.on("/open",     HTTP_handleOpen);
+  httpServer.on("/close",    HTTP_handleClose);
+  httpServer.on("/stop",     HTTP_handleStop);
+  httpServer.on("/test",     HTTP_handleTest);
+  httpServer.on("/settings", HTTP_handleSettings);
+  httpServer.on("/reboot",   HTTP_handleReboot);
   httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
   httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
   httpServer.begin();
 
-  Serial.printf("HTTPUpdateServer6 ready!\nOpen http://%s.local%s in your browser and login with username '%s' and password '%s'\n", host, update_path, update_username, update_password);
   Serial.println(WiFi.localIP());
 
   MDNS.addService("http", "tcp", 80);
-  //MDNS.addService("esp", "tcp", 8080); // Announce esp tcp service on port 8080
 
   pinMode(PIN_SWITCH, INPUT);
   pinMode(PIN_A, OUTPUT);
@@ -240,170 +347,296 @@ void setup()
   pinMode(PIN_D, OUTPUT);
   Motor_off();
 
-
   setup_OTA();
-  setup_SPIFFS();
   setup_NTP();
-//  ArduinoOTA.begin();
 
-  full_length=11300;
   // start position is twice as fully open. So on first close we will go up till home position
-  position=full_length*2+UP_SAFE_LIMIT;
-  if (digitalRead(PIN_SWITCH)) position=0; // Fully open, if switch is pressed
+  position=ini.full_length*2+UP_SAFE_LIMIT;
+  if (IsSwitchPressed()) position=0; // Fully open, if switch is pressed
   roll_to=position;
 }
 
-String HTTP_header()
+// ============================= HTTP ===================================
+String HTML_header()
 {
   String ret ="<!doctype html>\n" \
-"<html>\n" \
-"<head>\n" \
-"  <meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\">" \
-"  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\">\n" \
-"  <meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
-"  <!--meta name=\"viewport\" content=\"width=600, user-scalable=yes\"-->\n" \
-"  <title>Oko monitoring</title>\n" \
-"  <link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
-"</head>\n" \
-"<body>\n" \
-"  <div id=\"wrapper\">\n" \
-"    <header>Шторы</header>\n" \
-"    <nav></nav>\n" \
-"    <div id=\"heading\"></div>\n";
+	"<html>\n" \
+	"<head>\n" \
+	"  <meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\">" \
+	"  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\">\n" \
+	"  <meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
+	"  <title>"+SL("Lazy rolls", "Ленивые шторы")+"</title>\n" \
+	"  <link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
+	"</head>\n" \
+	"<body>\n" \
+	" <div id=\"wrapper2\">\n" \
+	"  <div id=\"wrapper\">\n" \
+	"    <header>"+SL("Lazy rolls", "Ленивые шторы")+"</header>\n" \
+	"    <nav></nav>\n" \
+	"    <div id=\"heading\"></div>\n";
   return ret;
 }
 
-String HTTP_footer()
+String HTML_footer()
 {
-  String ret = "  </div>\n" \
+  String ret = "  </div></div>\n" \
   "  <footer></footer>\n" \
   "</body>\n" \
   "</html>";
   return ret;
 }
 
-void info() {
+String HTML_openCloseStop()
+{
+	String out;
+  out = "<a href=\"open\">["+SL("Open", "Открыть")+"]</a> \n";
+  out += "<a href=\"close\">["+SL("Close", "Закрыть")+"]</a> \n";
+  if (position != roll_to)
+    out += "<a href=\"stop\">["+SL("Stop", "Стоп")+"]</a> \n";
+	return out;
+}	
 
-
-}
-
-String table_line(const char *name, String val)
+String HTML_tableLine(const char *name, String val, char *id=NULL)
 {
   String ret="<tr><td>";
   ret+=name;
-  ret+="</td><td>";
+  if (id==NULL)
+    ret+="</td><td>";
+  else
+    ret+="</td><td id=\""+String(id)+"\">";
   ret+=val;
   ret+="</td></tr>\n";
   return ret;
 }
 
-bool IsSwitchPressed()
+String HTML_editString(const char *header, const char *id, const char *inistr, int len)
 {
-  return digitalRead(PIN_SWITCH);
+  String out;
+
+  out="<tr><td class=\"idname\">";
+  out+=header;
+  out+="</td><td class=\"val\"><input type=\"text\" name=\"";
+  out+=String(id);
+  out+="\" id=\"";
+  out+=String(id);
+  out+="\" value=\"";
+  out+=String(inistr);
+  out+="\" maxlength=\"";
+  out+=String(len-1);
+  out+="\"\></td></tr>\n";
+
+  return out;
 }
 
-const char *onoff[2]={"off", "on"};
-void HTTP_handleRoot(void)
+String HTML_status()
 {
   uint32_t realSize = ESP.getFlashChipRealSize();
   uint32_t ideSize = ESP.getFlashChipSize();
   FlashMode_t ideMode = ESP.getFlashChipMode();
   String out;
 
-long m1,m2,m3;
-//m1=micros();
-
-  out = HTTP_header();
+  out = HTML_header();
   out.reserve(4096);
-//m2=micros();
+
   out += "    <section class=\"info\"><table>\n";
-  out += "<tr class=\"sect_name\"><td colspan=\"2\">Status</td></tr>\n";
-  out += table_line("IP", WiFi.localIP().toString());
-  out += table_line("Switch", onoff[IsSwitchPressed()]);
-  out += table_line("Position", String(position));
-  out += table_line("Roll to", String(roll_to));
+  out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Status", "Статус")+"</td></tr>\n";
+  out += HTML_tableLine(L("Version", "Версия"), VERSION);
+  out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
   if (lastSync==0)
-    out += table_line("Time", "unknown");
+    out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"));
   else
-    out += table_line("Time", TimeStr());
-  out += "<tr class=\"sect_name\"><td colspan=\"2\">Flash</td></tr>\n";
-  out += table_line("Real id", String(ESP.getFlashChipId(), HEX));
-  out += table_line("Real size", String(realSize));
-  out += table_line("IDE size", String(ideSize));
+    out += HTML_tableLine(L("Time", "Время"), TimeStr());
+  out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr());
+  out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"));
+
+  out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Position", "Положение")+"</td></tr>\n";
+  out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
+  out += HTML_tableLine(L("Roll to", "Цель"), String(roll_to), "dest");
+  out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()]);
+    
+  out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Memory", "Память")+"</td></tr>\n";
+  out += HTML_tableLine(L("Real id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
+  out += HTML_tableLine(L("Real size", "Реально"), String(realSize));
+  out += HTML_tableLine(L("IDE size", "Прошивка"), String(ideSize));
   if(ideSize != realSize) {
-    out += table_line("Config", "wrong!");
+    out += HTML_tableLine(L("Config", "Конфиг"), L("error!", "ошибка!"));
   } else {
-    out += table_line("Config", "OK!");
+    out += HTML_tableLine(L("Config", "Конфиг"), "OK!");
   }
-  out += table_line("Speed", String(ESP.getFlashChipSpeed()/1000000)+"MHz");
-  out += table_line("Mode", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
+  out += HTML_tableLine(L("Speed", "Частота"), String(ESP.getFlashChipSpeed()/1000000)+SL("MHz", "МГц"));
+  out += HTML_tableLine(L("Mode", "Режим"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
+  //out += HTML_tableLine("Host", String(ini.hostname));
   out +="</table></section>\n";
+
+  return out;
+}
+
+void HTTP_handleRoot(void)
+{
+  String out;
+
+  out=HTML_status();
+  
   out += "<section class=\"status\">\n";
-  out += "<a href=\"open\">[Открыть]</a> \n";
-  out += "<a href=\"close\">[Закрыть]</a> \n";
+	out += HTML_openCloseStop();
+  out += "<a href=\"settings\">["+SL("Settings", "Настройки")+"]</a> \n";
   out += "</section>\n";
 
-
-  out += "<section class=\"status\">\n" \
-"<br/>\n" \
-"<script>\n" \
-"function Test(dir)\n" \
-"{\n" \
-"document.getElementById(\"btn_up\").disabled=true;\n" \
-"document.getElementById(\"btn_dn\").disabled=true;\n" \
-"pinout=document.getElementById(\"pinout\").selectedIndex;\n" \
-"reversed=document.getElementById(\"reversed\").selectedIndex;\n" \
-"var xhttp = new XMLHttpRequest();\n" \
-"xhttp.onreadystatechange = function() {\n" \
-"if (this.readyState == 4 && this.status == 200) {\n" \
-"document.getElementById(\"btn_up\").disabled=false;\n" \
-"document.getElementById(\"btn_dn\").disabled=false;\n" \
-"  }};\n" \
-"url=\"test?pinout=\"+pinout+\"&reversed=\"+reversed;\n" \
-"if (dir==1) url=url+\"&up=1\"; else url=url+\"&down=1\";\n" \
-"xhttp.open(\"GET\", url, true);\n" \
-"xhttp.send();\n" \
-"}\n" \
-"function TestUp() { Test(1); }\n" \
-"function TestDown() { Test(0); }\n" \
-"</script>\n" \
-"<form method=\"get\" action=\"/test\">\n" \
-"<select id=\"pinout\" name=\"pinout\">\n" \
-"<option value=\"0\">A-B-C-D</option>\n" \
-"<option value=\"1\">A-C-B-D</option>\n" \
-"<option value=\"2\">A-B-D-C</option>\n" \
-"</select>\n" \
-"<select id=\"reversed\" name=\"reversed\">\n" \
-"<option value=\"0\">Normal</option>\n" \
-"<option value=\"1\">Reversed</option>\n" \
-"</select>\n" \
-"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\"Тест вверх\" onclick=\"TestUp()\">\n" \
-"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\"Тест вниз\" onclick=\"TestDown()\">\n" \
-"</form>\n" \
-"</section>\n";
-
-//m3=micros();
-  out += HTTP_footer();
-//out += String(m1) +" "+ String(m2) +" "+ String(m3)+"<br>";
-//out += String(m2-m1) +" "+ String(m3-m2);
+  out += HTML_footer();
   httpServer.send(200, "text/html", out);
 }
 
-void Open()
+void SaveString(const char *id, char *inistr, int len)
 {
-  roll_to=0-UP_SAFE_LIMIT;
+  if (!httpServer.hasArg(id)) return;
+
+  strncpy(inistr, httpServer.arg(id).c_str(), len-1);
+  inistr[len-1]='\0';
 }
 
-void Close()
+void HTTP_handleSettings(void)
 {
-  if (position<0) position=0;
-  roll_to=full_length;
+  String out;
+	char pass[sizeof(ini.password)];
+
+  if (httpServer.hasArg("save"))
+  {
+		pass[0]='*';
+		pass[1]='\0';
+    SaveString("hostname", ini.hostname, sizeof(ini.hostname));
+    SaveString("ssid",     ini.ssid,     sizeof(ini.ssid));
+    SaveString("password", pass,         sizeof(ini.password));
+    SaveString("ntp",      ini.ntpserver,sizeof(ini.ntpserver));
+		if (strcmp(pass, "*")!=0) memcpy(ini.password, pass, sizeof(ini.password));
+
+    if (httpServer.hasArg("lang")) ini.lang=atoi(httpServer.arg("lang").c_str());
+    if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
+    if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
+    if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
+    if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
+    if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
+    if (ini.step_delay_mks<10 || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
+    if (httpServer.hasArg("timezone")) ini.timezone=atoi(httpServer.arg("timezone").c_str());
+    if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
+    if (httpServer.hasArg("length")) ini.full_length=atoi(httpServer.arg("length").c_str());
+    if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
+
+    SaveSettings(&ini, sizeof(ini));
+
+    HTTP_redirect("/settings?ok=1");
+    return;
+  }
+
+  out.reserve(10240);
+    
+  out=HTML_status();
+  
+  out += "<section class=\"status\">\n";
+  out += HTML_openCloseStop();
+  out += "<a href=\"/\">["+SL("Main", "Главная")+"]</a> \n";
+  out += "</section>\n";
+
+  out += "<section class=\"settings\">\n";
+
+  if (httpServer.hasArg("ok"))
+    out+=SL("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
+      "<p>Сохранено!<br/>Настройки сети будут применены после перезагрузки.<br/><a href=\"reboot\">[Перезагрузить]</a></p>\n");
+
+  out +="<script>\n" \
+	"function Test(dir)\n" \
+	"{\n" \
+	"document.getElementById(\"btn_up\").disabled=true;\n" \
+	"document.getElementById(\"btn_dn\").disabled=true;\n" \
+	"pinout=document.getElementById(\"pinout\").selectedIndex;\n" \
+	"reversed=document.getElementById(\"reversed\").selectedIndex;\n" \
+	"delay=document.getElementById(\"delay\").value;\n" \
+	"var xhttp = new XMLHttpRequest();\n" \
+	"xhttp.onreadystatechange = function() {\n" \
+	"if (this.readyState == 4 && this.status == 200) {\n" \
+	"document.getElementById(\"btn_up\").disabled=false;\n" \
+	"document.getElementById(\"btn_dn\").disabled=false;\n" \
+	"document.getElementById(\"pos\").innerHTML=this.responseText;\n" \
+	"document.getElementById(\"dest\").innerHTML=this.responseText;\n" \
+	"  }};\n" \
+	"url=\"test?pinout=\"+pinout+\"&reversed=\"+reversed+\"&delay=\"+delay;\n" \
+	"if (dir==1) url=url+\"&up=1\"; else url=url+\"&down=1\";\n" \
+	"xhttp.open(\"GET\", url, true);\n" \
+	"xhttp.send();\n" \
+	"}\n" \
+	"function TestUp() { Test(1); }\n" \
+	"function TestDown() { Test(0); }\n" \
+	"</script>\n" \
+	"<form method=\"post\" action=\"/settings\">\n";
+
+  out+="<table>\n";
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
+  out+="<tr><td>"+SL("Language: ", "Язык: ")+"</td><td><select id=\"lang\" name=\"lang\">\n";
+  for (int i=0; i<Languages; i++)
+  {
+    out+="<option value=\""+String(i)+"\"";
+    if (i==ini.lang) out+=" selected=\"selected\"";
+    out+=+">"+String(Language[i])+"</option>\n";
+  }
+  out+="</select></td></tr>\n";
+  out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname));
+  out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid));
+  out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password));
+
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Time", "Время")+"</td></tr>\n";
+  out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver));
+  out+="<tr><td>"+SL("Timezone: ", "Пояс: ")+"</td><td><select id=\"timezone\" name=\"timezone\">\n";
+  for (int i=-11*60; i<=14*60; i+=15) // timezones from -11:00 to +14:00 every 15 min
+  {
+    char b[7];
+    sprintf(b, "%+d:%02d", i/60, abs(i%60));
+    if (i<0) b[0]='-';
+    out+="<option value=\""+String(i)+"\"";
+    if (i==ini.timezone) out+=" selected=\"selected\"";
+    out+=+">UTC"+String(b)+"</option>\n";
+  }
+  out+="</select></td></tr>\n";
+
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Motor", "Мотор")+"</td></tr>\n";
+	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n" \
+	"<option value=\"0\""+(ini.pinout==0 ? " selected=\"selected\"" : "")+">A-B-C-D</option>\n" \
+	"<option value=\"1\""+(ini.pinout==1 ? " selected=\"selected\"" : "")+">A-C-B-D</option>\n" \
+	"<option value=\"2\""+(ini.pinout==2 ? " selected=\"selected\"" : "")+">A-B-D-C</option>\n" \
+	"</select></td></tr>\n" \
+	"<tr><td>"+SL("Direction:", "Направление:")+"</td><td><select id=\"reversed\" name=\"reversed\">\n" \
+	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Normal", "Прямое")+"</option>\n" \
+	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Reversed", "Обратное")+"</option>\n" \
+	"</select></td></tr>\n";
+  out+=HTML_editString(L("Step delay:", "Время шага:"),"delay", String(ini.step_delay_mks).c_str(), 6);
+	out+="<tr><td colspan=\"2\">"+SL("(microsecs, 10-65000, default 1500)", "(в мкс, 10-65000, обычно 1500)")+"</td></tr>\n" \
+	"<tr><td colspan=\"2\">\n" \
+	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\""+SL("Test up", "Тест вверх")+"\" onclick=\"TestUp()\">\n" \
+	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\""+SL("Test down", "Тест вниз")+"\" onclick=\"TestDown()\">\n" \
+	"</td></tr>\n";
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
+  out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
+  out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
+  
+  out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"\"></td></tr>\n";
+  out+="</table>\n";
+  out+="</section>\n";
+  out+="</form>\n";
+
+  out += HTML_footer();
+
+  httpServer.send(200, "text/html", out);
 }
 
 void HTTP_redirect(String link)
 {
   httpServer.sendHeader("Location", link, true);
   httpServer.send(302, "text/plain", "");
+}
+
+void HTTP_handleReboot(void)
+{
+  HTTP_redirect(String("/"));
+	delay(500);
+  ESP.reset();
 }
 
 void HTTP_handleOpen(void)
@@ -418,63 +651,49 @@ void HTTP_handleClose(void)
   HTTP_redirect(String("/"));
 }
 
+void HTTP_handleStop(void)
+{
+  roll_to=position;
+  Motor_off();
+  HTTP_redirect(String("/"));
+}
+
 void HTTP_handleTest(void)
 {
   bool dir=false;
   uint8_t bak_pinout;
   bool bak_reversed;
+  uint16_t bak_step_delay_mks;
+  int steps=300;
 
-  bak_pinout=pinout;
-  bak_reversed=reversed;
+  bak_pinout=ini.pinout;
+  bak_reversed=ini.reversed;
+  bak_step_delay_mks=ini.step_delay_mks;
 
   if (httpServer.hasArg("up")) dir=true;
-  if (httpServer.hasArg("reversed")) reversed=atoi(httpServer.arg("reversed").c_str());
-  if (httpServer.hasArg("pinout")) pinout=atoi(httpServer.arg("pinout").c_str());
-  if (pinout>=3) pinout=0;
+  if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
+  if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
+  if (ini.pinout>=3) ini.pinout=0;
+  if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
+  if (ini.step_delay_mks<10) ini.step_delay_mks=10;
+  if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
+  if (httpServer.hasArg("steps")) steps=atoi(httpServer.arg("steps").c_str());
+  if (steps<0) steps=0;
 
-  for (int i=0; i<300; i++)
+  for (int i=0; i<steps; i++)
   {
     Rotate(dir);
-    if (IsSwitchPressed()) break;
+    if (IsSwitchPressed() && i>50) break; // Ignoring switch at first 50 rotations
     yield();
   }
   Motor_off();
   roll_to=position;
 
-  pinout=bak_pinout;
-  reversed=bak_reversed;
+  ini.pinout=bak_pinout;
+  ini.reversed=bak_reversed;
+  ini.step_delay_mks=bak_step_delay_mks;
 
-  httpServer.send(200, "text/html", "test ok");
-}
-
-void Motor_Action()
-{
-  bool dir_up;
-
-  if (position==roll_to) return; // stopped, do nothing
-
-  dir_up=(roll_to < position);
-
-  for (int i=0; i<100; i++)
-  {
-    Rotate(dir_up);
-    if (IsSwitchPressed() && (dir_up || position>100))
-    { // end stop hit. Ignore if going down, at least first 100 positions.
-      position=0; // remember zero position
-      if (roll_to <= 0)
-      { // if opening then finish
-        roll_to=0;
-        Motor_off();
-        break;
-      }
-    }
-    if (position==roll_to)
-    {  // finished
-      Motor_off();
-      break;
-    }
-    yield();
-  }
+  httpServer.send(200, "text/html", String(position));
 }
 
 #define DAY (24*60*60)
@@ -486,7 +705,7 @@ void Scheduler()
   if (t == 0) return;
   t=t % DAY; // time from day start
 
-  if (((t-open_time+DAY) % DAY) < 60)
+  /*if (((t-open_time+DAY) % DAY) < 60)
   {
     if (!open_alarm)
     { // alarm triggered;
@@ -506,9 +725,27 @@ void Scheduler()
     }
   }
   else
-    open_alarm=false;
+    close_alarm=false;*/
 }
-void loop(void) {
+
+unsigned long last_reconnect=0;
+void loop(void) 
+{
+  if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
+  { // in soft AP mode, trying to connect to network
+    if (millis()-last_reconnect > 15*1000) // every 15 sec
+    {
+      last_reconnect=millis();
+      WiFi.begin(ini.ssid, ini.password);
+      if (WiFi.waitForConnectResult() == WL_CONNECTED)
+      {
+        Serial.println("Reconnected to network in STA mode. Closing AP");
+        WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_STA);
+      }
+    }
+  }
+  
   httpServer.handleClient();
   ArduinoOTA.handle();
   Motor_Action();
