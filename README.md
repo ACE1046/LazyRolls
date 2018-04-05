@@ -9,7 +9,7 @@ Automatic motorized roller blinds project.
 Curtains - скетч для Ардуино\
 Curtains\data - файлы для SPIFFS. Иконка, css-стили\
 Board - файлы схемы и платы для DipTrace\
-3D_parts - OpenSCAD and stl files\
+3D_parts - OpenSCAD и stl для печати
 
 ### Changelog
 
