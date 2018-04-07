@@ -1,7 +1,7 @@
 /*
 (C) 2018 ACE, a_c_e@mail.ru
 
-05.04.2018 v0.01 beta
+07.04.2018 v0.02 beta
 
 */
 #include <ESP8266WiFi.h>
@@ -26,6 +26,11 @@ const char* def_hostname = "lazyroll";
 #endif
 
 #define VERSION "0.1 beta"
+#define SPIFFS_AUTO_INIT
+
+#ifdef SPIFFS_AUTO_INIT
+#include "spiff_files.h"
+#endif
 
 //char *temp_host;
 const char* update_path = "/update";
@@ -67,8 +72,9 @@ struct {
   uint8_t pinout; // index in "steps" array, according to motor wiring
   bool reversed; // up-down reverse
   uint16_t step_delay_mks; // delay (mks) for each step of motor
-  int timezone; // timezone in minutes relative to UTC;
+  int timezone; // timezone in minutes relative to UTC
   int full_length; // steps from open to close
+	uint32_t spiffs_time; // time of files in spiffs for version checking
 } ini;
 
 //uint32_t open_time=((10*60)+30)*60;
@@ -155,26 +161,6 @@ String UptimeStr()
   return String(buf);
 }
 
-//----------------------- Settings -------------------------------------
-
-void setup_Settings(void)
-{
-  memset(&ini, sizeof(ini), 0);
-  strcpy(ini.hostname  , def_hostname);
-  strcpy(ini.ssid      , def_ssid);
-  strcpy(ini.password  , def_password);
-  strcpy(ini.ntpserver , def_ntpserver);
-  ini.lang=0;
-  ini.pinout=0;
-  ini.reversed=false;
-  ini.step_delay_mks=def_step_delay_mks;
-  ini.timezone=3*60; // Default City time zone by default :)
-  ini.full_length=11300;
-  LoadSettings(&ini, sizeof(ini));
-  if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-  if (ini.step_delay_mks < 10) ini.step_delay_mks=10;
-}
-
 //----------------------- Motor ----------------------------------------
 
 void Rotate(bool dir)
@@ -256,6 +242,71 @@ void Motor_Action()
 
 // ==================== initialization ===============================
 
+#ifdef SPIFFS_AUTO_INIT
+void CreateFile(const char *filename, const uint8_t *data, int len)
+{
+	uint8_t buf[256];
+	int blk;
+	unsigned int bytes;
+
+  // update file if not exist or if version changed
+  if ((ini.spiffs_time!=0 && ini.spiffs_time != spiffs_time) ||
+	  (!SPIFFS.exists(filename)))
+	{
+		File f = SPIFFS.open(filename, "w");
+		if (!f) {
+			Serial.println("file creation failed");
+		} else
+		{
+			bytes=len;
+			while (bytes>0)
+			{
+				blk=min(bytes, sizeof(buf));
+				memcpy_P(buf, data, blk);
+				data+=blk;
+				bytes-=blk;
+				f.write(buf, blk);
+			}
+			f.close();
+			Serial.print("file written: ");
+			Serial.println(filename);
+		}
+	}
+}
+#endif
+
+void init_SPIFFS()
+{
+#ifdef SPIFFS_AUTO_INIT
+	CreateFile(FAV_FILE, fav_icon_data, sizeof(fav_icon_data));
+	CreateFile(CLASS_FILE, css_data, sizeof(css_data));
+	if (ini.spiffs_time != spiffs_time)
+	{
+		ini.spiffs_time=spiffs_time;
+		SaveSettings(&ini, sizeof(ini));
+	}
+#endif
+}
+
+void setup_Settings(void)
+{
+  memset(&ini, sizeof(ini), 0);
+  strcpy(ini.hostname  , def_hostname);
+  strcpy(ini.ssid      , def_ssid);
+  strcpy(ini.password  , def_password);
+  strcpy(ini.ntpserver , def_ntpserver);
+  ini.lang=0;
+  ini.pinout=0;
+  ini.reversed=false;
+  ini.step_delay_mks=def_step_delay_mks;
+  ini.timezone=3*60; // Default City time zone by default :)
+  ini.full_length=11300;
+	ini.spiffs_time=0;
+  LoadSettings(&ini, sizeof(ini));
+  if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
+  if (ini.step_delay_mks < 10) ini.step_delay_mks=10;
+}
+
 void setup_SPIFFS()
 {
   if (SPIFFS.begin()) 
@@ -296,7 +347,8 @@ void setup()
   Serial.println("Booting...");
 
   setup_SPIFFS();
-  setup_Settings();
+  setup_Settings(); // setup and load settings.
+	init_SPIFFS(); // create static HTML files, if needed
 
   Serial.print("Hostname: ");
   Serial.println(ini.hostname);
