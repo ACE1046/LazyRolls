@@ -25,7 +25,7 @@ const char* def_ntpserver = "time.nist.gov";
 const char* def_hostname = "lazyroll";
 #endif
 
-#define VERSION "0.1 beta"
+#define VERSION "0.02 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
