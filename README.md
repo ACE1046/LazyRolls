@@ -5,8 +5,8 @@ Automatic motorized roller blinds project.
 Моторизированный привод для рулонных штор. Управление по Wi-Fi. Питание внешнее. Возможна интеграция в системы умного дома.
 
 ### Ссылки
-Описание проекта: https://mysku.ru/blog/diy/62110.html
-Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)
+Описание проекта: https://mysku.ru/blog/diy/62110.html\
+Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)\
 Видео работы: https://www.youtube.com/watch?v=lvBh_m7pOAI
 
 ### Структура директорий
