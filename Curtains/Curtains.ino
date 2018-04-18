@@ -1,7 +1,7 @@
 /*
 (C) 2018 ACE, a_c_e@mail.ru
 
-07.04.2018 v0.02 beta
+16.04.2018 v0.03 beta
 
 */
 #include <ESP8266WiFi.h>
@@ -25,7 +25,7 @@ const char* def_ntpserver = "time.nist.gov";
 const char* def_hostname = "lazyroll";
 #endif
 
-#define VERSION "0.02 beta"
+#define VERSION "0.03 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -223,13 +223,13 @@ void Motor_Action()
     Rotate(dir_up);
     if (IsSwitchPressed() && (dir_up || position>100))
     { // end stop hit. Ignore if going down, at least first 100 positions.
+      position=0; // remember zero position
       if (roll_to <= 0)
       { // if opening then finish
-        position=0; // remember zero position
+				Motor_off();
+				roll_to=position;
       }
-      Motor_off();
-      roll_to=position;
-      break;
+			break;
     }
     if (position==roll_to)
     {  // finished

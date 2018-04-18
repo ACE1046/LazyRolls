@@ -14,6 +14,7 @@ Automatic motorized roller blinds project.
 Curtains - скетч для Ардуино\
 Curtains\data - файлы для SPIFFS. Иконка, css-стили\
 Board - файлы схемы и платы для DipTrace\
+Board\Gerbers - gerber files для заказа плат на фабрике\
 3D_parts - OpenSCAD и stl для печати
 
 ### Changelog
@@ -23,6 +24,9 @@ Board - файлы схемы и платы для DipTrace\
 
 07.04.2018 v0.02 beta\
 Автосоздание файлов CSS и favicon в SPIFFS при их отсутствии/обновлении
+
+16.04.2018 v0.03 beta\
+Исправлен баг с закрытием шторы после перезагрузки
 
 ### Authors
 
