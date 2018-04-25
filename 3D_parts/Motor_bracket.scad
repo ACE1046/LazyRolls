@@ -117,7 +117,7 @@ module base()
 
 	// PCB holder
 	translate([-full_h/2+side_t+2+1.5+1.5+2.1, 35, 0]) cube([5, 3.5, 12]);
-	translate([-full_h/2+side_t+2+1.1, 35, 0]) cube([5+1.5+2.5, 3.5, 2]);
+	translate([-full_h/2+side_t+2+1.5, 35, 0]) cube([5+1.5+2.1, 3.5, 2]);
 	translate([-full_h/2+side_t+2+1.5, 13.5, 0]) cube([1.8, 28.5, 2]);
 
   // esp8266 for size, % - not include in final render 

@@ -1,25 +1,32 @@
 d=15.6;
-l=25;
+l=22;
+cone=2;
 
 // base
 bd=d+2;
 bl=1.5;
 
 // shaft
-sd=5.6;
-sw=3.5;
-sl=8;
+sd=5.2;
+sw=3.2;
+sl=7;
 
 difference()
 {
-	union()
+	intersection()
 	{
-		translate([0, 0, -bl]) cylinder(h=bl, d=bd);
-		translate([0, 0, 0]) cylinder(h=l, d1=d, d2=d-0.6, $fn=50);
+		union()
+		{
+			translate([0, 0, -bl]) cylinder(h=bl, d=bd);
+			translate([0, 0, 0]) cylinder(h=l-cone, d1=d, d2=d-0.6, $fn=50);
+			translate([0, 0, l-cone]) cylinder(h=cone, d1=d-0.6, d2=d-0.6-cone/2, $fn=50);
 
-		rotate([0, 0,  0]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
-		rotate([0, 0, 60]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
-		rotate([0, 0,-60]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
+			
+			rotate([0, 0,  0]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
+			rotate([0, 0, 60]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
+			rotate([0, 0,-60]) translate([0, 0, l/2]) cube([1, d+1.2, l], center=true);
+		}
+		translate([0, 0, -bl-0.1]) cylinder(h=l+bl+0.2, d1=l*2, d2=d-0.6-cone/2, $fn=50);
 	}
 	intersection()
 	{
