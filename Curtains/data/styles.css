@@ -69,10 +69,23 @@ section {
 	float: none;
 	margin-left: 252px;
 }
-.settings {
+.settings, .alarms {
 	float: none;
 	margin-left: 252px;
 }
+.alarms {
+	min-width: 250px;
+}
 .settings td {
 	padding: 5px;
+}
+.days label{
+    display: block;
+    float: left;
+    margin-left:18px;
+		margin-right: 5px;
+		width: 30px;
+}
+.days label input[type='checkbox'] {
+  margin-left:-18px;
 }

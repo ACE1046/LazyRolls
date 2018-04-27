@@ -47,6 +47,8 @@ uint16_t def_step_delay_mks = 1500;
 #define DIR_UP (-1)
 #define DIR_DN (1)
 #define UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
+#define ALARMS 10
+#define DAY (24*60*60) // day length in seconds
 
 const int Languages=2;
 const char *Language[Languages]={"English", "Русский"};
@@ -63,6 +65,15 @@ int roll_to; // position to go to
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 
+typedef struct {
+	uint32_t time;
+	uint8_t percent_open; // 0 - open, 100 - close
+	uint8_t day_of_week; // LSB - monday
+	uint16_t flags; 
+	uint32_t reserved;
+} alarm_type;
+#define ALARM_FLAG_ENABLED 0x0001
+
 struct {
   char hostname[16+1];
   char ssid[32+1];
@@ -75,6 +86,7 @@ struct {
   int timezone; // timezone in minutes relative to UTC
   int full_length; // steps from open to close
 	uint32_t spiffs_time; // time of files in spiffs for version checking
+	alarm_type alarms[ALARMS];
 } ini;
 
 //uint32_t open_time=((10*60)+30)*60;
@@ -159,6 +171,25 @@ String UptimeStr()
   uint32_t t=millis()/1000;
   sprintf(buf, "%dd %02d:%02d", t/60/60/24, t/60/60%24, t/60%60);
   return String(buf);
+}
+
+String DoWName(int d)
+{
+	switch (d)
+	{
+		case 0: return SL("Mo", "Пн"); break;
+		case 1: return SL("Tu", "Вт"); break;
+		case 2: return SL("We", "Ср"); break;
+		case 3: return SL("Th", "Чт"); break;
+		case 4: return SL("Fr", "Пт"); break;
+		case 5: return SL("Sa", "Сб"); break;
+		case 6: return SL("Su", "Вс"); break;
+	}
+}
+
+int DayOfWeek(uint32_t time)
+{
+	return ((time / DAY) + 3) % 7;
 }
 
 //----------------------- Motor ----------------------------------------
@@ -383,6 +414,7 @@ void setup()
   httpServer.on("/stop",     HTTP_handleStop);
   httpServer.on("/test",     HTTP_handleTest);
   httpServer.on("/settings", HTTP_handleSettings);
+  httpServer.on("/alarms", 	 HTTP_handleAlarms);
   httpServer.on("/reboot",   HTTP_handleReboot);
   httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
   httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
@@ -497,7 +529,8 @@ String HTML_status()
   if (lastSync==0)
     out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"));
   else
-    out += HTML_tableLine(L("Time", "Время"), TimeStr());
+    out += HTML_tableLine(L("Time", "Время"), TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]");
+	
   out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr());
   out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"));
 
@@ -523,16 +556,28 @@ String HTML_status()
   return out;
 }
 
+String HTML_mainmenu(void)
+{
+  String out;
+
+  out.reserve(128);
+
+  out += "<section class=\"status\">\n";
+	out += HTML_openCloseStop();
+  out += "<a href=\"/\">["+SL("Main", "Главная")+"]</a> \n";
+  out += "<a href=\"settings\">["+SL("Settings", "Настройки")+"]</a> \n";
+  out += "<a href=\"alarms\">["+SL("Schedule", "Расписание")+"]</a> \n";
+  out += "</section>\n";
+	return out;
+}
+
 void HTTP_handleRoot(void)
 {
   String out;
 
   out=HTML_status();
   
-  out += "<section class=\"status\">\n";
-	out += HTML_openCloseStop();
-  out += "<a href=\"settings\">["+SL("Settings", "Настройки")+"]</a> \n";
-  out += "</section>\n";
+	out += HTML_mainmenu();
 
   out += HTML_footer();
   httpServer.send(200, "text/html", out);
@@ -582,11 +627,8 @@ void HTTP_handleSettings(void)
   out.reserve(10240);
     
   out=HTML_status();
-  
-  out += "<section class=\"status\">\n";
-  out += HTML_openCloseStop();
-  out += "<a href=\"/\">["+SL("Main", "Главная")+"]</a> \n";
-  out += "</section>\n";
+
+	out += HTML_mainmenu();
 
   out += "<section class=\"settings\">\n";
 
@@ -668,11 +710,127 @@ void HTTP_handleSettings(void)
   out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
   out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
   
-  out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"\"></td></tr>\n";
+  out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
   out+="</table>\n";
-  out+="</section>\n";
   out+="</form>\n";
+  out+="</section>\n";
 
+  out += HTML_footer();
+
+  httpServer.send(200, "text/html", out);
+}
+
+uint32_t StrToTime(String s)
+{
+	uint32_t t=0;
+	
+	if (s.length()<5) return 0;
+	if (s[0]>='0' && s[0]<='9') t+=(s[0]-'0')*10*60; else return 0;
+	if (s[1]>='0' && s[1]<='9') t+=(s[1]-'0')* 1*60; else return 0;
+	if (s[3]>='0' && s[3]<='9') t+=(s[3]-'0')*   10; else return 0;
+	if (s[4]>='0' && s[4]<='9') t+=(s[4]-'0')*    1; else return 0;
+	return t;
+}
+
+String TimeToStr(uint32_t t)
+{
+	char buf[6];
+  sprintf(buf, "%02d:%02d", t/60%24, t%60);
+	return String(buf);
+}	
+
+void HTTP_handleAlarms(void)
+{
+  String out;
+
+  if (httpServer.hasArg("save"))
+  {
+		for (int a=0; a<ALARMS; a++)
+		{
+		  String n=String(a);
+      if (httpServer.hasArg("en"+n)) 
+				ini.alarms[a].flags |= ALARM_FLAG_ENABLED;
+		  else
+				ini.alarms[a].flags &= ~ALARM_FLAG_ENABLED;
+
+      if (httpServer.hasArg("time"+n))
+			{
+				ini.alarms[a].time=StrToTime(httpServer.arg("time"+n));
+			}
+
+      if (httpServer.hasArg("dest"+n))
+			{
+				ini.alarms[a].percent_open=atoi(httpServer.arg("dest"+n).c_str());
+				if (ini.alarms[a].percent_open>100) ini.alarms[a].percent_open=100;
+			}
+
+			uint8_t b=0;
+			for (int d=6; d>=0; d--)
+			{
+				b=b<<1;
+        if (httpServer.hasArg("d"+n+"_"+String(d))) b|=1;
+			}
+			ini.alarms[a].day_of_week=b;
+		}	
+
+    SaveSettings(&ini, sizeof(ini));
+  }
+
+  out.reserve(16384);
+    
+  out=HTML_status();
+
+	out += HTML_mainmenu();
+
+  out += "<section class=\"alarms\">\n";
+	out += "<form method=\"post\" action=\"/alarms\">\n";
+	out += "<table width=\"100%\">\n";
+
+	for (int a=0; a<ALARMS; a++)
+	{
+		String n=String(a);
+		out += "<tr><td colspan=\"2\">\n";
+		if (a>0) out += "<hr/>\n";
+		out += "<label for=\"en"+n+"\">\n";
+		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" + 
+		  ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
+		out += SL("Enabled", "Включено")+"</label></td></tr>\n";
+		
+		out += "<tr><td style=\"width:1px\"><label for=\"time"+n+"\">"+
+		  SL("Time:", "Время:")+"</label></td><td><input type=\"time\" id=\"time"+n+
+			"\" name=\"time"+n+"\" value=\""+TimeToStr(ini.alarms[a].time)+"\" required></td></tr>\n";
+		
+		out += "<tr><td><label for=\"dest"+n+"\">"+
+		  SL("Position:", "Положение:")+"</label></td><td><select id=\"dest"+n+"\" name=\"dest"+n+"\">\n";
+		for (int p=0; p<=100; p+=20)
+		{
+			String s = String(p)+"%";
+			if (p==0)   s=SL("Open", "Открыть");
+			if (p==100) s=SL("Close", "Закрыть");
+			out += "<option value=\""+String(p)+"\""+
+			  (ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
+		}
+		out += "</select>\n";
+		out += "</td></tr><tr><td>";
+
+		out += SL("Repeat:", "Повтор:")+"</td><td class=\"days\">\n";
+		for (int d=0; d<7; d++)
+		{
+			String id="\"d"+n+"_"+String(d)+"\"";
+			out += "<label for="+id+">";
+			out += "<input type=\"checkbox\" id="+id+" name="+id+
+					((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
+			out+=DoWName(d);
+			out += "</label> \n";
+		}
+		out += "</td></tr>\n";
+	}
+
+  out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	
+	out += "</table>\n";
+  out+="</form>\n";
+  out+="</section>\n";
   out += HTML_footer();
 
   httpServer.send(200, "text/html", out);
@@ -748,36 +906,41 @@ void HTTP_handleTest(void)
   httpServer.send(200, "text/html", String(position));
 }
 
-#define DAY (24*60*60)
 void Scheduler()
 {
   uint32_t t;
+	static uint32_t last_t;
+	int dayofweek;
 
   t=getTime();
   if (t == 0) return;
+	dayofweek = DayOfWeek(t); // 0 - monday
   t=t % DAY; // time from day start
+	t=t/60; // in minutes
+	
+	if (t == last_t) return; // this minute already handled
+	last_t=t;
 
-  /*if (((t-open_time+DAY) % DAY) < 60)
-  {
-    if (!open_alarm)
-    { // alarm triggered;
-      open_alarm=true;
-      Open();
-    }
-  }
-  else
-    open_alarm=false;
+	for (int a=0; a<ALARMS; a++)
+	{
+		if (!(ini.alarms[a].flags & ALARM_FLAG_ENABLED)) continue;
+		if ( (ini.alarms[a].time != t)) continue;
+		if (!(ini.alarms[a].day_of_week & (1<<dayofweek)) && (ini.alarms[a].day_of_week != 0)) continue;
+		
+		if (ini.alarms[a].day_of_week == 0) // if no repeat
+		{
+			ini.alarms[a].flags &= ~ALARM_FLAG_ENABLED; // disabling
+			SaveSettings(&ini, sizeof(ini));
+		}
 
-  if (((t-close_time+DAY) % DAY) < 60)
-  {
-    if (!close_alarm)
-    { // alarm triggered;
-      close_alarm=true;
-      Close();
-    }
-  }
-  else
-    close_alarm=false;*/
+		if (ini.alarms[a].percent_open == 0)
+			Open();
+		else
+		{
+			if (position<0) position=0;
+			roll_to=ini.full_length * ini.alarms[a].percent_open / 100;
+		}
+	}
 }
 
 unsigned long last_reconnect=0;
