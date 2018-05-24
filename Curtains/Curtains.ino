@@ -399,7 +399,7 @@ void setup()
     { // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
       Serial.print("Starting access point. SSID: ");
       Serial.println(ini.hostname);
-      WiFi.mode(WIFI_AP_STA);
+      WiFi.mode(WIFI_AP);
       WiFi.softAP(ini.hostname); // ... but without password
     }
   }
@@ -948,8 +948,10 @@ void loop(void)
 {
   if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
   { // in soft AP mode, trying to connect to network
-    if (millis()-last_reconnect > 15*1000) // every 15 sec
+		if (last_reconnect==0) last_reconnect=millis();
+    if (millis()-last_reconnect > 60*1000) // every 60 sec
     {
+      Serial.println("Trying to reconnect");
       last_reconnect=millis();
       WiFi.begin(ini.ssid, ini.password);
       if (WiFi.waitForConnectResult() == WL_CONNECTED)
@@ -957,7 +959,8 @@ void loop(void)
         Serial.println("Reconnected to network in STA mode. Closing AP");
         WiFi.softAPdisconnect(true);
         WiFi.mode(WIFI_STA);
-      }
+      } else
+				WiFi.mode(WIFI_AP);
     }
   }
   
