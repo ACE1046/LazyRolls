@@ -59,6 +59,17 @@ const uint8_t steps[3][4]={
   {PIN_A, PIN_C, PIN_B, PIN_D},
   {PIN_A, PIN_B, PIN_D, PIN_C}
 };
+const uint8_t microstep[8][4]={
+  {1,0,0,0},
+  {1,1,0,0},
+  {0,1,0,0},
+  {0,1,1,0},
+  {0,0,1,0},
+  {0,0,1,1},
+  {0,0,0,1},
+  {1,0,0,1}
+};
+int8_t MStep= 0;
 int position; // current motor steps position. 0 - fully open, -1 - unknown.
 int roll_to; // position to go to
 
@@ -196,25 +207,17 @@ int DayOfWeek(uint32_t time)
 
 void Rotate(bool dir)
 { // dir: true - up
-  if (dir ^ ini.reversed)
-  {
-    for (int i=0; i<4; i++)
+  for (int i=0; i<4; i++)
     {
-      digitalWrite(steps[ini.pinout][(i+1)%4], HIGH);
-      delayMicroseconds(ini.step_delay_mks);
-      digitalWrite(steps[ini.pinout][i], LOW);
-      delayMicroseconds(ini.step_delay_mks);
+    digitalWrite(steps[ini.pinout][i], microstep[MStep][i]);
     }
-  } else {
-    for (int i=4; i>0; i--)
-    {
-      digitalWrite(steps[ini.pinout][i-1], HIGH);
-      delayMicroseconds(ini.step_delay_mks);
-      digitalWrite(steps[ini.pinout][i%4], LOW);
-      delayMicroseconds(ini.step_delay_mks);
-    }
-  }
+  if (dir ^ ini.reversed) MStep++;  else MStep--;
+  
+  if (MStep<0)  MStep+=8;
+  if (MStep>=8) MStep-=8;
+ 
   if (dir) position--; else position++;
+  delayMicroseconds(ini.step_delay_mks);
 }
 
 void Motor_off()
