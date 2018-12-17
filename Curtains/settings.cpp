@@ -45,6 +45,9 @@ bool LoadSettings(void *ini, int len)
   for (i=0; i<r; i++) crc ^= ((uint8_t*)ini)[i];
   
   f.close();
+
+  if (crc!=ZEROCRC) Serial.println("Settings CRC error");
+
   return (crc==ZEROCRC);
 }
 

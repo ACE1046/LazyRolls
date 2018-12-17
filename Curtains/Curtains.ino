@@ -25,7 +25,7 @@ const char* def_ntpserver = "time.nist.gov";
 const char* def_hostname = "lazyroll";
 #endif
 
-#define VERSION "0.03 beta"
+#define VERSION "0.04 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -322,20 +322,49 @@ void init_SPIFFS()
 void setup_Settings(void)
 {
   memset(&ini, sizeof(ini), 0);
-  strcpy(ini.hostname  , def_hostname);
-  strcpy(ini.ssid      , def_ssid);
-  strcpy(ini.password  , def_password);
-  strcpy(ini.ntpserver , def_ntpserver);
-  ini.lang=0;
-  ini.pinout=0;
-  ini.reversed=false;
-  ini.step_delay_mks=def_step_delay_mks;
-  ini.timezone=3*60; // Default City time zone by default :)
-  ini.full_length=11300;
-	ini.spiffs_time=0;
-  LoadSettings(&ini, sizeof(ini));
+  if (LoadSettings(&ini, sizeof(ini)))
+	{
+		Serial.println("Settings loaded");
+	} else
+	{
+		strcpy(ini.hostname  , def_hostname);
+		strcpy(ini.ssid      , def_ssid);
+		strcpy(ini.password  , def_password);
+		strcpy(ini.ntpserver , def_ntpserver);
+		ini.lang=0;
+		ini.pinout=0;
+		ini.reversed=false;
+		ini.step_delay_mks=def_step_delay_mks;
+		ini.timezone=3*60; // Default City time zone by default :)
+		ini.full_length=11300;
+		ini.spiffs_time=0;
+		Serial.println("Settings set to default");
+	}
   if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
   if (ini.step_delay_mks < 10) ini.step_delay_mks=10;
+}
+
+void print_SPIFFS_info()
+{
+	FSInfo fs_info;
+	if (SPIFFS.info(fs_info))
+	{
+		Serial.printf("SPIFFS totalBytes: %i\n", fs_info.totalBytes);
+		Serial.printf("SPIFFS usedBytes: %i\n", fs_info.usedBytes);
+		Serial.printf("SPIFFS blockSize: %i\n", fs_info.blockSize);
+		Serial.printf("SPIFFS pageSize: %i\n", fs_info.pageSize);
+		Serial.printf("SPIFFS maxOpenFiles: %i\n", fs_info.maxOpenFiles);
+		Serial.printf("SPIFFS maxPathLength: %i\n", fs_info.maxPathLength);
+		Dir dir = SPIFFS.openDir("/");
+		while (dir.next()) {
+				Serial.print(dir.fileName());
+				Serial.print(" ");
+				File f = dir.openFile("r");
+				Serial.println(f.size());
+				f.close();
+		}			
+	} else
+		Serial.println("SPIFFS.info() failed");
 }
 
 void setup_SPIFFS()
@@ -343,6 +372,7 @@ void setup_SPIFFS()
   if (SPIFFS.begin()) 
 	{
     Serial.println("SPIFFS Active");
+		// print_SPIFFS_info();
   } else {
     Serial.println("Unable to activate SPIFFS");
   }
@@ -416,6 +446,7 @@ void setup()
   httpServer.on("/settings", HTTP_handleSettings);
   httpServer.on("/alarms", 	 HTTP_handleAlarms);
   httpServer.on("/reboot",   HTTP_handleReboot);
+  httpServer.on("/format",   HTTP_handleFormat);
   httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
   httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
   httpServer.begin();
@@ -512,6 +543,13 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
   return out;
 }
 
+String MemSize2Str(uint32_t mem)
+{
+	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ SL(" MB", " МБ");
+	if (mem%1024 == 0) return String(mem/1024)+SL(" KB"," КБ");
+	return String(mem)+(" B", " Б");
+}
+
 String HTML_status()
 {
   uint32_t realSize = ESP.getFlashChipRealSize();
@@ -540,9 +578,9 @@ String HTML_status()
   out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()]);
     
   out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Memory", "Память")+"</td></tr>\n";
-  out += HTML_tableLine(L("Real id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
-  out += HTML_tableLine(L("Real size", "Реально"), String(realSize));
-  out += HTML_tableLine(L("IDE size", "Прошивка"), String(ideSize));
+  out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
+  out += HTML_tableLine(L("Real size", "Реально"), MemSize2Str(realSize));
+  out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
   if(ideSize != realSize) {
     out += HTML_tableLine(L("Config", "Конфиг"), L("error!", "ошибка!"));
   } else {
@@ -845,6 +883,17 @@ void HTTP_redirect(String link)
 void HTTP_handleReboot(void)
 {
   HTTP_redirect(String("/"));
+	delay(500);
+  ESP.reset();
+}
+
+void HTTP_handleFormat(void)
+{
+  HTTP_redirect(String("/"));
+	delay(500);
+	SPIFFS.end();
+	SPIFFS.format();
+	Serial.println("SPIFFS formatted. rebooting");
 	delay(500);
   ESP.reset();
 }
