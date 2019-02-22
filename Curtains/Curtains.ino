@@ -1,7 +1,10 @@
 /*
-(C) 2018 ACE, a_c_e@mail.ru
+LazyRolls
+(C) 2019 ACE, a_c_e@mail.ru
+http://imlazy.ru/rolls/
 
-16.04.2018 v0.03 beta
+21.12.2018 v0.04 beta
+21.02.2019 v0.05 beta
 
 */
 #include <ESP8266WiFi.h>
@@ -15,7 +18,7 @@
 
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
 // Or comment next string and change defaults in this file
-#include "wifi_settings.h"
+//#include "wifi_settings.h"
 
 #ifndef SSID_AND_PASS
 // if "wifi_settings.h" not included
@@ -25,7 +28,7 @@ const char* def_ntpserver = "time.nist.gov";
 const char* def_hostname = "lazyroll";
 #endif
 
-#define VERSION "0.04 beta"
+#define VERSION "0.05 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -40,13 +43,15 @@ uint16_t def_step_delay_mks = 1500;
 #define FAV_FILE "/favicon.ico"
 #define CLASS_FILE "/styles.css"
 #define PIN_SWITCH 14
-#define PIN_A 4
-#define PIN_B 5
+#define PIN_A 5
+#define PIN_B 4
 #define PIN_C 13
 #define PIN_D 12
 #define DIR_UP (-1)
 #define DIR_DN (1)
 #define UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
+#define SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
+#define MIN_STEP_DELAY 100 // minimal motor step time in mks
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
 
@@ -55,12 +60,13 @@ const char *Language[Languages]={"English", "Русский"};
 const char *onoff[][Languages]={{"off", "on"}, {"выкл", "вкл"}};
 
 const uint8_t steps[3][4]={
-  {PIN_A, PIN_B, PIN_C, PIN_D},
   {PIN_A, PIN_C, PIN_B, PIN_D},
-  {PIN_A, PIN_B, PIN_D, PIN_C}
+  {PIN_A, PIN_B, PIN_D, PIN_C},
+  {PIN_A, PIN_B, PIN_C, PIN_D}
 };
-int position; // current motor steps position. 0 - fully open, -1 - unknown.
-int roll_to; // position to go to
+volatile int position; // current motor steps position. 0 - fully open, -1 - unknown.
+volatile int roll_to; // position to go to
+uint16_t step_c[8], step_s[8]; // bitmasks for every step
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -87,6 +93,7 @@ struct {
   int full_length; // steps from open to close
 	uint32_t spiffs_time; // time of files in spiffs for version checking
 	alarm_type alarms[ALARMS];
+	uint8_t switch_reversed; // reverse switch logic. 0 - NC, 1 - NO
 } ini;
 
 //uint32_t open_time=((10*60)+30)*60;
@@ -102,6 +109,10 @@ const char * L(const char *s1, const char *s2)
 String SL(const char *s1, const char *s2)
 {
   return (ini.lang==0) ? String(s1) : String(s2);
+}
+String SL(String s1, String s2)
+{
+  return (ini.lang==0) ? s1 : s2;
 }
 
 //===================== NTP ============================================
@@ -193,41 +204,47 @@ int DayOfWeek(uint32_t time)
 }
 
 //----------------------- Motor ----------------------------------------
-
-void Rotate(bool dir)
-{ // dir: true - up
-  if (dir ^ ini.reversed)
-  {
-    for (int i=0; i<4; i++)
-    {
-      digitalWrite(steps[ini.pinout][(i+1)%4], HIGH);
-      delayMicroseconds(ini.step_delay_mks);
-      digitalWrite(steps[ini.pinout][i], LOW);
-      delayMicroseconds(ini.step_delay_mks);
-    }
-  } else {
-    for (int i=4; i>0; i--)
-    {
-      digitalWrite(steps[ini.pinout][i-1], HIGH);
-      delayMicroseconds(ini.step_delay_mks);
-      digitalWrite(steps[ini.pinout][i%4], LOW);
-      delayMicroseconds(ini.step_delay_mks);
-    }
-  }
-  if (dir) position--; else position++;
+const uint8_t microstep[8][4]={
+	{1, 0, 0, 0},
+	{1, 1, 0, 0},
+	{0, 1, 0, 0},
+	{0, 1, 1, 0},
+	{0, 0, 1, 0},
+	{0, 0, 1, 1},
+	{0, 0, 0, 1},
+	{1, 0, 0, 1}};
+void FillStepsTable()
+{
+	uint8_t i, j, n;
+	for (i=0; i<8; i++)
+	{
+		n=i;
+		if (ini.reversed) n=7-i;
+		step_s[i]=0;
+		step_c[i]=0;
+		for (j=0; j<4; j++)
+		{
+			if (microstep[n][j]) 
+				step_s[i] |= (1 << steps[ini.pinout][j]);
+			else
+				step_c[i] |= (1 << steps[ini.pinout][j]);
+		}
+	}		
 }
 
-void Motor_off()
+void inline ICACHE_RAM_ATTR MotorOff()
 {
-  digitalWrite(PIN_A, LOW);
-  digitalWrite(PIN_B, LOW);
-  digitalWrite(PIN_C, LOW);
-  digitalWrite(PIN_D, LOW);
+  // digitalWrite(PIN_A, LOW);
+  // digitalWrite(PIN_B, LOW);
+  // digitalWrite(PIN_C, LOW);
+  // digitalWrite(PIN_D, LOW);
+	GPOC = (1 << PIN_A) | (1 << PIN_B) | (1 << PIN_C) | (1 << PIN_D);
 }
 
-bool IsSwitchPressed()
+bool ICACHE_RAM_ATTR IsSwitchPressed()
 {
-  return digitalRead(PIN_SWITCH);
+	//  return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
+	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
 }
 
 void Open()
@@ -241,34 +258,94 @@ void Close()
   roll_to=ini.full_length;
 }
 
-void Motor_Action()
+// ==================== timer & interrupt ===============================
+
+volatile uint8_t switch_ignore_steps;
+
+void ICACHE_RAM_ATTR timer1Isr()
 {
+  static uint8_t step=0;
+
   bool dir_up;
 
-  if (position==roll_to) return; // stopped, do nothing
-
+  if (position==roll_to)
+	{
+		MotorOff();
+		return; // stopped, do nothing
+	}
+	
   dir_up=(roll_to < position); // up - true
 
-  for (int i=0; i<50; i++) // Make up to 50 steps before returning control to main loop
-  {
-    Rotate(dir_up);
-    if (IsSwitchPressed() && (dir_up || position>100))
-    { // end stop hit. Ignore if going down, at least first 100 positions.
-      position=0; // remember zero position
-      if (roll_to <= 0)
-      { // if opening then finish
-				Motor_off();
-				roll_to=position;
-      }
-			break;
-    }
-    if (position==roll_to)
-    {  // finished
-      Motor_off();
-      break;
-    }
-    yield();
-  }
+	if (position==0 && !dir_up) switch_ignore_steps=SWITCH_IGNORE_STEPS;
+	
+	if (IsSwitchPressed())
+	{
+		if (switch_ignore_steps == 0)
+		{
+			if (roll_to <= 0)
+			{ // full open, done
+				roll_to=0;
+				position=0; // zero point found
+				MotorOff();
+				return;
+			} else
+			{ // destination - [partialy] closed
+				if (dir_up)
+				{
+					// Zero found, now can go down, ignoring switch for some steps
+					position=0; // zero point found
+				  switch_ignore_steps=SWITCH_IGNORE_STEPS;
+				} else
+				{
+					// endswitch hit on going down. Something wrong
+					roll_to=0;
+					MotorOff();
+					return;
+				}
+			}
+			return;
+		}
+	}
+	if (switch_ignore_steps>0) switch_ignore_steps--;
+
+  if (dir_up)
+	{
+		if (step > 0) step--;
+		else
+		{
+			step=7;
+			position--;
+		}
+	} else
+	{
+		step++;
+		if (step==8)
+		{
+			step=0;
+			position++;
+		}
+	}
+
+	GPOS = step_s[step % 8];
+	GPOC = step_c[step % 8];
+}
+
+void AdjustTimerInterval()
+{
+	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/256);
+}
+
+void SetupTimer()
+{
+	timer1_isr_init();
+	timer1_attachInterrupt(timer1Isr);
+	timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP);
+	AdjustTimerInterval();
+}
+
+void StopTimer()
+{
+	timer1_disable();
 }
 
 // ==================== initialization ===============================
@@ -332,7 +409,7 @@ void setup_Settings(void)
 		strcpy(ini.password  , def_password);
 		strcpy(ini.ntpserver , def_ntpserver);
 		ini.lang=0;
-		ini.pinout=0;
+		ini.pinout=2;
 		ini.reversed=false;
 		ini.step_delay_mks=def_step_delay_mks;
 		ini.timezone=3*60; // Default City time zone by default :)
@@ -341,7 +418,7 @@ void setup_Settings(void)
 		Serial.println("Settings set to default");
 	}
   if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-  if (ini.step_delay_mks < 10) ini.step_delay_mks=10;
+  if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 }
 
 void print_SPIFFS_info()
@@ -381,6 +458,7 @@ void setup_SPIFFS()
 void setup_OTA()
 {
   ArduinoOTA.onStart([]() {
+		StopTimer();
     Serial.println("Updating");
   });
   ArduinoOTA.onEnd([]() {
@@ -400,6 +478,19 @@ void setup_OTA()
   ArduinoOTA.setHostname(ini.hostname);
   ArduinoOTA.begin();
 }
+
+void HTTP_handleRoot(void);
+void HTTP_handleOpen(void);
+void HTTP_handleClose(void);
+void HTTP_handleStop(void);
+void HTTP_handleTest(void);
+void HTTP_handleSettings(void);
+void HTTP_handleAlarms(void);
+void HTTP_handleReboot(void);
+void HTTP_handleFormat(void);
+void HTTP_handleXML(void);
+void HTTP_handleSet(void);
+void HTTP_redirect(String link);
 
 void setup()
 {
@@ -447,6 +538,8 @@ void setup()
   httpServer.on("/alarms", 	 HTTP_handleAlarms);
   httpServer.on("/reboot",   HTTP_handleReboot);
   httpServer.on("/format",   HTTP_handleFormat);
+	httpServer.on("/xml",      HTTP_handleXML);
+	httpServer.on("/set",      HTTP_handleSet);
   httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
   httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
   httpServer.begin();
@@ -460,7 +553,7 @@ void setup()
   pinMode(PIN_B, OUTPUT);
   pinMode(PIN_C, OUTPUT);
   pinMode(PIN_D, OUTPUT);
-  Motor_off();
+  MotorOff();
 
   setup_OTA();
   setup_NTP();
@@ -469,6 +562,10 @@ void setup()
   position=ini.full_length*2+UP_SAFE_LIMIT;
   if (IsSwitchPressed()) position=0; // Fully open, if switch is pressed
   roll_to=position;
+	
+	FillStepsTable();
+	
+	SetupTimer();
 }
 
 // ============================= HTTP ===================================
@@ -482,8 +579,54 @@ String HTML_header()
 	"  <meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
 	"  <title>"+SL("Lazy rolls", "Ленивые шторы")+"</title>\n" \
 	"  <link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
+	"  <script>\n" \
+	"    var timerId;\n" \
+	"    var timeout;\n" \
+	"    function GetStatus()\n" \
+	"    {\n" \
+	"      nocache = \"&nocache=\" + Math.random() * 1000000;\n" \
+	"      var request = new XMLHttpRequest();\n" \
+	"      request.onreadystatechange = function()\n" \
+	"        {\n" \
+	"          if (this.readyState == 4) {\n" \
+	"            if (this.status == 200) {\n" \
+	"              if (this.responseXML != null) {\n" \
+	"                var element; \n" \
+	"                document.getElementById(\"time\").innerHTML = this.responseXML.getElementsByTagName('Time')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"uptime\").innerHTML = this.responseXML.getElementsByTagName('UpTime')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"RSSI\").innerHTML = this.responseXML.getElementsByTagName('RSSI')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"pos\").innerHTML = this.responseXML.getElementsByTagName('Now')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"dest\").innerHTML = this.responseXML.getElementsByTagName('Dest')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"switch\").innerHTML = this.responseXML.getElementsByTagName('End1')[0].childNodes[0].nodeValue;\n" \
+
+	"                if (document.getElementById(\"pos\").innerHTML != document.getElementById(\"dest\").innerHTML)\n" \
+	"                  timeout=500;\n" \
+	"                else\n" \
+	"                  timeout=5000;\n" \
+	"              }\n" \
+	"            }\n" \
+	"          }\n" \
+	"        }\n" \
+	"      // send HTTP GET request   \n" \
+	"      request.open(\"GET\", \"xml\");\n" \
+	"      request.send(null);\n" \
+	"      timerId = setTimeout('GetStatus()', timeout);\n" \
+	"    }\n" \
+	"    function Call(url)\n" \
+	"    {\n" \
+	"      clearTimeout(timerId);\n" \
+	"      var xhttp = new XMLHttpRequest();\n" \
+	"      xhttp.open(\"GET\", url);\n" \
+	"      xhttp.send();\n" \
+	"      timeout=200;\n" \
+	"      GetStatus();\n" \
+	"    }\n" \
+	"    function Open() { Call(\"set?pos=0\"); return false; }\n" \
+	"    function Close() { Call(\"set?pos=100\"); return false; }\n" \
+	"    function Stop() { Call(\"stop\"); return false; }\n" \
+	"  </script>\n" \
 	"</head>\n" \
-	"<body>\n" \
+	"<body onload=\"GetStatus()\">\n" \
 	" <div id=\"wrapper2\">\n" \
 	"  <div id=\"wrapper\">\n" \
 	"    <header>"+SL("Lazy rolls", "Ленивые шторы")+"</header>\n" \
@@ -504,10 +647,10 @@ String HTML_footer()
 String HTML_openCloseStop()
 {
 	String out;
-  out = "<a href=\"open\">["+SL("Open", "Открыть")+"]</a> \n";
-  out += "<a href=\"close\">["+SL("Close", "Закрыть")+"]</a> \n";
-  if (position != roll_to)
-    out += "<a href=\"stop\">["+SL("Stop", "Стоп")+"]</a> \n";
+  out = "<a href=\"open\" onclick=\"return Open();\">["+SL("Open", "Открыть")+"]</a> \n";
+  out += "<a href=\"close\" onclick=\"return Close();\">["+SL("Close", "Закрыть")+"]</a> \n";
+//  if (position != roll_to)
+  out += "<a href=\"stop\" onclick=\"return Stop();\">["+SL("Stop", "Стоп")+"]</a> \n";
 	return out;
 }	
 
@@ -547,7 +690,7 @@ String MemSize2Str(uint32_t mem)
 {
 	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ SL(" MB", " МБ");
 	if (mem%1024 == 0) return String(mem/1024)+SL(" KB"," КБ");
-	return String(mem)+(" B", " Б");
+	return String(mem)+SL(" B", " Б");
 }
 
 String HTML_status()
@@ -565,17 +708,17 @@ String HTML_status()
   out += HTML_tableLine(L("Version", "Версия"), VERSION);
   out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
   if (lastSync==0)
-    out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"));
+    out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"), "time");
   else
-    out += HTML_tableLine(L("Time", "Время"), TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]");
+    out += HTML_tableLine(L("Time", "Время"), TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]", "time");
 	
-  out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr());
-  out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"));
+  out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr(), "uptime");
+  out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 
   out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Position", "Положение")+"</td></tr>\n";
   out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
   out += HTML_tableLine(L("Roll to", "Цель"), String(roll_to), "dest");
-  out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()]);
+  out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()], "switch");
     
   out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Memory", "Память")+"</td></tr>\n";
   out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
@@ -589,6 +732,14 @@ String HTML_status()
   out += HTML_tableLine(L("Speed", "Частота"), String(ESP.getFlashChipSpeed()/1000000)+SL("MHz", "МГц"));
   out += HTML_tableLine(L("Mode", "Режим"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
   //out += HTML_tableLine("Host", String(ini.hostname));
+	FSInfo fs_info;
+	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("SPIFFS", "SPIFFS")+"</td></tr>\n";
+	if (SPIFFS.info(fs_info))
+	{
+		out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(fs_info.totalBytes));
+		out += HTML_tableLine(L("Used", "Использовано"), MemSize2Str(fs_info.usedBytes));
+	} else
+		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
   out +="</table></section>\n";
 
   return out;
@@ -650,14 +801,19 @@ void HTTP_handleSettings(void)
     if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
     if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
     if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
-    if (ini.step_delay_mks<10 || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
+    if (ini.step_delay_mks<MIN_STEP_DELAY || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
     if (httpServer.hasArg("timezone")) ini.timezone=atoi(httpServer.arg("timezone").c_str());
     if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
     if (httpServer.hasArg("length")) ini.full_length=atoi(httpServer.arg("length").c_str());
     if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
+    if (httpServer.hasArg("switch")) ini.switch_reversed=atoi(httpServer.arg("switch").c_str());
+    if (ini.switch_reversed>1) ini.switch_reversed=1;
 
     SaveSettings(&ini, sizeof(ini));
 
+		FillStepsTable();
+		AdjustTimerInterval();
+		
     HTTP_redirect("/settings?ok=1");
     return;
   }
@@ -679,8 +835,8 @@ void HTTP_handleSettings(void)
 	"{\n" \
 	"document.getElementById(\"btn_up\").disabled=true;\n" \
 	"document.getElementById(\"btn_dn\").disabled=true;\n" \
-	"pinout=document.getElementById(\"pinout\").selectedIndex;\n" \
-	"reversed=document.getElementById(\"reversed\").selectedIndex;\n" \
+	"pinout=document.getElementById(\"pinout\").value;\n" \
+	"reversed=document.getElementById(\"reversed\").value;\n" \
 	"delay=document.getElementById(\"delay\").value;\n" \
 	"var xhttp = new XMLHttpRequest();\n" \
 	"xhttp.onreadystatechange = function() {\n" \
@@ -730,20 +886,27 @@ void HTTP_handleSettings(void)
 
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Motor", "Мотор")+"</td></tr>\n";
 	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n" \
-	"<option value=\"0\""+(ini.pinout==0 ? " selected=\"selected\"" : "")+">A-B-C-D</option>\n" \
-	"<option value=\"1\""+(ini.pinout==1 ? " selected=\"selected\"" : "")+">A-C-B-D</option>\n" \
-	"<option value=\"2\""+(ini.pinout==2 ? " selected=\"selected\"" : "")+">A-B-D-C</option>\n" \
+	"<option value=\"2\""+(ini.pinout==2 ? " selected=\"selected\"" : "")+">A-B-C-D</option>\n" \
+	"<option value=\"0\""+(ini.pinout==0 ? " selected=\"selected\"" : "")+">A-C-B-D</option>\n" \
+	"<option value=\"1\""+(ini.pinout==1 ? " selected=\"selected\"" : "")+">A-B-D-C</option>\n" \
 	"</select></td></tr>\n" \
 	"<tr><td>"+SL("Direction:", "Направление:")+"</td><td><select id=\"reversed\" name=\"reversed\">\n" \
-	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Normal", "Прямое")+"</option>\n" \
-	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Reversed", "Обратное")+"</option>\n" \
+	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Normal", "Прямое")+"</option>\n" \
+	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Reversed", "Обратное")+"</option>\n" \
 	"</select></td></tr>\n";
   out+=HTML_editString(L("Step delay:", "Время шага:"),"delay", String(ini.step_delay_mks).c_str(), 6);
-	out+="<tr><td colspan=\"2\">"+SL("(microsecs, 10-65000, default 1500)", "(в мкс, 10-65000, обычно 1500)")+"</td></tr>\n" \
+	out+="<tr><td colspan=\"2\">"+SL("(microsecs, "+String(MIN_STEP_DELAY)+"-65000, default 1500)", "(в мкс, "+String(MIN_STEP_DELAY)+"-65000, обычно 1500)")+"</td></tr>\n" \
 	"<tr><td colspan=\"2\">\n" \
 	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\""+SL("Test up", "Тест вверх")+"\" onclick=\"TestUp()\">\n" \
 	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\""+SL("Test down", "Тест вниз")+"\" onclick=\"TestDown()\">\n" \
 	"</td></tr>\n";
+
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Endstop", "Концевик")+"</td></tr>\n" \
+	"<tr><td>"+SL("Type:", "Тип:")+"</td><td><select id=\"switch\" name=\"switch\">\n" \
+	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
+	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
+	"</select></td></tr>\n";
+
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
   out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
   out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
@@ -913,8 +1076,20 @@ void HTTP_handleClose(void)
 void HTTP_handleStop(void)
 {
   roll_to=position;
-  Motor_off();
+  MotorOff();
   HTTP_redirect(String("/"));
+}
+
+void HTTP_handleSet(void)
+{
+	if (httpServer.hasArg("pos"))
+	{
+		int pos=atoi(httpServer.arg("pos").c_str());
+		if (pos==0) Open();
+		else if (pos==100) Close();
+		else if (pos>0 && pos<100) roll_to=ini.full_length * pos / 100;
+	}
+  httpServer.send(200, "text/XML", "");
 }
 
 void HTTP_handleTest(void)
@@ -934,25 +1109,108 @@ void HTTP_handleTest(void)
   if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
   if (ini.pinout>=3) ini.pinout=0;
   if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
-  if (ini.step_delay_mks<10) ini.step_delay_mks=10;
+  if (ini.step_delay_mks<MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
   if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
   if (httpServer.hasArg("steps")) steps=atoi(httpServer.arg("steps").c_str());
   if (steps<0) steps=0;
+	
+	FillStepsTable();
+	AdjustTimerInterval();
 
-  for (int i=0; i<steps; i++)
-  {
-    Rotate(dir);
-    if (IsSwitchPressed() && i>50) break; // Ignoring switch at first 50 rotations
-    yield();
-  }
-  Motor_off();
-  roll_to=position;
-
+	switch_ignore_steps=50;  // Ignoring switch at first 50 rotations
+	if (dir) 
+		roll_to=position-steps;
+  else
+		roll_to=position+steps;
+	
+	uint32_t start_time=millis();
+	while(roll_to != position && (millis()-start_time < 10000)) 
+	{
+		delay(10);
+		yield();
+	}
+	roll_to=position;
+	
   ini.pinout=bak_pinout;
   ini.reversed=bak_reversed;
   ini.step_delay_mks=bak_step_delay_mks;
+	
+	FillStepsTable();
+	AdjustTimerInterval();
 
   httpServer.send(200, "text/html", String(position));
+}
+
+void HTTP_handleXML(void)
+{
+	String XML;
+  uint32_t realSize = ESP.getFlashChipRealSize();
+  uint32_t ideSize = ESP.getFlashChipSize();
+  FlashMode_t ideMode = ESP.getFlashChipMode();
+
+  XML.reserve(1024);
+  XML="<?xml version='1.0'?>";
+  XML+="<Curtain>";
+  XML+="<Info>";
+  XML+="<Version>";
+  XML+=VERSION;
+  XML+="</Version>";
+  XML+="<IP>";
+  XML+=WiFi.localIP().toString();
+  XML+="</IP>";
+  XML+="<Time>";
+  if (lastSync == 0)
+    XML+=SL("unknown", "хз");
+  else
+    XML+=TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]";
+  XML+="</Time>";
+  XML+="<UpTime>";
+  XML+=UptimeStr();
+  XML+="</UpTime>";
+  XML+="<RSSI>";
+  XML+=String(WiFi.RSSI()) + SL(" dBm", " дБм");
+  XML+="</RSSI>";
+  XML+="</Info>";
+
+  XML+="<ChipInfo>";
+  XML+="<ID>";
+  XML+=String(ESP.getChipId(), HEX);
+  XML+="</ID>";
+  XML+="<FlashID>";
+  XML+=String(ESP.getFlashChipId(), HEX);
+  XML+="</FlashID>";
+  XML+="<RealSize>";
+  XML+=MemSize2Str(realSize);
+  XML+="</RealSize>";
+  XML+="<IdeSize>";
+  XML+=MemSize2Str(ideSize);
+  XML+="</IdeSize>";
+
+  XML+="<Speed>";
+  XML+=String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц");
+  XML+="</Speed>";
+  XML+="<IdeMode>";
+  XML+=(ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN");
+  XML+="</IdeMode>";
+  XML+="</ChipInfo>";
+
+  XML+="<Position>";
+  XML+="<Now>";
+  XML+=String(position);
+  XML+="</Now>";
+  XML+="<Dest>";
+  XML+=String(roll_to);
+  XML+="</Dest>";
+  XML+="<Max>";
+  XML+=String(ini.full_length);
+  XML+="</Max>";
+  XML+="<End1>";
+  XML+=onoff[ini.lang][IsSwitchPressed()];
+  XML+="</End1>";
+  XML+="</Position>";
+  XML+="</Curtain>";
+
+  httpServer.send(200, "text/XML", XML);
 }
 
 void Scheduler()
@@ -1015,7 +1273,6 @@ void loop(void)
   
   httpServer.handleClient();
   ArduinoOTA.handle();
-  Motor_Action();
   SyncNTPTime();
   Scheduler();
 }
