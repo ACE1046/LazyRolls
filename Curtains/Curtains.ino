@@ -582,8 +582,11 @@ String HTML_header()
 	"  <script>\n" \
 	"    var timerId;\n" \
 	"    var timeout;\n" \
+	"    var active;\n" \
+	"    window.onfocus = function() { active = true; clearTimeout(timerId); GetStatus(); };\n" \
+	"    window.onblur = function() { active = false; clearTimeout(timerId); };\n" \
 	"    function GetStatus()\n" \
-	"    {\n" \
+	"    { if (active) {\n"\
 	"      nocache = \"&nocache=\" + Math.random() * 1000000;\n" \
 	"      var request = new XMLHttpRequest();\n" \
 	"      request.onreadystatechange = function()\n" \
@@ -610,7 +613,7 @@ String HTML_header()
 	"      // send HTTP GET request   \n" \
 	"      request.open(\"GET\", \"xml\");\n" \
 	"      request.send(null);\n" \
-	"      timerId = setTimeout('GetStatus()', timeout);\n" \
+	"    } timerId = setTimeout('GetStatus()', timeout);\n" \
 	"    }\n" \
 	"    function Call(url)\n" \
 	"    {\n" \
@@ -626,7 +629,7 @@ String HTML_header()
 	"    function Stop() { Call(\"stop\"); return false; }\n" \
 	"  </script>\n" \
 	"</head>\n" \
-	"<body onload=\"GetStatus()\">\n" \
+	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
 	" <div id=\"wrapper2\">\n" \
 	"  <div id=\"wrapper\">\n" \
 	"    <header>"+SL("Lazy rolls", "Ленивые шторы")+"</header>\n" \
