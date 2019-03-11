@@ -1,3 +1,4 @@
+ #define MQTT_DEBUG 1
 /*
 LazyRolls
 (C) 2019 ACE, a_c_e@mail.ru
@@ -16,9 +17,17 @@ http://imlazy.ru/rolls/
 #include <WiFiUdp.h>
 #include "settings.h"
 
+#define MQTT 1
+
+#ifdef MQTT
+ // For MQTT support: Sketch - Include Library - Manage Libraries - Adafruit MQTT - Install
+ #include <Adafruit_MQTT.h>
+ #include <Adafruit_MQTT_Client.h>
+#endif
+
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
 // Or comment next string and change defaults in this file
-//#include "wifi_settings.h"
+#include "wifi_settings.h"
 
 #ifndef SSID_AND_PASS
 // if "wifi_settings.h" not included
@@ -114,6 +123,72 @@ String SL(String s1, String s2)
 {
   return (ini.lang==0) ? s1 : s2;
 }
+
+//===================== MQTT ===========================================
+
+#ifdef MQTT
+
+WiFiClient client;
+Adafruit_MQTT_Client *mqtt;
+Adafruit_MQTT_Subscribe *mqtt_sub;
+
+void mqtt_callback(uint32_t current) 
+{
+    Serial.println(current);
+}
+
+void setup_MQTT()
+{
+	mqtt = new Adafruit_MQTT_Client(&client, "10.0.2.10", 1883);
+	mqtt_sub = new Adafruit_MQTT_Subscribe(mqtt, "lazyrolls/pos");
+  mqtt_sub->setCallback(mqtt_callback);
+  mqtt->subscribe(mqtt_sub);
+}
+
+void MQTT_connect() 
+{
+  int8_t ret;
+
+  // Stop if already connected.
+  if (mqtt->connected()) return;
+
+  Serial.print("Connecting to MQTT... ");
+
+  if ((ret = mqtt->connect()) != 0) 
+	{ // connect will return 0 for connected
+		Serial.println(mqtt->connectErrorString(ret));
+		Serial.println("Retrying MQTT connection in 5 seconds...");
+		mqtt->disconnect();
+		delay(5000);
+  } else
+		Serial.println("MQTT Connected!");
+}
+
+void ProcessMQTT()
+{
+	static uint32_t last_ping=0;
+  // Ensure the connection to the MQTT server is alive (this will make the first
+  // connection and automatically reconnect when disconnected).  See the MQTT_connect
+  // function definition.
+  MQTT_connect();
+
+  if (mqtt->connected()) 
+	{
+		mqtt->processPackets(1);
+
+		// keep the connection alive
+		if (millis()-last_ping > 40000)
+		{
+			last_ping=millis();
+			mqtt->ping();
+		}
+	}
+}	
+
+#else
+void setup_MQTT() {}
+void ProcessMQTT() {}
+#endif
 
 //===================== NTP ============================================
 
@@ -557,6 +632,7 @@ void setup()
 
   setup_OTA();
   setup_NTP();
+	setup_MQTT();
 
   // start position is twice as fully open. So on first close we will go up till home position
   position=ini.full_length*2+UP_SAFE_LIMIT;
@@ -1278,4 +1354,6 @@ void loop(void)
   ArduinoOTA.handle();
   SyncNTPTime();
   Scheduler();
+	ProcessMQTT();
+//	delay(100);
 }
