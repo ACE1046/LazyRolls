@@ -6,6 +6,7 @@ http://imlazy.ru/rolls/
 
 21.12.2018 v0.04 beta
 21.02.2019 v0.05 beta
+16.03.2019 v0.06
 
 */
 #include <ESP8266WiFi.h>
@@ -27,7 +28,7 @@ http://imlazy.ru/rolls/
 
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
 // Or comment next string and change defaults in this file
-#include "wifi_settings.h"
+//#include "wifi_settings.h"
 
 #ifndef SSID_AND_PASS
 // if "wifi_settings.h" not included
@@ -35,9 +36,15 @@ const char* def_ssid = "lazyrolls";
 const char* def_password = "";
 const char* def_ntpserver = "time.nist.gov";
 const char* def_hostname = "lazyroll";
+const char* def_mqtt_server = "mqtt.lan";
+const char* def_mqtt_login = "";
+const char* def_mqtt_password = "";
+const uint16_t def_mqtt_port=1883;
+const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
+const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.05 beta"
+#define VERSION "0.06"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -103,12 +110,16 @@ struct {
 	uint32_t spiffs_time; // time of files in spiffs for version checking
 	alarm_type alarms[ALARMS];
 	uint8_t switch_reversed; // reverse switch logic. 0 - NC, 1 - NO
+	bool mqtt_enabled;
+	char mqtt_server[64+1]; // MQTT server, ip or hostname
+	uint32_t mqtt_port;
+	char mqtt_login[64+1]; // MQTT server login
+	char mqtt_password[64+1]; // MQTT server password
+	uint16_t mqtt_ping_interval; // I'm alive ping interval, seconds
+	char mqtt_topic_state[127+1]; // publish current state topic
+	char mqtt_topic_command[127+1]; // sbscribe to commands topic
+	uint8_t mqtt_state_type; // percents, ON/OFF, etc
 } ini;
-
-//uint32_t open_time=((10*60)+30)*60;
-//uint32_t close_time=((3*60)+00)*60;
-//bool close_alarm=false;
-//bool open_alarm=false;
 
 // language functions
 const char * L(const char *s1, const char *s2)
@@ -123,72 +134,6 @@ String SL(String s1, String s2)
 {
   return (ini.lang==0) ? s1 : s2;
 }
-
-//===================== MQTT ===========================================
-
-#ifdef MQTT
-
-WiFiClient client;
-Adafruit_MQTT_Client *mqtt;
-Adafruit_MQTT_Subscribe *mqtt_sub;
-
-void mqtt_callback(uint32_t current) 
-{
-    Serial.println(current);
-}
-
-void setup_MQTT()
-{
-	mqtt = new Adafruit_MQTT_Client(&client, "10.0.2.10", 1883);
-	mqtt_sub = new Adafruit_MQTT_Subscribe(mqtt, "lazyrolls/pos");
-  mqtt_sub->setCallback(mqtt_callback);
-  mqtt->subscribe(mqtt_sub);
-}
-
-void MQTT_connect() 
-{
-  int8_t ret;
-
-  // Stop if already connected.
-  if (mqtt->connected()) return;
-
-  Serial.print("Connecting to MQTT... ");
-
-  if ((ret = mqtt->connect()) != 0) 
-	{ // connect will return 0 for connected
-		Serial.println(mqtt->connectErrorString(ret));
-		Serial.println("Retrying MQTT connection in 5 seconds...");
-		mqtt->disconnect();
-		delay(5000);
-  } else
-		Serial.println("MQTT Connected!");
-}
-
-void ProcessMQTT()
-{
-	static uint32_t last_ping=0;
-  // Ensure the connection to the MQTT server is alive (this will make the first
-  // connection and automatically reconnect when disconnected).  See the MQTT_connect
-  // function definition.
-  MQTT_connect();
-
-  if (mqtt->connected()) 
-	{
-		mqtt->processPackets(1);
-
-		// keep the connection alive
-		if (millis()-last_ping > 40000)
-		{
-			last_ping=millis();
-			mqtt->ping();
-		}
-	}
-}	
-
-#else
-void setup_MQTT() {}
-void ProcessMQTT() {}
-#endif
 
 //===================== NTP ============================================
 
@@ -333,6 +278,178 @@ void Close()
   roll_to=ini.full_length;
 }
 
+void ToPercent(uint8_t pos)
+{
+	if ((pos<0) || (pos>100)) return;
+	roll_to=ini.full_length * pos / 100;
+}
+
+void Stop()
+{
+  roll_to=position;
+  MotorOff();
+}
+
+//===================== MQTT ===========================================
+
+#ifdef MQTT
+
+WiFiClient client;
+Adafruit_MQTT_Client *mqtt = NULL;
+Adafruit_MQTT_Subscribe *mqtt_sub = NULL;
+String mqtt_topic_sub, mqtt_topic_pub;
+
+void mqtt_callback(char *str, uint16_t len) 
+{
+	int x;
+	if (len==0 || len>4) return;
+  for(int i = 0; i<len; i++) str[i] = tolower(str[i]); // make it lowercase
+	
+	x=strtol(str, NULL, 10);
+	if (x>0 && x<=100) ToPercent(x);
+	else if (strcmp(str, "0") == 0) Open();
+	else if (strcmp(str, "on") == 0) Open();
+	else if (strcmp(str, "off") == 0) Close();
+	else if (strcmp(str, "stop") == 0) Stop();
+}
+
+void setup_MQTT()
+{
+	if (mqtt) 
+	{
+		mqtt->disconnect();
+		delete mqtt;
+	}
+	if (mqtt_sub)
+	{
+		delete mqtt_sub;
+		mqtt_sub=NULL;
+	}
+	mqtt_topic_sub = String(ini.mqtt_topic_command);
+	mqtt_topic_sub.replace("%HOSTNAME%", String(ini.hostname));
+	mqtt_topic_pub = String(ini.mqtt_topic_state);
+	mqtt_topic_pub.replace("%HOSTNAME%", String(ini.hostname));
+
+	mqtt = new Adafruit_MQTT_Client(&client, ini.mqtt_server, ini.mqtt_port, ini.mqtt_login, ini.mqtt_password);
+	if (mqtt_topic_sub != "")
+	{
+		mqtt_sub = new Adafruit_MQTT_Subscribe(mqtt, mqtt_topic_sub.c_str());
+		mqtt_sub->setCallback(mqtt_callback);
+		mqtt->subscribe(mqtt_sub);
+	}
+}
+
+void MQTT_connect() 
+{
+  int8_t ret;
+	static uint32_t last_reconnect=0;
+
+	if (!ini.mqtt_enabled) return;
+	
+  // Stop if already connected.
+  if (mqtt->connected()) return;
+
+	if ((last_reconnect != 0) && (millis() - last_reconnect < 10000)) return;
+	
+  Serial.print("Connecting to MQTT... ");
+
+  if ((ret = mqtt->connect()) != 0) 
+	{ // connect will return 0 for connected
+		Serial.println(mqtt->connectErrorString(ret));
+		Serial.println("Retrying MQTT connection in 10 seconds...");
+		mqtt->disconnect();
+		last_reconnect=millis();
+  } else
+	{
+		Serial.println("MQTT Connected!");
+		last_reconnect=0;
+	}
+}
+
+void ProcessMQTT()
+{
+	static uint32_t last_ping=0;
+	static int last_val;
+	
+	if (!ini.mqtt_enabled) return;
+	
+  // Ensure the connection to the MQTT server is alive (this will make the first
+  // connection and automatically reconnect when disconnected).
+  MQTT_connect();
+
+  if (!mqtt->connected()) return;
+	mqtt->processPackets(1);
+
+	// keep the connection alive
+	if (millis()-last_ping > (uint32_t)ini.mqtt_ping_interval * 1000)
+	{
+		last_ping=millis();
+		mqtt->ping();
+	}
+	
+	// Publishing
+	if (mqtt_topic_pub != "")
+	{
+		int val;
+		switch (ini.mqtt_state_type)
+		{
+			case 1: 
+			case 2: 
+				val=(roll_to > (ini.full_length/2) ? 0 : 1); 
+				break;
+			default: 
+				val=(position*100 + (ini.full_length/2)) / ini.full_length; 
+				if (val > 100) val=100;
+				if (val < 0) val=0;
+			break;
+		}
+		if (val != last_val)
+		{
+			char buf[32];
+			last_val=val;
+			switch (ini.mqtt_state_type)
+			{
+				case 0: 
+					sprintf(buf, "%i", val);
+					break;
+				case 1:
+					if (val == 0) strcpy(buf, "OFF"); else strcpy(buf, "ON"); 
+					break;
+				case 2:
+					if (val == 0) strcpy(buf, "0"); else strcpy(buf, "1"); 
+					break;
+				case 3:
+					sprintf(buf, "{\"state\":\"%s\", \"position\":\"%d\"}", (val == 0 ? "OFF" : "ON"), val);
+					break;
+				default:
+					buf[0]=0;
+					break;
+			}
+			mqtt->publish(mqtt_topic_pub.c_str(), buf);
+			last_ping=millis();
+		}
+	}
+}	
+
+const char *MQTTstatus()
+{
+	if (ini.mqtt_enabled)
+	{
+		if (mqtt->connected())
+  		return L("connected", "подключен");
+		else
+  		return L("disconnected", "отключен");
+	}
+	else
+		return L("disabled", "выключен");
+}
+
+#else
+void setup_MQTT() {}
+void ProcessMQTT() {}
+char *MQTTstatus() { return "off"; }
+#endif
+
 // ==================== timer & interrupt ===============================
 
 volatile uint8_t switch_ignore_steps;
@@ -471,6 +588,24 @@ void init_SPIFFS()
 #endif
 }
 
+void ValidateSettings()
+{
+  if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
+  if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
+	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
+	if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
+	if (ini.step_delay_mks<MIN_STEP_DELAY || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
+	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
+	if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
+	if (ini.switch_reversed>1) ini.switch_reversed=1;
+	if (!ini.mqtt_server[0]) strcpy(ini.mqtt_server, def_mqtt_server);
+	if (ini.mqtt_port == 0) ini.mqtt_port=def_mqtt_port;
+	if (ini.mqtt_ping_interval < 5) ini.mqtt_ping_interval=60;
+	if (!ini.mqtt_topic_state[0]) strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
+	if (!ini.mqtt_topic_command[0]) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
+	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
+}	
+
 void setup_Settings(void)
 {
   memset(&ini, sizeof(ini), 0);
@@ -490,10 +625,18 @@ void setup_Settings(void)
 		ini.timezone=3*60; // Default City time zone by default :)
 		ini.full_length=11300;
 		ini.spiffs_time=0;
+		ini.mqtt_enabled=false;
+		strcpy(ini.mqtt_server, def_mqtt_server);
+		strcpy(ini.mqtt_login, def_mqtt_login);
+		strcpy(ini.mqtt_password, def_mqtt_password);
+		ini.mqtt_port=def_mqtt_port;
+		ini.mqtt_ping_interval=60;
+		strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
+		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
+		ini.mqtt_state_type=0;
 		Serial.println("Settings set to default");
 	}
-  if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-  if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
+	ValidateSettings();
 }
 
 void print_SPIFFS_info()
@@ -655,6 +798,13 @@ String HTML_header()
 	"  <meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
 	"  <title>"+SL("Lazy rolls", "Ленивые шторы")+"</title>\n" \
 	"  <link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
+// ToDo: move to styles.css
+"<style type=\"text/css\">" \
+".settings input[type=text] {" \
+"	width: 255px;" \
+"}	" \
+"</style>	" \
+	
 	"  <script>\n" \
 	"    var timerId;\n" \
 	"    var timeout;\n" \
@@ -677,6 +827,7 @@ String HTML_header()
 	"                document.getElementById(\"pos\").innerHTML = this.responseXML.getElementsByTagName('Now')[0].childNodes[0].nodeValue;\n" \
 	"                document.getElementById(\"dest\").innerHTML = this.responseXML.getElementsByTagName('Dest')[0].childNodes[0].nodeValue;\n" \
 	"                document.getElementById(\"switch\").innerHTML = this.responseXML.getElementsByTagName('End1')[0].childNodes[0].nodeValue;\n" \
+	"                document.getElementById(\"mqtt\").innerHTML = this.responseXML.getElementsByTagName('MQTT')[0].childNodes[0].nodeValue;\n" \
 
 	"                if (document.getElementById(\"pos\").innerHTML != document.getElementById(\"dest\").innerHTML)\n" \
 	"                  timeout=500;\n" \
@@ -765,6 +916,11 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
   return out;
 }
 
+String HTML_addOption(int value, int selected, const char *text)
+{
+	return "<option value=\""+String(value)+"\""+(selected==value ? " selected=\"selected\"" : "")+">"+text+"</option>\n";
+}
+
 String MemSize2Str(uint32_t mem)
 {
 	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ SL(" MB", " МБ");
@@ -816,9 +972,17 @@ String HTML_status()
 	if (SPIFFS.info(fs_info))
 	{
 		out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(fs_info.totalBytes));
-		out += HTML_tableLine(L("Used", "Использовано"), MemSize2Str(fs_info.usedBytes));
+		out += HTML_tableLine(L("Used", "Занято"), MemSize2Str(fs_info.usedBytes));
 	} else
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
+#ifdef MQTT	
+	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
+	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
+	if (ini.mqtt_enabled)
+	{
+	}
+#endif
+
   out +="</table></section>\n";
 
   return out;
@@ -853,10 +1017,39 @@ void HTTP_handleRoot(void)
 
 void SaveString(const char *id, char *inistr, int len)
 {
+	String s;
   if (!httpServer.hasArg(id)) return;
 
-  strncpy(inistr, httpServer.arg(id).c_str(), len-1);
+	s=httpServer.arg(id);
+	s.trim(); // remove leading and trailing whitespace
+  strncpy(inistr, s.c_str(), len-1);
   inistr[len-1]='\0';
+}
+
+void SaveInt(const char *id, uint8_t *iniint)
+{
+  if (!httpServer.hasArg(id)) return;
+  *iniint=atoi(httpServer.arg(id).c_str());
+}
+void SaveInt(const char *id, uint16_t *iniint)
+{
+  if (!httpServer.hasArg(id)) return;
+  *iniint=atoi(httpServer.arg(id).c_str());
+}
+void SaveInt(const char *id, uint32_t *iniint)
+{
+  if (!httpServer.hasArg(id)) return;
+  *iniint=atoi(httpServer.arg(id).c_str());
+}
+void SaveInt(const char *id, int *iniint)
+{
+  if (!httpServer.hasArg(id)) return;
+  *iniint=atoi(httpServer.arg(id).c_str());
+}
+void SaveInt(const char *id, bool *iniint)
+{
+  if (!httpServer.hasArg(id)) return;
+  *iniint=atoi(httpServer.arg(id).c_str());
 }
 
 void HTTP_handleSettings(void)
@@ -874,21 +1067,40 @@ void HTTP_handleSettings(void)
     SaveString("ntp",      ini.ntpserver,sizeof(ini.ntpserver));
 		if (strcmp(pass, "*")!=0) memcpy(ini.password, pass, sizeof(ini.password));
 
-    if (httpServer.hasArg("lang")) ini.lang=atoi(httpServer.arg("lang").c_str());
-    if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-    if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
-    if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
-    if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
-    if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
-    if (ini.step_delay_mks<MIN_STEP_DELAY || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
-    if (httpServer.hasArg("timezone")) ini.timezone=atoi(httpServer.arg("timezone").c_str());
-    if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
-    if (httpServer.hasArg("length")) ini.full_length=atoi(httpServer.arg("length").c_str());
-    if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
-    if (httpServer.hasArg("switch")) ini.switch_reversed=atoi(httpServer.arg("switch").c_str());
-    if (ini.switch_reversed>1) ini.switch_reversed=1;
+		SaveInt("lang", &ini.lang);
+		SaveInt("pinout", &ini.pinout);
+		SaveInt("reversed", &ini.reversed);
+		SaveInt("delay", &ini.step_delay_mks);
+		SaveInt("timezone", &ini.timezone);
+		SaveInt("length", &ini.full_length);
+		SaveInt("switch", &ini.switch_reversed);
+
+		pass[0]='*';
+		pass[1]='\0';
+    ini.mqtt_enabled=httpServer.hasArg("mqtt_enabled");
+    SaveString("mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server));
+		SaveInt("mqtt_port", &ini.mqtt_port);
+    SaveString("mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login));
+    SaveString("mqtt_password", pass, sizeof(ini.mqtt_password));
+    SaveString("ntp", ini.ntpserver,sizeof(ini.ntpserver));
+		if (strcmp(pass, "*")!=0) memcpy(ini.mqtt_password, pass, sizeof(ini.mqtt_password));
+		SaveInt("mqtt_ping_interval", &ini.mqtt_ping_interval);
+    SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
+    SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
+		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
+
+    // if (httpServer.hasArg("lang")) ini.lang=atoi(httpServer.arg("lang").c_str());
+    // if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
+    // if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
+    // if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
+    // if (httpServer.hasArg("timezone")) ini.timezone=atoi(httpServer.arg("timezone").c_str());
+    // if (httpServer.hasArg("length")) ini.full_length=atoi(httpServer.arg("length").c_str());
+    // if (httpServer.hasArg("switch")) ini.switch_reversed=atoi(httpServer.arg("switch").c_str());
+		ValidateSettings();
 
     SaveSettings(&ini, sizeof(ini));
+		
+		setup_MQTT();
 
 		FillStepsTable();
 		AdjustTimerInterval();
@@ -964,11 +1176,11 @@ void HTTP_handleSettings(void)
   out+="</select></td></tr>\n";
 
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Motor", "Мотор")+"</td></tr>\n";
-	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n" \
-	"<option value=\"2\""+(ini.pinout==2 ? " selected=\"selected\"" : "")+">A-B-C-D</option>\n" \
-	"<option value=\"0\""+(ini.pinout==0 ? " selected=\"selected\"" : "")+">A-C-B-D</option>\n" \
-	"<option value=\"1\""+(ini.pinout==1 ? " selected=\"selected\"" : "")+">A-B-D-C</option>\n" \
-	"</select></td></tr>\n" \
+	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n";
+	out+=HTML_addOption(2, ini.pinout, "A-B-C-D");
+	out+=HTML_addOption(0, ini.pinout, "A-C-B-D");
+	out+=HTML_addOption(1, ini.pinout, "A-B-D-C");
+	out+="</select></td></tr>\n" \
 	"<tr><td>"+SL("Direction:", "Направление:")+"</td><td><select id=\"reversed\" name=\"reversed\">\n" \
 	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Normal", "Прямое")+"</option>\n" \
 	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Reversed", "Обратное")+"</option>\n" \
@@ -989,6 +1201,24 @@ void HTTP_handleSettings(void)
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
   out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
   out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
+
+  out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
+	out+="<tr><td colspan=\"2\"><label for=\"mqtt_enabled\">\n";
+	out+="<input type=\"checkbox\" id=\"mqtt_enabled\" name=\"mqtt_enabled\"" + String((ini.mqtt_enabled) ? " checked" : "") + "/>\n";
+	out+=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazyru.home/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a></label></td></tr>\n";
+  out+=HTML_editString(L("Server:", "Сервер:"), "mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server));
+  out+=HTML_editString(L("Port:", "Порт:"), "mqtt_port", String(ini.mqtt_port).c_str(), 5);
+  out+=HTML_editString(L("Login:", "Логин:"), "mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login));
+  out+=HTML_editString(L("Password:", "Пароль:"), "mqtt_password", "*", sizeof(ini.mqtt_password));
+  out+=HTML_editString(L("Keep-alive:", "Keep-alive:"), "mqtt_ping_interval", String(ini.mqtt_ping_interval).c_str(), 5);
+  out+=HTML_editString(L("Commands:", "Команды:"), "mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
+  out+=HTML_editString(L("State:", "Статус:"), "mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
+	out+="<tr><td>"+SL("Type:", "Формат:")+"</td><td><select id=\"mqtt_state_type\" name=\"mqtt_state_type\">\n";
+	out+=HTML_addOption(0, ini.mqtt_state_type, "0-100 (%)");
+	out+=HTML_addOption(1, ini.mqtt_state_type, "ON/OFF");
+	out+=HTML_addOption(2, ini.mqtt_state_type, "0/1");
+	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
+	out+="</select></td></tr>\n";
   
   out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
   out+="</table>\n";
@@ -1135,6 +1365,8 @@ void HTTP_handleFormat(void)
 	delay(500);
 	SPIFFS.end();
 	SPIFFS.format();
+  setup_SPIFFS();
+	SaveSettings(&ini, sizeof(ini));
 	Serial.println("SPIFFS formatted. rebooting");
 	delay(500);
   ESP.reset();
@@ -1154,8 +1386,7 @@ void HTTP_handleClose(void)
 
 void HTTP_handleStop(void)
 {
-  roll_to=position;
-  MotorOff();
+	Stop();
   HTTP_redirect(String("/"));
 }
 
@@ -1166,7 +1397,7 @@ void HTTP_handleSet(void)
 		int pos=atoi(httpServer.arg("pos").c_str());
 		if (pos==0) Open();
 		else if (pos==100) Close();
-		else if (pos>0 && pos<100) roll_to=ini.full_length * pos / 100;
+		else if (pos>0 && pos<100) ToPercent(pos);
 	}
   httpServer.send(200, "text/XML", "");
 }
@@ -1249,6 +1480,9 @@ void HTTP_handleXML(void)
   XML+="<RSSI>";
   XML+=String(WiFi.RSSI()) + SL(" dBm", " дБм");
   XML+="</RSSI>";
+  XML+="<MQTT>";
+  XML+=MQTTstatus();
+  XML+="</MQTT>";
   XML+="</Info>";
 
   XML+="<ChipInfo>";
