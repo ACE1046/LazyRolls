@@ -1205,7 +1205,7 @@ void HTTP_handleSettings(void)
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
 	out+="<tr><td colspan=\"2\"><label for=\"mqtt_enabled\">\n";
 	out+="<input type=\"checkbox\" id=\"mqtt_enabled\" name=\"mqtt_enabled\"" + String((ini.mqtt_enabled) ? " checked" : "") + "/>\n";
-	out+=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazyru.home/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a></label></td></tr>\n";
+	out+=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a></label></td></tr>\n";
   out+=HTML_editString(L("Server:", "Сервер:"), "mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server));
   out+=HTML_editString(L("Port:", "Порт:"), "mqtt_port", String(ini.mqtt_port).c_str(), 5);
   out+=HTML_editString(L("Login:", "Логин:"), "mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login));
