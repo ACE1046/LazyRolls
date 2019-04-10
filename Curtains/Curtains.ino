@@ -7,6 +7,7 @@ http://imlazy.ru/rolls/
 21.12.2018 v0.04 beta
 21.02.2019 v0.05 beta
 16.03.2019 v0.06
+10.04.2019 v0.07
 
 */
 #include <ESP8266WiFi.h>
@@ -44,7 +45,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.06"
+#define VERSION "0.07"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -66,7 +67,7 @@ uint16_t def_step_delay_mks = 1500;
 #define DIR_UP (-1)
 #define DIR_DN (1)
 #define UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
-#define SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
+#define DEFAULT_SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
 #define MIN_STEP_DELAY 100 // minimal motor step time in mks
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
@@ -119,6 +120,7 @@ struct {
 	char mqtt_topic_state[127+1]; // publish current state topic
 	char mqtt_topic_command[127+1]; // sbscribe to commands topic
 	uint8_t mqtt_state_type; // percents, ON/OFF, etc
+	uint16_t switch_ignore_steps; // ignore endstop for first step on moving down
 } ini;
 
 // language functions
@@ -468,7 +470,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 	
   dir_up=(roll_to < position); // up - true
 
-	if (position==0 && !dir_up) switch_ignore_steps=SWITCH_IGNORE_STEPS;
+	if (position==0 && !dir_up) switch_ignore_steps=ini.switch_ignore_steps;
 	
 	if (IsSwitchPressed())
 	{
@@ -486,7 +488,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 				{
 					// Zero found, now can go down, ignoring switch for some steps
 					position=0; // zero point found
-				  switch_ignore_steps=SWITCH_IGNORE_STEPS;
+				  switch_ignore_steps=ini.switch_ignore_steps;
 				} else
 				{
 					// endswitch hit on going down. Something wrong
@@ -598,6 +600,8 @@ void ValidateSettings()
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
 	if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
+	if (ini.switch_ignore_steps<5) ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
+	if (ini.switch_ignore_steps>5000) ini.switch_ignore_steps=5000;
 	if (!ini.mqtt_server[0]) strcpy(ini.mqtt_server, def_mqtt_server);
 	if (ini.mqtt_port == 0) ini.mqtt_port=def_mqtt_port;
 	if (ini.mqtt_ping_interval < 5) ini.mqtt_ping_interval=60;
@@ -634,6 +638,7 @@ void setup_Settings(void)
 		strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
 		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
 		ini.mqtt_state_type=0;
+		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 		Serial.println("Settings set to default");
 	}
 	ValidateSettings();
@@ -766,7 +771,7 @@ void setup()
 
   MDNS.addService("http", "tcp", 80);
 
-  pinMode(PIN_SWITCH, INPUT);
+  pinMode(PIN_SWITCH, INPUT_PULLUP);
   pinMode(PIN_A, OUTPUT);
   pinMode(PIN_B, OUTPUT);
   pinMode(PIN_C, OUTPUT);
@@ -1074,6 +1079,7 @@ void HTTP_handleSettings(void)
 		SaveInt("timezone", &ini.timezone);
 		SaveInt("length", &ini.full_length);
 		SaveInt("switch", &ini.switch_reversed);
+		SaveInt("switch_ignore", &ini.switch_ignore_steps);
 
 		pass[0]='*';
 		pass[1]='\0';
@@ -1197,6 +1203,8 @@ void HTTP_handleSettings(void)
 	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
 	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
 	"</select></td></tr>\n";
+  out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 6);
+  out+="<tr><td colspan=\"2\">"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
 
   out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
   out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
@@ -1427,8 +1435,8 @@ void HTTP_handleTest(void)
 	FillStepsTable();
 	AdjustTimerInterval();
 
-	switch_ignore_steps=50;  // Ignoring switch at first 50 rotations
-	if (dir) 
+	switch_ignore_steps=ini.switch_ignore_steps;
+	if (dir)
 		roll_to=position-steps;
   else
 		roll_to=position+steps;
@@ -1589,5 +1597,5 @@ void loop(void)
   SyncNTPTime();
   Scheduler();
 	ProcessMQTT();
-//	delay(100);
+	delay(1);
 }
