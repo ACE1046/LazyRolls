@@ -73,6 +73,9 @@ section {
 	float: none;
 	margin-left: 252px;
 }
+.settings input {
+	width: 250px;
+}
 .alarms {
 	min-width: 250px;
 }

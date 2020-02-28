@@ -35,7 +35,7 @@ http://imlazy.ru/rolls/
 // if "wifi_settings.h" not included
 const char* def_ssid = "lazyrolls";
 const char* def_password = "";
-const char* def_ntpserver = "time.nist.gov";
+const char* def_ntpserver = "ru.pool.ntp.org";
 const char* def_hostname = "lazyroll";
 const char* def_mqtt_server = "mqtt.lan";
 const char* def_mqtt_login = "";
@@ -45,7 +45,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.07"
+#define VERSION "0.08b"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -227,14 +227,14 @@ int DayOfWeek(uint32_t time)
 
 //----------------------- Motor ----------------------------------------
 const uint8_t microstep[8][4]={
-	{1, 0, 0, 0},
-	{1, 1, 0, 0},
-	{0, 1, 0, 0},
-	{0, 1, 1, 0},
-	{0, 0, 1, 0},
-	{0, 0, 1, 1},
-	{0, 0, 0, 1},
-	{1, 0, 0, 1}};
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1}};
 void FillStepsTable()
 {
 	uint8_t i, j, n;
@@ -456,17 +456,33 @@ char *MQTTstatus() { return "off"; }
 
 volatile uint8_t switch_ignore_steps;
 
+#define MAX_SPEED 500
 void ICACHE_RAM_ATTR timer1Isr()
 {
   static uint8_t step=0;
+  static uint16_t speed=0;
+  static uint8_t delay=0;
 
   bool dir_up;
 
   if (position==roll_to)
 	{
 		MotorOff();
+    speed=0;
 		return; // stopped, do nothing
 	}
+
+  if (delay>0) 
+  {
+    delay--;
+    return;
+  }
+
+  if (speed < MAX_SPEED)
+  {
+    delay=4+ ((MAX_SPEED-speed) / 100);
+    speed++;
+  } else delay=3;
 	
   dir_up=(roll_to < position); // up - true
 
@@ -526,7 +542,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 
 void AdjustTimerInterval()
 {
-	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/256);
+	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/256);
 }
 
 void SetupTimer()
@@ -747,6 +763,8 @@ void setup()
       WiFi.softAP(ini.hostname); // ... but without password
     }
   }
+
+  //WiFi.setSleepMode(WIFI_NONE_SLEEP); 
 
   if (!MDNS.begin(ini.hostname)) Serial.println("Error setting up MDNS responder!");
 	else Serial.println("mDNS responder started");
@@ -1574,6 +1592,7 @@ void Scheduler()
 unsigned long last_reconnect=0;
 void loop(void) 
 {
+  static unsigned long n=0;
   if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
   { // in soft AP mode, trying to connect to network
 		if (last_reconnect==0) last_reconnect=millis();
@@ -1591,11 +1610,21 @@ void loop(void)
 				WiFi.mode(WIFI_AP);
     }
   }
-  
+ 
   httpServer.handleClient();
   ArduinoOTA.handle();
   SyncNTPTime();
   Scheduler();
 	ProcessMQTT();
+
+/*if (millis()-n > 10000)
+{
+  n=millis();
+  pinMode(2, OUTPUT);
+  digitalWrite(2, LOW);
+  delay(10);
+  digitalWrite(2, HIGH);
+}*/
+  
 	delay(1);
 }
