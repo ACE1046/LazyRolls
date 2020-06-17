@@ -45,7 +45,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.08"
+#define VERSION "0.08 ntpfix"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -257,12 +257,16 @@ WiFiUDP UDP;
 
 void setup_NTP()
 {
+//	Serial.println("udp open");
 	UDP.begin(123); // Start listening for UDP messages on port 123
 }
 
 void SyncNTPTime()
 {
-	if (UDP.parsePacket() == 0)
+	int packetSize = UDP.parsePacket();
+//	if (packetSize)
+//		Serial.printf("Received %d bytes from %s, port %d\n", packetSize, UDP.remoteIP().toString().c_str(), UDP.remotePort());
+	if (packetSize == 0)
 	{ // If there's no response (yet)
 		if (lastSync!=0 && (millis()-lastSync < NTP_SYNC)) return; // time ok
 		if (millis()-lastRequest < NTP_WAIT) return; // waiting for answer
@@ -280,12 +284,16 @@ void SyncNTPTime()
 		UDP.endPacket();
 		return;
 	}
-	UDP.read(NTPBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-	// Combine the 4 timestamp bytes into one 32-bit number
-	uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
-	// Convert NTP time to a UNIX timestamp: subtract seventy years:
-	UNIXTime = NTPTime - seventyYears;
-	lastSync=millis();
+//	Serial.println("NTP packet received");
+	if (UDP.remoteIP() == timeServerIP && UDP.read(NTPBuffer, NTP_PACKET_SIZE) == NTP_PACKET_SIZE) // read the packet into the buffer
+	{
+		// Combine the 4 timestamp bytes into one 32-bit number
+		uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
+		// Convert NTP time to a UNIX timestamp: subtract seventy years:
+		UNIXTime = NTPTime - seventyYears;
+		lastSync=millis();
+	}
+	UDP.flush();
 }
 
 uint32_t getTime()
