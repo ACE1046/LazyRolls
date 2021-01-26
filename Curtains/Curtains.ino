@@ -8,6 +8,7 @@ http://imlazy.ru/rolls/
 16.03.2019 v0.06
 10.04.2019 v0.07
 02.06.2020 v0.08
+26.01.2021 v0.09
 
 */
 #include <ESP8266WiFi.h>
@@ -17,6 +18,7 @@ http://imlazy.ru/rolls/
 #include <ArduinoOTA.h>
 #include <FS.h>
 #include <WiFiUdp.h>
+#include <DNSServer.h>
 #include "settings.h"
 
 #define MQTT 1
@@ -93,13 +95,14 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 typedef struct {
 	uint32_t time;
-	uint8_t percent_open; // 0 - open, 100 - close
+	uint8_t percent_open; // 0 - open, 100 - close, 101-105 - presets
 	uint8_t day_of_week; // LSB - monday
 	uint16_t flags;
 	uint32_t reserved;
 } alarm_type;
 #define ALARM_FLAG_ENABLED 0x0001
 
+#define MAX_PRESETS 5
 struct {
 	char hostname[16+1];
 	char ssid[32+1];
@@ -121,11 +124,12 @@ struct {
 	char mqtt_password[64+1]; // MQTT server password
 	uint16_t mqtt_ping_interval; // I'm alive ping interval, seconds
 	char mqtt_topic_state[127+1]; // publish current state topic
-	char mqtt_topic_command[127+1]; // sbscribe to commands topic
+	char mqtt_topic_command[127+1]; // subscribe to commands topic
 	uint8_t mqtt_state_type; // percents, ON/OFF, etc
 	uint16_t switch_ignore_steps; // ignore endstop for first step on moving down
 	uint8_t led_mode; // Default blue LED mode
 	uint8_t led_level; // Default blue LED brightness
+	uint16_t preset[MAX_PRESETS]; // Position (steps) for preset 1-5
 } ini;
 
 // language functions
@@ -239,6 +243,30 @@ void ProcessLED()
 		}
 	}
 	else LED_Off();
+}
+
+//===================== Captive Portal =================================
+DNSServer dnsServer;
+bool cp_active=false;
+const uint16_t DNS_PORT = 53;
+
+void CP_create()
+{
+	dnsServer.setErrorReplyCode(DNSReplyCode::ServerFailure);
+	dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
+	cp_active=true;
+}
+
+void CP_delete()
+{
+	cp_active=false;
+	dnsServer.stop();
+}
+
+void CP_process()
+{
+	if (!cp_active) return;
+	dnsServer.processNextRequest();
 }
 
 //===================== NTP ============================================
@@ -398,6 +426,18 @@ void ToPercent(uint8_t pos)
 	roll_to=ini.full_length * pos / 100;
 }
 
+void ToPosition(uint16_t pos)
+{
+	if (pos>ini.full_length) return;
+	roll_to=pos;
+}
+
+void ToPreset(uint8_t preset)
+{
+	if (preset==0 || preset > MAX_PRESETS) return;
+	roll_to=ini.preset[preset-1];
+}
+
 void Stop()
 {
 	roll_to=position;
@@ -450,6 +490,8 @@ void mqtt_callback(char *str, uint16_t len)
 	else if (strcmp(str, "off") == 0) Close();
 	else if (strcmp(str, "stop") == 0) Stop();
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
+	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10));
+	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10));
 }
 
 void setup_MQTT()
@@ -749,10 +791,9 @@ void init_SPIFFS()
 void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
-	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
 	if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
-	if (ini.step_delay_mks<MIN_STEP_DELAY || ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
+	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
+	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
 	if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
@@ -766,6 +807,8 @@ void ValidateSettings()
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level;
+	for (int i=0; i<MAX_PRESETS; i++)
+		if (ini.preset[i] > ini.full_length) ini.preset[i] = ini.full_length;
 }
 
 void setup_Settings(void)
@@ -893,6 +936,7 @@ void setup()
 	Serial.print("Hostname: ");
 	Serial.println(ini.hostname);
 
+	WiFi.persistent(false);
 	WiFi.hostname(ini.hostname);
 	WiFi.mode(WIFI_STA);
 
@@ -917,6 +961,7 @@ void setup()
 			WiFi.mode(WIFI_AP);
 			WiFi.softAP(ini.hostname); // ... but without password
 			LED_On();
+			CP_create();
 		}
 	}
 
@@ -939,6 +984,13 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
+	httpServer.onNotFound([]() { 
+		String message = "Not found URI: ";
+    message += httpServer.uri();
+
+    HTTP_redirect("/settings");
+		Serial.println(message);
+  });
 	httpServer.begin();
 
 	Serial.println(WiFi.localIP());
@@ -971,18 +1023,26 @@ void setup()
 // ============================= HTTP ===================================
 String HTML_header()
 {
-	String ret ="<!doctype html>\n" \
+	String ret;
+	
+	ret.reserve(4096);
+	ret = F("<!doctype html>\n" \
 	"<html>\n" \
 	"<head>\n" \
 	"<meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\">" \
 	"<meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\">\n" \
 	"<meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
-	"<title>"+SL("Lazy rolls", "Ленивые шторы")+"</title>\n" \
+	"<title>");
+	ret += SL("Lazy rolls", "Ленивые шторы");
+	ret += F("</title>\n" \
 	"<link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
 // ToDo: move to styles.css
 "<style type=\"text/css\">" \
-".settings input[type=text] {" \
+".val input[type=text] {" \
 "	width: 255px;" \
+"}	" \
+".val_p input[type=text] {" \
+"	width: 100px;" \
 "}	" \
 "</style>	" \
 
@@ -1038,24 +1098,31 @@ String HTML_header()
 		"}\n" \
 		"function Open() { Call(\"set?pos=0\"); return false; }\n" \
 		"function Close() { Call(\"set?pos=100\"); return false; }\n" \
+		"function Steps(s) { Call(\"set?steps=\"+s); return false; }\n" \
 		"function Stop() { Call(\"stop\"); return false; }\n" \
+		"function TestPreset(p) { s=document.getElementById(\"preset\"+p).value;" \
+		  "m=document.getElementById(\"length\").value;" \
+		  "if (s>m) { s=m; document.getElementById(\"preset\"+p).value=s; } Steps(s); return false; }\n" \
+		"function SetPreset(p) { document.getElementById(\"preset\"+p).value = document.getElementById(\"pos\").innerHTML; }\n" \
 	"</script>\n" \
 	"</head>\n" \
 	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
 	"<div id=\"wrapper2\">\n" \
 	"<div id=\"wrapper\">\n" \
-	"<header>"+SL("Lazy rolls", "Ленивые шторы")+"</header>\n" \
+	"<header>");
+	ret += SL("Lazy rolls", "Ленивые шторы");
+	ret += F("</header>\n" \
 	"<nav></nav>\n" \
-	"<div id=\"heading\"></div>\n";
+	"<div id=\"heading\"></div>\n");
 	return ret;
 }
 
 String HTML_footer()
 {
-	String ret = "  </div></div>\n" \
+	String ret = F("  </div></div>\n" \
 	"  <footer></footer>\n" \
 	"</body>\n" \
-	"</html>";
+	"</html>");
 	return ret;
 }
 
@@ -1069,7 +1136,7 @@ String HTML_openCloseStop()
 	return out;
 }
 
-String HTML_tableLine(const char *name, String val, char *id=NULL)
+String HTML_tableLine(const char *name, String val, const char *id=NULL)
 {
 	String ret="<tr><td>";
 	ret+=name;
@@ -1096,7 +1163,7 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
 	out+=String(inistr);
 	out+="\" maxlength=\"";
 	out+=String(len);
-	out+="\"\></td></tr>\n";
+	out+="\"/></td></tr>\n";
 
 	return out;
 }
@@ -1228,6 +1295,11 @@ void SaveInt(const char *id, uint16_t *iniint)
 	if (!httpServer.hasArg(id)) return;
 	*iniint=min(65535, atoi(httpServer.arg(id).c_str()));
 }
+void SaveInt(String id, uint16_t *iniint)
+{
+	if (!httpServer.hasArg(id.c_str())) return;
+	*iniint=min(65535, atoi(httpServer.arg(id.c_str()).c_str()));
+}
 void SaveInt(const char *id, uint32_t *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
@@ -1275,6 +1347,8 @@ void HTTP_handleSettings(void)
 		SaveInt("length", &ini.full_length);
 		SaveInt("switch", &ini.switch_reversed);
 		SaveInt("switch_ignore", &ini.switch_ignore_steps);
+		for (int i=0; i<MAX_PRESETS; i++)
+			SaveInt(String("preset"+String(i)), &ini.preset[i]);
 
 		pass[0]='*';
 		pass[1]='\0';
@@ -1304,6 +1378,22 @@ void HTTP_handleSettings(void)
 		FillStepsTable();
 		AdjustTimerInterval();
 
+		if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
+		{ // in soft AP mode, trying to connect to network
+			Serial.println("Trying to reconnect");
+			WiFi.begin(ini.ssid, ini.password);
+			if (WiFi.waitForConnectResult() == WL_CONNECTED)
+			{
+				Serial.println("Reconnected to network in STA mode. Closing AP");
+				HTTP_redirect("http://"+WiFi.localIP().toString()+"/settings");
+				delay(5000);
+				WiFi.softAPdisconnect(true);
+				WiFi.mode(WIFI_STA);
+				LED_Off();
+				CP_delete();
+			}
+		}
+		
 		HTTP_redirect("/settings?ok=1");
 		return;
 	}
@@ -1320,7 +1410,7 @@ void HTTP_handleSettings(void)
 		out+=SL("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
 			"<p>Сохранено!<br/>Настройки сети будут применены после перезагрузки.<br/><a href=\"reboot\">[Перезагрузить]</a></p>\n");
 
-	out +="<script>\n" \
+	out += F("<script>\n" \
 	"function Test(dir)\n" \
 	"{\n" \
 	"document.getElementById(\"btn_up\").disabled=true;\n" \
@@ -1344,7 +1434,7 @@ void HTTP_handleSettings(void)
 	"function TestUp() { Test(1); }\n" \
 	"function TestDown() { Test(0); }\n" \
 	"</script>\n" \
-	"<form method=\"post\" action=\"/settings\">\n";
+	"<form method=\"post\" action=\"/settings\">\n");
 
 	out+="<table>\n";
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
@@ -1402,6 +1492,15 @@ void HTTP_handleSettings(void)
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 5);
 	out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
+	for (int i=0; i<MAX_PRESETS; i++)
+	{
+		out+="<tr><td class=\"idname\">"+SL("Preset", "Позиция")+" "+String(i+1);
+		out+="</td><td class=\"val_p\"><input type=\"text\" name=\"preset"+String(i);
+		out+="\" id=\"preset"+String(i)+"\" value=\""+String(ini.preset[i])+="\" maxlength=\"5\"/>";
+		out+=" <input type=\"button\" value=\""+SL("Test", "Тест")+"\" onclick=\"TestPreset("+String(i)+")\">\n";
+		out+=" <input type=\"button\" value=\""+SL("Here", "Тут")+"\" onclick=\"SetPreset("+String(i)+")\">\n";
+		out+="</td></tr>\n";
+	}
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
 	out+="<tr><td colspan=\"2\"><label for=\"mqtt_enabled\">\n";
@@ -1470,7 +1569,7 @@ String TimeToStr(uint32_t t)
 
 void HTTP_handleAlarms(void)
 {
-	String out;
+	String out, save;
 
 	HTTP_Activity();
 
@@ -1492,7 +1591,7 @@ void HTTP_handleAlarms(void)
 			if (httpServer.hasArg("dest"+n))
 			{
 				ini.alarms[a].percent_open=atoi(httpServer.arg("dest"+n).c_str());
-				if (ini.alarms[a].percent_open>100) ini.alarms[a].percent_open=100;
+				if (ini.alarms[a].percent_open>100+MAX_PRESETS) ini.alarms[a].percent_open=100;
 			}
 
 			uint8_t b=0;
@@ -1516,12 +1615,17 @@ void HTTP_handleAlarms(void)
 	out += "<section class=\"alarms\">\n";
 	out += "<form method=\"post\" action=\"/alarms\">\n";
 	out += "<table width=\"100%\">\n";
+	save = "<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	out+=save;
+	out += "<tr><td colspan=\"2\">"+ \
+	  SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
+		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
 
 	for (int a=0; a<ALARMS; a++)
 	{
 		String n=String(a);
 		out += "<tr><td colspan=\"2\">\n";
-		if (a>0) out += "<hr/>\n";
+		out += "<hr/>\n";
 		out += "<label for=\"en"+n+"\">\n";
 		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" +
 		  ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
@@ -1541,6 +1645,12 @@ void HTTP_handleAlarms(void)
 			out += "<option value=\""+String(p)+"\""+
 			  (ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
 		}
+		for (int p=0; p<MAX_PRESETS; p++)
+		{
+			out += "<option value=\""+String(101+p)+"\""+
+			  (ini.alarms[a].percent_open==101+p ? " selected" : "")+">"+
+				SL("Preset", "Позиция")+" "+String(p+1)+"</option>\n";
+		}
 		out += "</select>\n";
 		out += "</td></tr><tr><td>";
 
@@ -1557,7 +1667,7 @@ void HTTP_handleAlarms(void)
 		out += "</td></tr>\n";
 	}
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	out+=save;
 
 	out += "</table>\n";
 	out+="</form>\n";
@@ -1625,6 +1735,18 @@ void HTTP_handleSet(void)
 		if (pos==0) Open();
 		else if (pos==100) Close();
 		else if (pos>0 && pos<100) ToPercent(pos);
+	  httpServer.send(200, "text/XML", blank_xml);
+	}
+	else if (httpServer.hasArg("steps"))
+	{
+		int pos=atoi(httpServer.arg("steps").c_str());
+		ToPosition(pos);
+	  httpServer.send(200, "text/XML", blank_xml);
+	}
+	else if (httpServer.hasArg("preset"))
+	{
+		int preset=atoi(httpServer.arg("preset").c_str());
+		ToPreset(preset);
 	  httpServer.send(200, "text/XML", blank_xml);
 	}
 	else if (httpServer.hasArg("led"))
@@ -1766,12 +1888,14 @@ void Scheduler()
 			SaveSettings(&ini, sizeof(ini));
 		}
 
-		if (ini.alarms[a].percent_open == 0)
+		if (ini.alarms[a].percent_open == 0) {
 			Open();
-		else
-		{
-			if (position<0) position=0;
-			roll_to=ini.full_length * ini.alarms[a].percent_open / 100;
+		} else if (ini.alarms[a].percent_open <= 100)
+		{ // percentage
+			ToPercent(ini.alarms[a].percent_open);
+		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
+		{ // preset
+			ToPreset(ini.alarms[a].percent_open-100);
 		}
 	}
 }
@@ -1793,6 +1917,7 @@ void loop(void)
 				WiFi.softAPdisconnect(true);
 				WiFi.mode(WIFI_STA);
 				LED_Off();
+				CP_delete();
 			} else
 				WiFi.mode(WIFI_AP);
 		}
@@ -1803,6 +1928,7 @@ void loop(void)
 	SyncNTPTime();
 	Scheduler();
 	ProcessMQTT();
+	CP_process();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
