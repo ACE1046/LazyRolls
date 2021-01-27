@@ -25,6 +25,7 @@ http://imlazy.ru/rolls/
 
 #ifdef MQTT
  // For MQTT support: Sketch - Include Library - Manage Libraries - Adafruit MQTT - Install
+ // change #define MAXBUFFERSIZE (512) in Adafruit_MQTT.h
  #include <Adafruit_MQTT.h>
  #include <Adafruit_MQTT_Client.h>
 #endif
@@ -130,6 +131,7 @@ struct {
 	uint8_t led_mode; // Default blue LED mode
 	uint8_t led_level; // Default blue LED brightness
 	uint16_t preset[MAX_PRESETS]; // Position (steps) for preset 1-5
+	bool mqtt_discovery; // Home Assistant MQTT Discovery enabled
 } ini;
 
 // language functions
@@ -488,6 +490,8 @@ void mqtt_callback(char *str, uint16_t len)
 	else if (strcmp(str, "0") == 0) Open();
 	else if (strcmp(str, "on") == 0) Open();
 	else if (strcmp(str, "off") == 0) Close();
+	else if (strcmp(str, "open") == 0) Open();
+	else if (strcmp(str, "close") == 0) Close();
 	else if (strcmp(str, "stop") == 0) Stop();
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
 	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10));
@@ -520,6 +524,22 @@ void setup_MQTT()
 	}
 }
 
+void MQTT_discover()
+{
+	String mqtt_topic, mqtt_data;
+	char id[17];
+	
+	if (!ini.mqtt_enabled) return;
+	if (!mqtt->connected()) return;
+
+	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
+	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
+	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"\", \"~\": \""+\
+	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"pos_clsd\": 100, \"pos_open\": 0}";
+	
+	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str());
+}
+
 void MQTT_connect()
 {
 	int8_t ret;
@@ -544,6 +564,7 @@ void MQTT_connect()
 	{
 		Serial.println("MQTT Connected!");
 		last_reconnect=0;
+		if (ini.mqtt_discovery) MQTT_discover();
 	}
 }
 
@@ -1363,6 +1384,7 @@ void HTTP_handleSettings(void)
 		SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
 		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
 		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
+		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
 		SaveInt("led_mode", &ini.led_mode);
 		SaveInt("led_level", &ini.led_level);
 
@@ -1519,6 +1541,9 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.mqtt_state_type, "0/1");
 	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
 	out+="</select></td></tr>\n";
+	out+="<tr><td colspan=\"2\"><label for=\"mqtt_discovery\">\n";
+	out+="<input type=\"checkbox\" id=\"mqtt_discovery\" name=\"mqtt_discovery\"" + String((ini.mqtt_discovery) ? " checked" : "") + "/>\n";
+	out+=SL("HA MQTT discovery", "HA MQTT discovery")+"</label></td></tr>\n";
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("LED", "Светодиод")+"</td></tr>\n";
 //	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
