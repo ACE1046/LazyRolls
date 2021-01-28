@@ -1,6 +1,6 @@
 /*
 LazyRolls
-(C) 2019, 2020 ACE, a_c_e@mail.ru
+(C) 2019-2021 ACE, a_c_e@mail.ru
 http://imlazy.ru/rolls/
 
 21.12.2018 v0.04 beta
@@ -8,7 +8,7 @@ http://imlazy.ru/rolls/
 16.03.2019 v0.06
 10.04.2019 v0.07
 02.06.2020 v0.08
-26.01.2021 v0.09
+27.01.2021 v0.09
 
 */
 #include <ESP8266WiFi.h>
@@ -24,10 +24,8 @@ http://imlazy.ru/rolls/
 #define MQTT 1
 
 #ifdef MQTT
- // For MQTT support: Sketch - Include Library - Manage Libraries - Adafruit MQTT - Install
- // change #define MAXBUFFERSIZE (512) in Adafruit_MQTT.h
- #include <Adafruit_MQTT.h>
- #include <Adafruit_MQTT_Client.h>
+ // For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
+ #include <PubSubClient.h>
 #endif
 
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
@@ -48,7 +46,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.08 ntpfix"
+#define VERSION "0.09"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -470,20 +468,24 @@ const char * GetVoltageStr()
 
 #ifdef MQTT
 
-WiFiClient client;
-Adafruit_MQTT_Client *mqtt = NULL;
-Adafruit_MQTT_Subscribe *mqtt_sub = NULL;
+WiFiClient espClient;
+PubSubClient *mqtt = NULL;
+
+uint32_t last_mqtt=0;
+
 String mqtt_topic_sub, mqtt_topic_pub;
 
-void mqtt_callback(char *str, uint16_t len)
+void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
 	int x;
+	char *str=(char*)payload;
 	if (len==0) return;
 	if (led_mode == LED_MQTT || led_mode == LED_MQTT_HTTP) LED_Blink();
 
 	NetworkActivity();
 
 	for(int i = 0; i<len; i++) str[i] = tolower(str[i]); // make it lowercase
+	str[len]=0;
 
 	x=strtol(str, NULL, 10);
 	if (x>0 && x<=100) ToPercent(x);
@@ -492,7 +494,7 @@ void mqtt_callback(char *str, uint16_t len)
 	else if (strcmp(str, "off") == 0) Close();
 	else if (strcmp(str, "open") == 0) Open();
 	else if (strcmp(str, "close") == 0) Close();
-	else if (strcmp(str, "stop") == 0) Stop();
+	else if (strcmp(str, "stop") == 0) { Stop(); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
 	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10));
 	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10));
@@ -505,39 +507,17 @@ void setup_MQTT()
 		mqtt->disconnect();
 		delete mqtt;
 	}
-	if (mqtt_sub)
-	{
-		delete mqtt_sub;
-		mqtt_sub=NULL;
-	}
 	mqtt_topic_sub = String(ini.mqtt_topic_command);
 	mqtt_topic_sub.replace("%HOSTNAME%", String(ini.hostname));
 	mqtt_topic_pub = String(ini.mqtt_topic_state);
 	mqtt_topic_pub.replace("%HOSTNAME%", String(ini.hostname));
 
-	mqtt = new Adafruit_MQTT_Client(&client, ini.mqtt_server, ini.mqtt_port, ini.mqtt_login, ini.mqtt_password);
+	mqtt = new PubSubClient(espClient);
+  mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
+	mqtt->setKeepAlive(ini.mqtt_ping_interval);
+	mqtt->setBufferSize(512);
 	if (mqtt_topic_sub != "")
-	{
-		mqtt_sub = new Adafruit_MQTT_Subscribe(mqtt, mqtt_topic_sub.c_str());
-		mqtt_sub->setCallback(mqtt_callback);
-		mqtt->subscribe(mqtt_sub);
-	}
-}
-
-void MQTT_discover()
-{
-	String mqtt_topic, mqtt_data;
-	char id[17];
-	
-	if (!ini.mqtt_enabled) return;
-	if (!mqtt->connected()) return;
-
-	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
-	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
-	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"\", \"~\": \""+\
-	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"pos_clsd\": 100, \"pos_open\": 0}";
-	
-	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str());
+		mqtt->setCallback(mqtt_callback);
 }
 
 void MQTT_connect()
@@ -554,9 +534,9 @@ void MQTT_connect()
 
 	Serial.print("Connecting to MQTT... ");
 
-	if ((ret = mqtt->connect()) != 0)
+	if ((mqtt->connect(ini.hostname, ini.mqtt_login, ini.mqtt_password)) == false)
 	{ // connect will return 0 for connected
-		Serial.println(mqtt->connectErrorString(ret));
+		Serial.println(mqtt->state());
 		Serial.println("Retrying MQTT connection in 10 seconds...");
 		mqtt->disconnect();
 		last_reconnect=millis();
@@ -564,13 +544,31 @@ void MQTT_connect()
 	{
 		Serial.println("MQTT Connected!");
 		last_reconnect=0;
+		last_mqtt=0;
+		if (mqtt_topic_sub != "")
+			mqtt->subscribe(mqtt_topic_sub.c_str());
 		if (ini.mqtt_discovery) MQTT_discover();
 	}
 }
 
+void MQTT_discover()
+{
+	String mqtt_topic, mqtt_data;
+	char id[17];
+	
+	if (!ini.mqtt_enabled) return;
+	if (!mqtt->connected()) return;
+
+	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
+	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
+	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"\", \"~\": \""+\
+	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"pos_clsd\": 100, \"pos_open\": 0}";
+	
+	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+}
+
 void ProcessMQTT()
 {
-	static uint32_t last_ping=0;
 	static int last_val;
 
 	if (!ini.mqtt_enabled) return;
@@ -580,14 +578,7 @@ void ProcessMQTT()
 	MQTT_connect();
 
 	if (!mqtt->connected()) return;
-	mqtt->processPackets(1);
-
-	// keep the connection alive
-	if (millis()-last_ping > (uint32_t)ini.mqtt_ping_interval * 1000)
-	{
-		last_ping=millis();
-		mqtt->ping();
-	}
+	mqtt->loop();
 
 	// Publishing
 	if (mqtt_topic_pub != "")
@@ -605,10 +596,11 @@ void ProcessMQTT()
 				if (val < 0) val=0;
 			break;
 		}
-		if (val != last_val)
+		if (val != last_val || last_mqtt==0 || millis()-last_mqtt > 60*60*1000)
 		{
 			char buf[32];
 			last_val=val;
+			last_mqtt=millis();
 			switch (ini.mqtt_state_type)
 			{
 				case 0:
@@ -631,7 +623,6 @@ void ProcessMQTT()
 					break;
 			}
 			mqtt->publish(mqtt_topic_pub.c_str(), buf);
-			last_ping=millis();
 		}
 	}
 }
@@ -1071,7 +1062,7 @@ String HTML_header()
 		"var timerId;\n" \
 		"var timeout=1000;\n" \
 		"var active;\n" \
-		"window.onfocus = function() { active = true; clearTimeout(timerId); GetStatus(); };\n" \
+		"window.onfocus = function() { active = true; clearTimeout(timerId); timeout=500; GetStatus(); };\n" \
 		"window.onblur = function() { active = false; clearTimeout(timerId); };\n" \
 		"function st(t, id, tag)\n" \
 		"{ f=t.responseXML.getElementsByTagName(tag)[0]; if(f) document.getElementById(id).innerHTML = f.childNodes[0].nodeValue; }\n"\
@@ -1941,6 +1932,7 @@ void loop(void)
 				Serial.println("Reconnected to network in STA mode. Closing AP");
 				WiFi.softAPdisconnect(true);
 				WiFi.mode(WIFI_STA);
+				Serial.println(WiFi.localIP());
 				LED_Off();
 				CP_delete();
 			} else
