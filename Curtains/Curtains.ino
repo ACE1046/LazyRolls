@@ -46,7 +46,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.09"
+#define VERSION "0.09 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -83,7 +83,7 @@ const uint8_t steps[3][4]={
 	{PIN_A, PIN_B, PIN_D, PIN_C},
 	{PIN_A, PIN_B, PIN_C, PIN_D}
 };
-volatile int position; // current motor steps position. 0 - fully open, -1 - unknown.
+volatile int position; // current motor steps position. 0 - at endstop
 volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 bool voltage_available=0;
@@ -130,6 +130,7 @@ struct {
 	uint8_t led_level; // Default blue LED brightness
 	uint16_t preset[MAX_PRESETS]; // Position (steps) for preset 1-5
 	bool mqtt_discovery; // Home Assistant MQTT Discovery enabled
+	uint8_t sw_at_bottom; // 0 - switch at opened position, 1 - switch at closed position
 } ini;
 
 // language functions
@@ -409,26 +410,30 @@ bool ICACHE_RAM_ATTR IsSwitchPressed()
 	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
 }
 
-void Open()
+int Position2Percents(int pos)
 {
-	roll_to=0-UP_SAFE_LIMIT; // up to 0 and beyond (a little)
-}
-
-void Close()
-{
-	if (position<0) position=0;
-	roll_to=ini.full_length;
+	int percent;
+	if (pos<=0) percent=0;
+	else if (pos>=ini.full_length) percent=100;
+	else percent=(pos*100 + (ini.full_length/2)) / ini.full_length;
+	if (ini.sw_at_bottom) percent=100-percent;
+	return percent;
 }
 
 void ToPercent(uint8_t pos)
 {
 	if ((pos<0) || (pos>100)) return;
-	roll_to=ini.full_length * pos / 100;
+	if (ini.sw_at_bottom) pos=100-pos;
+
+	if (pos == 0)
+		roll_to=0-UP_SAFE_LIMIT; // up to 0 and beyond (a little)
+	else
+		roll_to=ini.full_length * pos / 100;
 }
 
-void ToPosition(uint16_t pos)
+void ToPosition(int pos)
 {
-	if (pos>ini.full_length) return;
+	if (pos<0 || pos>ini.full_length) return;
 	roll_to=pos;
 }
 
@@ -436,6 +441,16 @@ void ToPreset(uint8_t preset)
 {
 	if (preset==0 || preset > MAX_PRESETS) return;
 	roll_to=ini.preset[preset-1];
+}
+
+void Open()
+{
+	ToPercent(0);
+}
+
+void Close()
+{
+	ToPercent(100);
 }
 
 void Stop()
@@ -562,7 +577,8 @@ void MQTT_discover()
 	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
 	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
 	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"\", \"~\": \""+\
-	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"pos_clsd\": 100, \"pos_open\": 0}";
+	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", "+\
+		"\"pos_clsd\": 100, \"pos_open\": 0}";
 	
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
@@ -588,12 +604,10 @@ void ProcessMQTT()
 		{
 			case 1:
 			case 2:
-				val=(roll_to > (ini.full_length/2) ? 0 : 1);
+				val=Position2Percents(position) < 50;
 				break;
 			default:
-				val=(position*100 + (ini.full_length/2)) / ini.full_length;
-				if (val > 100) val=100;
-				if (val < 0) val=0;
+				val=Position2Percents(position);
 			break;
 		}
 		if (val != last_val || last_mqtt==0 || millis()-last_mqtt > 60*60*1000)
@@ -613,9 +627,7 @@ void ProcessMQTT()
 					if (val == 0) strcpy(buf, "0"); else strcpy(buf, "1");
 					break;
 				case 3:
-					val2=(roll_to*100 + (ini.full_length/2)) / ini.full_length;
-					if (val2 > 100) val2=100;
-					if (val2 < 0) val2=0;
+					val2=Position2Percents(roll_to);
 					sprintf(buf, "{\"state\":\"%s\", \"position\":\"%d\", \"destination\":\"%d\"}", (val == 0 ? "OFF" : "ON"), val, val2);
 					break;
 				default:
@@ -1358,6 +1370,7 @@ void HTTP_handleSettings(void)
 		SaveInt("timezone", &ini.timezone);
 		SaveInt("length", &ini.full_length);
 		SaveInt("switch", &ini.switch_reversed);
+		SaveInt("sw_at_bottom", &ini.sw_at_bottom);
 		SaveInt("switch_ignore", &ini.switch_ignore_steps);
 		for (int i=0; i<MAX_PRESETS; i++)
 			SaveInt(String("preset"+String(i)), &ini.preset[i]);
@@ -1499,6 +1512,10 @@ void HTTP_handleSettings(void)
 	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
 	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
 	"</select></td></tr>\n";
+  out+="<tr><td>"+SL("Position:", "Положение:")+"</td><td><select id=\"sw_at_bottom\" name=\"sw_at_bottom\">\n" \
+  "<option value=\"0\""+(ini.sw_at_bottom ? "" : " selected=\"selected\"")+">"+SL("At fully open", "На открыто")+"</option>\n" \
+  "<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
+  "</select></td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
 	out+="<tr><td colspan=\"2\">"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
 
@@ -1805,7 +1822,7 @@ void HTTP_handleTest(void)
 	AdjustTimerInterval();
 
 	switch_ignore_steps=ini.switch_ignore_steps;
-	if (dir)
+	if (dir ^ ini.sw_at_bottom)
 		roll_to=position-steps;
 	else
 		roll_to=position+steps;
@@ -1904,9 +1921,7 @@ void Scheduler()
 			SaveSettings(&ini, sizeof(ini));
 		}
 
-		if (ini.alarms[a].percent_open == 0) {
-			Open();
-		} else if (ini.alarms[a].percent_open <= 100)
+		if (ini.alarms[a].percent_open <= 100)
 		{ // percentage
 			ToPercent(ini.alarms[a].percent_open);
 		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
