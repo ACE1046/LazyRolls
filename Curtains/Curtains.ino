@@ -534,7 +534,7 @@ void setup_MQTT()
 	mqtt_topic_pub.replace("%HOSTNAME%", String(ini.hostname));
 
 	mqtt = new PubSubClient(espClient);
-  mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
+	mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
 	mqtt->setKeepAlive(ini.mqtt_ping_interval);
 	mqtt->setBufferSize(1024);
 	if (mqtt_topic_sub != "")
@@ -576,7 +576,7 @@ void MQTT_discover()
 {
 	String mqtt_topic, mqtt_data;
 	char id[17];
-	
+
 	if (!ini.mqtt_enabled) return;
 	if (!mqtt->connected()) return;
 
@@ -590,7 +590,7 @@ void MQTT_discover()
 		mqtt_data+="\"pos_clsd\": 0, \"pos_open\": 100}";
 	else
 		mqtt_data+="\"pos_clsd\": 100, \"pos_open\": 0}";
-	
+
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
 
@@ -1021,13 +1021,13 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
-	httpServer.onNotFound([]() { 
+	httpServer.onNotFound([]() {
 		String message = "Not found URI: ";
-    message += httpServer.uri();
+		message += httpServer.uri();
 
-    HTTP_redirect("/settings");
+		HTTP_redirect("/settings");
 		Serial.println(message);
-  });
+	});
 	httpServer.begin();
 
 	Serial.println(WiFi.localIP());
@@ -1061,7 +1061,7 @@ void setup()
 String HTML_header()
 {
 	String ret;
-	
+
 	ret.reserve(4096);
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
@@ -1440,7 +1440,7 @@ void HTTP_handleSettings(void)
 				CP_delete();
 			}
 		}
-		
+
 		HTTP_redirect("/settings?ok=1");
 		return;
 	}
@@ -1533,10 +1533,10 @@ void HTTP_handleSettings(void)
 	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
 	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
 	"</select></td></tr>\n";
-  out+="<tr><td>"+SL("Position:", "Положение:")+"</td><td><select id=\"sw_at_bottom\" name=\"sw_at_bottom\">\n" \
-  "<option value=\"0\""+(ini.sw_at_bottom ? "" : " selected=\"selected\"")+">"+SL("At fully open", "На открыто")+"</option>\n" \
-  "<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
-  "</select></td></tr>\n";
+	out+="<tr><td>"+SL("Position:", "Положение:")+"</td><td><select id=\"sw_at_bottom\" name=\"sw_at_bottom\">\n" \
+	"<option value=\"0\""+(ini.sw_at_bottom ? "" : " selected=\"selected\"")+">"+SL("At fully open", "На открыто")+"</option>\n" \
+	"<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
+	"</select></td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
 	out+="<tr><td colspan=\"2\">"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
 
