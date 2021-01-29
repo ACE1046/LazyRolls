@@ -131,6 +131,7 @@ struct {
 	uint16_t preset[MAX_PRESETS]; // Position (steps) for preset 1-5
 	bool mqtt_discovery; // Home Assistant MQTT Discovery enabled
 	uint8_t sw_at_bottom; // 0 - switch at opened position, 1 - switch at closed position
+	uint8_t mqtt_invert; // mqtt percents inverted, 0% = closed
 } ini;
 
 // language functions
@@ -503,8 +504,13 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	str[len]=0;
 
 	x=strtol(str, NULL, 10);
-	if (x>0 && x<=100) ToPercent(x);
-	else if (strcmp(str, "0") == 0) Open();
+	if (x>0 && x<=100 || strcmp(str, "0") == 0)
+	{
+		if (ini.mqtt_invert)
+			ToPercent(100-x);
+		else
+			ToPercent(x);
+	}
 	else if (strcmp(str, "on") == 0) Open();
 	else if (strcmp(str, "off") == 0) Close();
 	else if (strcmp(str, "open") == 0) Open();
@@ -530,7 +536,7 @@ void setup_MQTT()
 	mqtt = new PubSubClient(espClient);
   mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
 	mqtt->setKeepAlive(ini.mqtt_ping_interval);
-	mqtt->setBufferSize(512);
+	mqtt->setBufferSize(1024);
 	if (mqtt_topic_sub != "")
 		mqtt->setCallback(mqtt_callback);
 }
@@ -576,9 +582,14 @@ void MQTT_discover()
 
 	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
 	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
-	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"\", \"~\": \""+\
-	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", "+\
-		"\"pos_clsd\": 100, \"pos_open\": 0}";
+	mqtt_data = "{\"availability\":[{\"topic\":\"zigbee2mqtt/bridge/state\"}], \"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"_blind\", \"~\": \""+\
+	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ";
+	mqtt_data += "\"device\":{\"identifiers\": [\""+String(id)+"\"], \"name\": \""+String(ini.hostname)+"\", ";
+	mqtt_data += "\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \""+String(VERSION)+"\"}, ";
+	if (ini.mqtt_invert)
+		mqtt_data+="\"pos_clsd\": 0, \"pos_open\": 100}";
+	else
+		mqtt_data+="\"pos_clsd\": 100, \"pos_open\": 0}";
 	
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
@@ -608,6 +619,7 @@ void ProcessMQTT()
 				break;
 			default:
 				val=Position2Percents(position);
+				if (ini.mqtt_invert) val=100-val;
 			break;
 		}
 		if (val != last_val || last_mqtt==0 || millis()-last_mqtt > 60*60*1000)
@@ -628,6 +640,7 @@ void ProcessMQTT()
 					break;
 				case 3:
 					val2=Position2Percents(roll_to);
+					if (ini.mqtt_invert) val2=100-val2;
 					sprintf(buf, "{\"state\":\"%s\", \"position\":\"%d\", \"destination\":\"%d\"}", (val == 0 ? "OFF" : "ON"), val, val2);
 					break;
 				default:
@@ -1173,6 +1186,13 @@ String HTML_tableLine(const char *name, String val, const char *id=NULL)
 	return ret;
 }
 
+String HTML_addCheckbox(const char* text, const char* id, bool checked)
+{
+	return "<tr><td colspan=\"2\"><label for=\""+String(id)+"\">\n"+\
+	  "<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
+	  String(text)+"</label></td></tr>\n";
+}
+
 String HTML_editString(const char *header, const char *id, const char *inistr, int len)
 {
 	String out;
@@ -1388,6 +1408,7 @@ void HTTP_handleSettings(void)
 		SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
 		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
 		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
+		ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
 		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
 		SaveInt("led_mode", &ini.led_mode);
 		SaveInt("led_level", &ini.led_level);
@@ -1532,10 +1553,10 @@ void HTTP_handleSettings(void)
 		out+="</td></tr>\n";
 	}
 
+#ifdef MQTT
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
-	out+="<tr><td colspan=\"2\"><label for=\"mqtt_enabled\">\n";
-	out+="<input type=\"checkbox\" id=\"mqtt_enabled\" name=\"mqtt_enabled\"" + String((ini.mqtt_enabled) ? " checked" : "") + "/>\n";
-	out+=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a></label></td></tr>\n";
+	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
+	out+=HTML_addCheckbox(s.c_str(), "mqtt_enabled", ini.mqtt_enabled);
 	out+=HTML_editString(L("Server:", "Сервер:"), "mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server)-1);
 	out+=HTML_editString(L("Port:", "Порт:"), "mqtt_port", String(ini.mqtt_port).c_str(), 5);
 	out+=HTML_editString(L("Login:", "Логин:"), "mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login)-1);
@@ -1549,9 +1570,9 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.mqtt_state_type, "0/1");
 	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
 	out+="</select></td></tr>\n";
-	out+="<tr><td colspan=\"2\"><label for=\"mqtt_discovery\">\n";
-	out+="<input type=\"checkbox\" id=\"mqtt_discovery\" name=\"mqtt_discovery\"" + String((ini.mqtt_discovery) ? " checked" : "") + "/>\n";
-	out+=SL("HA MQTT discovery", "HA MQTT discovery")+"</label></td></tr>\n";
+	out+=HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
+	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
+#endif
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("LED", "Светодиод")+"</td></tr>\n";
 //	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
