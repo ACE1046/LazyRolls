@@ -9,6 +9,10 @@ Automatic motorized roller blinds project.
 Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)\
 Видео работы: [https://www.youtube.com/watch?v=lvBh_m7pOAI](https://www.youtube.com/watch?v=lvBh_m7pOAI)
 
+### Плагины для систем умного дома
+[Domoticz](https://github.com/ACE1046/LazyRollsDomoticz)\
+[Hubitat Elevation](https://github.com/yix/Hubitat/blob/master/drivers/LazyRolls.groovy) (Автор [yix](https://github.com/yix))
+
 ### Структура директорий
 
 Curtains - скетч для Ардуино\
