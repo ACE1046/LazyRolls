@@ -8,7 +8,7 @@ http://imlazy.ru/rolls/
 16.03.2019 v0.06
 10.04.2019 v0.07
 02.06.2020 v0.08
-27.01.2021 v0.09
+29.01.2021 v0.09
 
 */
 #include <ESP8266WiFi.h>
@@ -37,7 +37,7 @@ http://imlazy.ru/rolls/
 const char* def_ssid = "lazyrolls";
 const char* def_password = "";
 const char* def_ntpserver = "ru.pool.ntp.org";
-const char* def_hostname = "lazyroll";
+const char* def_hostname = "lazyroll-%06X";
 const char* def_mqtt_server = "mqtt.lan";
 const char* def_mqtt_login = "";
 const char* def_mqtt_password = "";
@@ -46,7 +46,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.09 beta"
+#define VERSION "0.09"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -856,7 +856,7 @@ void setup_Settings(void)
 		Serial.println("Settings loaded");
 	} else
 	{
-		strcpy(ini.hostname  , def_hostname);
+		sprintf(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
 		strcpy(ini.ssid      , def_ssid);
 		strcpy(ini.password  , def_password);
 		strcpy(ini.ntpserver , def_ntpserver);
