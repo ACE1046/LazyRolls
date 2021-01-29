@@ -582,7 +582,7 @@ void MQTT_discover()
 
 	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
 	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
-	mqtt_data = "{\"availability\":[{\"topic\":\"zigbee2mqtt/bridge/state\"}], \"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"_blind\", \"~\": \""+\
+	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"_blind\", \"~\": \""+\
 	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ";
 	mqtt_data += "\"device\":{\"identifiers\": [\""+String(id)+"\"], \"name\": \""+String(ini.hostname)+"\", ";
 	mqtt_data += "\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \""+String(VERSION)+"\"}, ";
