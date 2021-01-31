@@ -1593,6 +1593,7 @@ void HTTP_handleSettings(void)
 	out+="</select></td></tr>\n";
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	out+="<tr><td colspan=\"2\"><a href=\"/update\">"+SL("Firmware update", "Обновление прошивки")+"</a></td></tr>\n";
 	out+="</table>\n";
 	out+="</form>\n";
 	out+="</section>\n";
