@@ -736,7 +736,6 @@ void ICACHE_RAM_ATTR timer1Isr()
 			return;
 		}
 	}
-	if (switch_ignore_steps>0) switch_ignore_steps--;
 
 	if (dir_up)
 	{
@@ -753,6 +752,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 		{
 			step=0;
 			position++;
+			if (switch_ignore_steps>0) switch_ignore_steps--;
 		}
 	}
 
