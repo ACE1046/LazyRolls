@@ -706,6 +706,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 	dir_up=(roll_to < position); // up - true
 
 	if (position==0 && !dir_up) switch_ignore_steps=ini.switch_ignore_steps;
+	if (dir_up) switch_ignore_steps=0;
 
 	if (IsSwitchPressed())
 	{
