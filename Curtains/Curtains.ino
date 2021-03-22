@@ -462,7 +462,18 @@ void Stop()
 
 uint32_t GetVoltage()
 {
-	return analogRead(A0)*121/8;  // *1000*16/1024 mV, 150K:10K divider gives *125/8, but can be adjusted a little
+	int v, i, min;
+
+	// We need to get a minimal value from a few samples with small delay for better accuracy
+	// otherwise ESP gives a little bit higher values.
+	min=analogRead(A0);
+	for (i=0; i<3; i++)
+	{
+		delay(1);
+		v=analogRead(A0);
+		if (v<min) min=v;
+	}
+	return min*121/8;  // *1000*16/1024 mV, 150K:10K divider gives *125/8, but can be adjusted a little
 }
 
 const char * GetVoltageStr()
