@@ -9,6 +9,7 @@ http://imlazy.ru/rolls/
 10.04.2019 v0.07
 02.06.2020 v0.08
 29.01.2021 v0.09
+22.03.2021 v0.10
 
 */
 #include <ESP8266WiFi.h>
@@ -46,7 +47,7 @@ const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
 #endif
 
-#define VERSION "0.09"
+#define VERSION "0.10"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -65,6 +66,9 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_B 4
 #define PIN_C 13
 #define PIN_D 12
+#define PIN_EN 4
+#define PIN_ST 13
+#define PIN_DR 12
 #define PIN_LED 2
 #define DIR_UP (-1)
 #define DIR_DN (1)
@@ -368,6 +372,7 @@ int DayOfWeek(uint32_t time)
 }
 
 //----------------------- Motor ----------------------------------------
+#define PINOUT_SD 3
 const uint8_t microstep[8][4]={
 	{1, 0, 0, 0},
 	{1, 1, 0, 0},
@@ -380,6 +385,9 @@ const uint8_t microstep[8][4]={
 void FillStepsTable()
 {
 	uint8_t i, j, n;
+	
+	if (ini.pinout >= PINOUT_SD) return; // not needed for step/dir
+	
 	for (i=0; i<8; i++)
 	{
 		n=i;
@@ -398,11 +406,14 @@ void FillStepsTable()
 
 void inline ICACHE_RAM_ATTR MotorOff()
 {
-	// digitalWrite(PIN_A, LOW);
-	// digitalWrite(PIN_B, LOW);
-	// digitalWrite(PIN_C, LOW);
-	// digitalWrite(PIN_D, LOW);
-	GPOC = (1 << PIN_A) | (1 << PIN_B) | (1 << PIN_C) | (1 << PIN_D);
+	if (ini.pinout != PINOUT_SD)
+		// digitalWrite(PIN_A, LOW);
+		// digitalWrite(PIN_B, LOW);
+		// digitalWrite(PIN_C, LOW);
+		// digitalWrite(PIN_D, LOW);
+		GPOC = (1 << PIN_A) | (1 << PIN_B) | (1 << PIN_C) | (1 << PIN_D);
+	else
+		GPOS = (1 << PIN_EN) | (1 << PIN_ST); // Disable, step end
 }
 
 bool ICACHE_RAM_ATTR IsSwitchPressed()
@@ -702,6 +713,8 @@ void ICACHE_RAM_ATTR timer1Isr()
 		return; // stopped, do nothing
 	}
 
+	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
+	
 	if (delay>0)
 	{
 		delay--;
@@ -767,8 +780,16 @@ void ICACHE_RAM_ATTR timer1Isr()
 		}
 	}
 
-	GPOS = step_s[step % 8];
-	GPOC = step_c[step % 8];
+	if (ini.pinout != PINOUT_SD)
+	{
+		GPOS = step_s[step % 8];
+		GPOC = step_c[step % 8];
+	} else
+	{
+		GPOC = 1 << PIN_EN; // active - low
+		if (dir_up ^ ini.reversed) GPOS = 1 << PIN_DR; else GPOC = 1 << PIN_DR;
+		GPOS = 1 << PIN_ST;
+	}
 }
 
 void AdjustTimerInterval()
@@ -840,7 +861,7 @@ void init_SPIFFS()
 void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-	if (ini.pinout<0 || ini.pinout>=3) ini.pinout=0;
+	if (ini.pinout<0 || ini.pinout>=4) ini.pinout=0;
 	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
@@ -1528,6 +1549,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.pinout, "A-B-C-D");
 	out+=HTML_addOption(0, ini.pinout, "A-C-B-D");
 	out+=HTML_addOption(1, ini.pinout, "A-B-D-C");
+	out+=HTML_addOption(3, ini.pinout, "Step/Dir");
 	out+="</select></td></tr>\n" \
 	"<tr><td>"+SL("Direction:", "Направление:")+"</td><td><select id=\"reversed\" name=\"reversed\">\n" \
 	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Normal", "Прямое")+"</option>\n" \
@@ -1845,7 +1867,7 @@ void HTTP_handleTest(void)
 	if (httpServer.hasArg("up")) dir=true;
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
 	if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
-	if (ini.pinout>=3) ini.pinout=0;
+	if (ini.pinout>=4) ini.pinout=0;
 	if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
 	if (ini.step_delay_mks<MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
