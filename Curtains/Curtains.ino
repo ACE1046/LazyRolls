@@ -73,9 +73,9 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_LED 2
 #define DIR_UP (-1)
 #define DIR_DN (1)
-#define UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
-#define DEFAULT_SWITCH_IGNORE_STEPS 300 // ignore endstop for first step on moving down
-#define MIN_STEP_DELAY 100 // minimal motor step time in mks
+#define DEFAULT_UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
+#define DEFAULT_SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
+#define MIN_STEP_DELAY 50 // minimal motor step time in mks
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
 
@@ -138,6 +138,8 @@ struct {
 	uint8_t sw_at_bottom; // 0 - switch at opened position, 1 - switch at closed position
 	uint8_t mqtt_invert; // mqtt percents inverted, 0% = closed
 	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
+	int up_safe_limit; // make extra rotations up if not hit switch
+	uint8_t btn_pin; // hardware button pin selection
 } ini;
 
 // language functions
@@ -162,7 +164,7 @@ void NetworkActivity(void)
 
 //===================== LED ============================================
 
-typedef enum { LED_OFF = 0, LED_ON, LED_MQTT, LED_HTTP, LED_MQTT_HTTP, LED_ALIVE, LED_MODE_MAX } led_modes;
+typedef enum { LED_OFF = 0, LED_ON, LED_MQTT, LED_HTTP, LED_MQTT_HTTP, LED_ALIVE, LED_BUTTON, LED_MODE_MAX } led_modes;
 typedef enum { LED_LOW = 0, LED_MED, LED_HIGH, LED_LEVEL_MAX } led_levels;
 uint8_t led_mode;
 uint8_t led_level;
@@ -176,6 +178,7 @@ String LEDModeString(uint8_t mode = 0xFF)
 	if (mode == LED_HTTP) return SL("On HTTP requests", "При HTTP запросах");
 	if (mode == LED_MQTT_HTTP) return SL("On MQTT and HTTP", "При MQTT и HTTP");
 	if (mode == LED_ALIVE) return SL("Blink alive", "Мигать периодически");
+	if (mode == LED_BUTTON) return SL("On button press", "По нажатию кнопки");
 	return "";
 }
 
@@ -218,6 +221,7 @@ bool LED_Command(const char *cmd)
 	else if (strcmp(cmd, "http") == 0) led_mode=LED_HTTP;
 	else if (strcmp(cmd, "mqtt_http") == 0) led_mode=LED_MQTT_HTTP;
 	else if (strcmp(cmd, "alive") == 0) led_mode=LED_ALIVE;
+	else if (strcmp(cmd, "button") == 0) led_mode=LED_BUTTON;
 
 	else if (strcmp(cmd, "low") == 0) led_level=LED_LOW;
 	else if (strcmp(cmd, "med") == 0) led_level=LED_MED;
@@ -438,9 +442,10 @@ void ToPercent(uint8_t pos)
 {
 	if ((pos<0) || (pos>100)) return;
 	if (ini.sw_at_bottom) pos=100-pos;
-
+	
+	if (position<0) position=0;
 	if (pos == 0)
-		roll_to=0-UP_SAFE_LIMIT; // up to 0 and beyond (a little)
+		roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
 	else
 		roll_to=ini.full_length * pos / 100;
 }
@@ -448,12 +453,14 @@ void ToPercent(uint8_t pos)
 void ToPosition(int pos)
 {
 	if (pos<0 || pos>ini.full_length) return;
+	if (position<0) position=0;
 	roll_to=pos;
 }
 
 void ToPreset(uint8_t preset)
 {
 	if (preset==0 || preset > MAX_PRESETS) return;
+	if (position<0) position=0;
 	roll_to=ini.preset[preset-1];
 }
 
@@ -806,20 +813,108 @@ void ICACHE_RAM_ATTR timer1Isr()
 
 void AdjustTimerInterval()
 {
-	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/256);
+	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/16);
 }
 
 void SetupTimer()
 {
 	timer1_isr_init();
 	timer1_attachInterrupt(timer1Isr);
-	timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP);
+	timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
 	AdjustTimerInterval();
 }
 
 void StopTimer()
 {
 	timer1_disable();
+}
+
+// ==================== button =======================================
+
+#define LONG_PRESS_MS 1000
+#define SHORT_PRESS_MS 50
+#define DOUBLE_CLICK_MS 3000
+
+uint8_t pin, button;
+enum BTN_STATES { NO_PRESS, SHORT_PRESS, LONG_PRESS };
+
+void ICACHE_RAM_ATTR btnISR()
+{
+	static uint32_t lastChange=0;
+	static uint8_t lastState=0;
+	
+	uint32_t now;
+	uint8_t state = !digitalRead(pin); // active low
+	if (state == lastState) return; // ignore duplicate readings
+	
+	now=millis();
+	if (!state)
+	{
+		if (now - lastChange >= LONG_PRESS_MS) button=LONG_PRESS;
+		else if (now - lastChange >= SHORT_PRESS_MS) button=SHORT_PRESS;
+	}
+	lastChange = now;
+	lastState = state;	
+}
+
+void setup_Button()
+{
+	detachInterrupt(0);
+	detachInterrupt(2);
+	detachInterrupt(3);
+	
+	if (!ini.btn_pin) return;
+	
+	switch (ini.btn_pin)
+	{
+		case 1: pin=0; break;
+		case 2: pin=2; break;
+		case 3: pin=3; break;
+		default: return;
+	}
+	pinMode(pin, INPUT_PULLUP);
+	attachInterrupt(digitalPinToInterrupt(pin), btnISR, CHANGE);
+}
+
+void ButtonClick()
+{
+	static uint32_t lastClick=millis();
+	static uint8_t lastCommand;
+	uint8_t open;
+	
+	if (roll_to != position) 
+	{
+		Stop();
+		return;
+	}
+	if (millis() - lastClick < DOUBLE_CLICK_MS)
+		open = !lastCommand; // invert direction on double click
+	else
+		open = position > ini.full_length/2;
+		
+	if (open) Open(); else Close();
+	
+	lastCommand = open;
+}
+
+void ButtonLongClick()
+{
+	if (roll_to != position) 
+	{
+		Stop();
+		return;
+	}
+	if (position == ini.preset[0]) ToPreset(2); else ToPreset(1);
+}
+
+void process_Button()
+{
+	if (button == NO_PRESS) return;
+	
+	if (button == SHORT_PRESS) ButtonClick();
+	if (button == LONG_PRESS) ButtonLongClick();
+	button=NO_PRESS;
+	if (led_mode == LED_BUTTON) LED_Blink();
 }
 
 // ==================== initialization ===============================
@@ -877,10 +972,12 @@ void ValidateSettings()
 	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
-	if (ini.full_length<300 || ini.full_length>=99999) ini.full_length=10000;
+	if (ini.full_length<300 || ini.full_length>=999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
 	if (ini.switch_ignore_steps<5) ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 	if (ini.switch_ignore_steps>65000) ini.switch_ignore_steps=65000;
+	if (ini.up_safe_limit<0) ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
+	if (ini.up_safe_limit>65000) ini.up_safe_limit=65000;
 	if (!ini.mqtt_server[0]) strcpy(ini.mqtt_server, def_mqtt_server);
 	if (ini.mqtt_port == 0) ini.mqtt_port=def_mqtt_port;
 	if (ini.mqtt_ping_interval < 5) ini.mqtt_ping_interval=60;
@@ -897,6 +994,7 @@ void ValidateSettings()
 void setup_Settings(void)
 {
 	memset(&ini, sizeof(ini), 0);
+		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 	if (LoadSettings(&ini, sizeof(ini)))
 	{
 		Serial.println("Settings loaded");
@@ -924,6 +1022,7 @@ void setup_Settings(void)
 		strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 		ini.mqtt_state_type=0;
 		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
+		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 		ini.led_mode=0;
 		ini.led_level=0;
 		Serial.println("Settings set to default");
@@ -1093,13 +1192,14 @@ void setup()
 	setup_MQTT();
 
 	// start position is twice as fully open. So on first close we will go up till home position
-	position=ini.full_length*2+UP_SAFE_LIMIT;
+	position=ini.full_length*2+ini.up_safe_limit;
 	if (IsSwitchPressed()) position=0; // Fully open, if switch is pressed
 	roll_to=position;
 
 	FillStepsTable();
 
 	SetupTimer();
+	setup_Button();
 
 	voltage_available = GetVoltage() > 3300; // Voltage data available if reading is above 3.3V
 }
@@ -1360,6 +1460,9 @@ void HTTP_handleRoot(void)
 	out=HTML_status();
 
 	out += HTML_mainmenu();
+	
+	out += SL("Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).",
+		"Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.");
 
 	out += HTML_footer();
 	httpServer.send(200, "text/html", out);
@@ -1439,6 +1542,8 @@ void HTTP_handleSettings(void)
 		SaveInt("switch", &ini.switch_reversed);
 		SaveInt("sw_at_bottom", &ini.sw_at_bottom);
 		SaveInt("switch_ignore", &ini.switch_ignore_steps);
+		SaveInt("btn_pin", &ini.btn_pin);
+		SaveInt("up_safe_limit", &ini.up_safe_limit);
 		for (int i=0; i<MAX_PRESETS; i++)
 			SaveInt(String("preset"+String(i)), &ini.preset[i]);
 
@@ -1469,6 +1574,7 @@ void HTTP_handleSettings(void)
 		SaveSettings(&ini, sizeof(ini));
 
 		setup_MQTT();
+		setup_Button();
 
 		FillStepsTable();
 		AdjustTimerInterval();
@@ -1493,7 +1599,7 @@ void HTTP_handleSettings(void)
 		return;
 	}
 
-	out.reserve(10240);
+	out.reserve(20480);
 
 	out=HTML_status();
 
@@ -1588,9 +1694,19 @@ void HTTP_handleSettings(void)
 	"</select></td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
 	out+="<tr><td colspan=\"2\">"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
+	out+=HTML_editString(L("Extra:", "Запас:"), "up_safe_limit", String(ini.up_safe_limit).c_str(), 5);
+	out+="<tr><td colspan=\"2\">"+SL("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")+"</td></tr>\n";
 
+	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Button", "Кнопка")+"</td></tr>\n" \
+	"<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\">\n";
+	out+=HTML_addOption(0, ini.btn_pin, L("None", "Нет"));
+	out+=HTML_addOption(1, ini.btn_pin, "GPIO0 (DTR)");
+	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
+	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)");
+	out+="</select></td></tr>\n";
+	
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
-	out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 5);
+	out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
 	out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
 	for (int i=0; i<MAX_PRESETS; i++)
 	{
@@ -1634,6 +1750,7 @@ void HTTP_handleSettings(void)
 	MODE_OPT(LED_HTTP);
 	MODE_OPT(LED_MQTT_HTTP);
 	MODE_OPT(LED_ALIVE);
+	MODE_OPT(LED_BUTTON);
 	out+="</select></td></tr>\n";
 	out+="<tr><td>"+SL("Brightness:", "Яркость:")+"</td><td><select id=\"led_level\" name=\"led_level\">\n";
 #define LEVEL_OPT(x) out+=HTML_addOption(x, ini.led_level, LEDLevelString(x).c_str());
@@ -2033,6 +2150,7 @@ void loop(void)
 	Scheduler();
 	ProcessMQTT();
 	CP_process();
+	process_Button();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
