@@ -43,8 +43,9 @@ const char* def_mqtt_server = "mqtt.lan";
 const char* def_mqtt_login = "";
 const char* def_mqtt_password = "";
 const uint16_t def_mqtt_port=1883;
-const char* def_mqtt_topic_state = "/lazyroll/%HOSTNAME%/state";
-const char* def_mqtt_topic_command = "/lazyroll/%HOSTNAME%/command";
+const char* def_mqtt_topic_state = "lazyroll/%HOSTNAME%/state";
+const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
+const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
 #define VERSION "0.10"
@@ -136,6 +137,7 @@ struct {
 	bool mqtt_discovery; // Home Assistant MQTT Discovery enabled
 	uint8_t sw_at_bottom; // 0 - switch at opened position, 1 - switch at closed position
 	uint8_t mqtt_invert; // mqtt percents inverted, 0% = closed
+	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
 } ini;
 
 // language functions
@@ -511,7 +513,7 @@ PubSubClient *mqtt = NULL;
 
 uint32_t last_mqtt=0;
 
-String mqtt_topic_sub, mqtt_topic_pub;
+String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt;
 
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
@@ -545,21 +547,24 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 
 void setup_MQTT()
 {
-	if (mqtt)
-	{
-		mqtt->disconnect();
-		delete mqtt;
-	}
 	mqtt_topic_sub = String(ini.mqtt_topic_command);
 	mqtt_topic_sub.replace("%HOSTNAME%", String(ini.hostname));
 	mqtt_topic_pub = String(ini.mqtt_topic_state);
 	mqtt_topic_pub.replace("%HOSTNAME%", String(ini.hostname));
+	mqtt_topic_lwt = String(ini.mqtt_topic_alive);
+	mqtt_topic_lwt.replace("%HOSTNAME%", String(ini.hostname));
+	if (mqtt)
+	{
+		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
+		mqtt->disconnect();
+		delete mqtt;
+	}
 
 	mqtt = new PubSubClient(espClient);
 	mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
 	mqtt->setKeepAlive(ini.mqtt_ping_interval);
 	mqtt->setBufferSize(1024);
-	if (mqtt_topic_sub != "")
+	if (mqtt_topic_sub != "-")
 		mqtt->setCallback(mqtt_callback);
 }
 
@@ -577,7 +582,12 @@ void MQTT_connect()
 
 	Serial.print("Connecting to MQTT... ");
 
-	if ((mqtt->connect(ini.hostname, ini.mqtt_login, ini.mqtt_password)) == false)
+	bool res;
+	if (mqtt_topic_lwt != "-")
+		res=mqtt->connect(ini.hostname, ini.mqtt_login, ini.mqtt_password, mqtt_topic_lwt.c_str(), 1, true, "offline");
+	else
+		res=mqtt->connect(ini.hostname, ini.mqtt_login, ini.mqtt_password);
+	if (res == false)
 	{ // connect will return 0 for connected
 		Serial.println(mqtt->state());
 		Serial.println("Retrying MQTT connection in 10 seconds...");
@@ -588,9 +598,10 @@ void MQTT_connect()
 		Serial.println("MQTT Connected!");
 		last_reconnect=0;
 		last_mqtt=0;
-		if (mqtt_topic_sub != "")
+		if (mqtt_topic_sub != "-")
 			mqtt->subscribe(mqtt_topic_sub.c_str());
 		if (ini.mqtt_discovery) MQTT_discover();
+		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "online", true);
 	}
 }
 
@@ -608,6 +619,7 @@ void MQTT_discover()
 	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ";
 	mqtt_data += "\"device\":{\"identifiers\": [\""+String(id)+"\"], \"name\": \""+String(ini.hostname)+"\", ";
 	mqtt_data += "\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \""+String(VERSION)+"\"}, ";
+	if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\": \""+mqtt_topic_lwt+"\", ";
 	if (ini.mqtt_invert)
 		mqtt_data+="\"pos_clsd\": 0, \"pos_open\": 100}";
 	else
@@ -630,7 +642,7 @@ void ProcessMQTT()
 	mqtt->loop();
 
 	// Publishing
-	if (mqtt_topic_pub != "")
+	if (mqtt_topic_pub != "-")
 	{
 		int val, val2;
 		switch (ini.mqtt_state_type)
@@ -872,8 +884,9 @@ void ValidateSettings()
 	if (!ini.mqtt_server[0]) strcpy(ini.mqtt_server, def_mqtt_server);
 	if (ini.mqtt_port == 0) ini.mqtt_port=def_mqtt_port;
 	if (ini.mqtt_ping_interval < 5) ini.mqtt_ping_interval=60;
-	if (!ini.mqtt_topic_state[0]) strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
-	if (!ini.mqtt_topic_command[0]) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
+	if (ini.mqtt_topic_state[0] == 0) strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
+	if (ini.mqtt_topic_command[0] == 0) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
+	if (ini.mqtt_topic_alive[0] == 0) strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level;
@@ -908,6 +921,7 @@ void setup_Settings(void)
 		ini.mqtt_ping_interval=60;
 		strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
 		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
+		strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 		ini.mqtt_state_type=0;
 		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 		ini.led_mode=0;
@@ -1440,6 +1454,7 @@ void HTTP_handleSettings(void)
 		SaveInt("mqtt_ping_interval", &ini.mqtt_ping_interval);
 		SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
 		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
+		SaveString("mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive));
 		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
 		ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
 		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
@@ -1604,6 +1619,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.mqtt_state_type, "0/1");
 	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
 	out+="</select></td></tr>\n";
+	out+=HTML_editString(L("Alive:", "Живой:"), "mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive)-1);
 	out+=HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
 	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
