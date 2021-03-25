@@ -7,49 +7,37 @@
 @media (min-width: 640px) { code {font-size:13px; }}
 @media (min-width: 960px) { code {font-size:15px; }}
 @media (min-width:1100px) { code {font-size:17px; }}
+
 body {
 	/*font: 18px Tahoma, sans-serif;*/
 	font-family: Tahoma, sans-serif;
 	background-color: #cee0de;
-	margin: 3px;
-	text-align: center;
+	margin: 0px;
 }
 a, a:active, a:visited {
  color: #426672;
 }
-code {
-	/*font-family: Tahoma, sans-serif;*/
-	font-family: "Consolas", "Lucida Console", monospace;
-}
 p {
 	margin: 10px 0;
 }
-#wrapper2 {
-	display:inline-block;
-	text-align: left;
-	min-width: 50%;
-}
 #wrapper {
-	max-width: 960px;
-	min-width: 100%;
+	max-width: 860px;
+	min-width: 390px;
 	margin: auto;
 }
 header {
 	font-size: 20px;
-	padding: 10px;
-	margin: 10px;
+	padding: 2px;
+	margin: 0px;
 	margin-bottom: 0px;
 	background-color: #aec0be;
 	text-align: center;
 }
 section {
-	margin: 10px;
+	margin: 10px 0px 10px 0px;
 	padding: 10px;
 	background-color: #f3f8f7;
-}
-.info {
-	float: left;
-	width: 210px;
+	display: block;
 }
 .info table {
 	border-collapse: collapse;
@@ -65,21 +53,7 @@ section {
 	font-weight: bold;
 	background-color: #aec0be;
 }
-.status {
-	float: none;
-	margin-left: 252px;
-}
-.settings, .alarms {
-	float: none;
-	margin-left: 252px;
-}
-.settings input {
-	width: 250px;
-}
-.alarms {
-	min-width: 250px;
-}
-.settings td {
+.settings td, .alarms td {
 	padding: 5px;
 }
 .days label{
@@ -91,4 +65,122 @@ section {
 }
 .days label input[type='checkbox'] {
   margin-left:-18px;
+}
+
+header { max-width: 830px;}
+
+.svg
+{
+	background-repeat: no-repeat;
+	background-position: center;
+}
+
+.status
+{
+	margin: 10px 0px 10px 0px;
+	background-color: #f3f8f7;
+	padding: 0px;
+}
+.status ul
+{
+	margin: 0px;
+	padding-left: 0px;
+	width: 100%;
+}
+.status ul li
+{
+	display: inline-block;
+	list-style: none;
+	margin: 8px 0;
+	text-transform: uppercase;
+	font-size: 0px;
+	width: 16%;
+	text-align: center;
+}
+.status ul li a
+{
+	text-decoration: none;
+	font-weight: 800;
+	color: #f3f8f7;
+}
+.status .svg {
+	height:50px;
+}
+
+.main ul
+{
+	margin: 0px;
+	padding-left: 0px;
+	width: 100%;
+}
+.main ul li
+{
+	//display: inline-block;
+	list-style: none;
+	margin: 8px 0;
+	text-transform: uppercase;
+	font-size: 0px;
+	width: 100%;
+	text-align: center;
+}
+.main ul li a
+{
+	text-decoration: none;
+	font-weight: 800;
+	color: #f3f8f7;
+}
+.main .svg {
+	height:150px;
+}
+
+.menuopen .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 3 12 10'%3E%3Cpath d='M3.204 11h9.592L8 5.519 3.204 11zm-.753-.659l4.796-5.48a1 1 0 0 1 1.506 0l4.796 5.48c.566.647.106 1.659-.753 1.659H3.204a1 1 0 0 1-.753-1.659z'/%3E%3C/svg%3E");
+}
+.menuclose .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 3 12 10'%3E%3Cpath d='M3.204 5h9.592L8 10.481 3.204 5zm-.753.659l4.796 5.48a1 1 0 0 0 1.506 0l4.796-5.48c.566-.647.106-1.659-.753-1.659H3.204a1 1 0 0 0-.753 1.659z'/%3E%3C/svg%3E");
+}
+.menustop .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 3 12 10'%3E%3Cpath d='M3.5 5A1.5 1.5 0 0 1 5 3.5h6A1.5 1.5 0 0 1 12.5 5v6a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 11V5zM5 4.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V5a.5.5 0 0 0-.5-.5H5z'/%3E%3C/svg%3E");
+}
+.menuinfo .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 488.9 488.9'%3E%3Cpath d='M239.15,0c31.9,0,57.7,25.8,57.7,57.7s-25.8,57.7-57.7,57.7s-57.7-25.8-57.7-57.7S207.25,0,239.15,0z M291.65,151.6h-1.5 h-92.8h-3.4c-19,0-34.3,15.4-34.3,34.3l0,0c0,19,15.4,34.3,34.3,34.3h3.4v200h-37.7v68.7h169.6v-68.7h-37.5V151.6H291.65z'/%3E%3C/svg%3E");
+}
+.menualarms .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z'/%3E%3Cpath d='M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z'/%3E%3C/svg%3E");
+}
+.menusettings .svg {
+background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M.102 2.223A3.004 3.004 0 0 0 3.78 5.897l6.341 6.252A3.003 3.003 0 0 0 13 16a3 3 0 1 0-.851-5.878L5.897 3.781A3.004 3.004 0 0 0 2.223.1l2.141 2.142L4 4l-1.757.364L.102 2.223zm13.37 9.019l.528.026.287.445.445.287.026.529L15 13l-.242.471-.026.529-.445.287-.287.445-.529.026L13 15l-.471-.242-.529-.026-.287-.445-.445-.287-.026-.529L11 13l.242-.471.026-.529.445-.287.287-.445.529-.026L13 11l.471.242z'/%3E%3C/svg%3E");
+}
+
+.info.show, .settings.show, .alarms.show {
+	display: block;
+}
+
+.info.hide, .settings.hide, .alarms.hide {
+	display: none;
+}
+
+.val input[type=text] { width: 255px;}
+.val_p input[type=text] { width: 100px;}
+
+@media (min-width: 640px) { 
+#wrapper {min-width: 700px;}
+.info.hide, .info.show { width: 240px; float: left; display: block; margin-top:0px;} 
+section.settings, section.alarms, section.main {
+	max-width: 560px;
+	display: block;
+	margin-left: 280px;
+}
+.status ul {	padding-left: 0px; }
+.status ul li { margin: 12px 0; }
+.status ul li a {   font-size: 16px; 	color: #426672; }
+.status .svg
+{
+	height:30px;
+}
+header {	margin: 10px; 	padding: 10px; }
+section, .status {	margin: 10px; }
+.status ul li.menuinfo { display: none; }
+.status ul li {	width: 20%; }
+
 }

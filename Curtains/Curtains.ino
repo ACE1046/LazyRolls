@@ -48,7 +48,7 @@ const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
-#define VERSION "0.10"
+#define VERSION "0.10 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -62,6 +62,7 @@ const char* update_password = "admin";
 uint16_t def_step_delay_mks = 1500;
 #define FAV_FILE "/favicon.ico"
 #define CLASS_FILE "/styles.css"
+#define JS_FILE "/scripts.js"
 #define PIN_SWITCH 14
 #define PIN_A 5
 #define PIN_B 4
@@ -957,6 +958,7 @@ void init_SPIFFS()
 #ifdef SPIFFS_AUTO_INIT
 	CreateFile(FAV_FILE, fav_icon_data, sizeof(fav_icon_data));
 	CreateFile(CLASS_FILE, css_data, sizeof(css_data));
+	CreateFile(JS_FILE, js_data, sizeof(js_data));
 	if (ini.spiffs_time != spiffs_time)
 	{
 		ini.spiffs_time=spiffs_time;
@@ -1167,6 +1169,7 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
+	httpServer.serveStatic(JS_FILE, SPIFFS, JS_FILE, "max-age=86400");
 	httpServer.onNotFound([]() {
 		String message = "Not found URI: ";
 		message += httpServer.uri();
@@ -1205,11 +1208,15 @@ void setup()
 }
 
 // ============================= HTTP ===================================
+String HTML_mainmenu();
+String HTML_status();
+
 String HTML_header()
 {
 	String ret;
 
-	ret.reserve(4096);
+	ret.reserve(16384);
+
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
 	"<head>\n" \
@@ -1220,104 +1227,28 @@ String HTML_header()
 	ret += SL("Lazy rolls", "Ленивые шторы");
 	ret += F("</title>\n" \
 	"<link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
-// ToDo: move to styles.css
-"<style type=\"text/css\">" \
-".val input[type=text] {" \
-"	width: 255px;" \
-"}	" \
-".val_p input[type=text] {" \
-"	width: 100px;" \
-"}	" \
-"</style>	" \
 
-	"<script>\n" \
-		"var timerId;\n" \
-		"var timeout=1000;\n" \
-		"var active;\n" \
-		"window.onfocus = function() { active = true; clearTimeout(timerId); timeout=500; GetStatus(); };\n" \
-		"window.onblur = function() { active = false; clearTimeout(timerId); };\n" \
-		"function st(t, id, tag)\n" \
-		"{ f=t.responseXML.getElementsByTagName(tag)[0]; if(f) document.getElementById(id).innerHTML = f.childNodes[0].nodeValue; }\n"\
-		"function GetStatus()\n" \
-		"{ if (active) {\n"\
-			"nocache = \"&nocache=\" + Math.random() * 1000000;\n" \
-			"var request = new XMLHttpRequest();\n" \
-			"request.onreadystatechange = function()\n" \
-				"{\n" \
-					"if (this.readyState == 4) {\n" \
-						"if (this.status == 200) {\n" \
-							"if (this.responseXML != null) {\n" \
-								"st(this, \"time\", 'Time');\n" \
-								"st(this, \"uptime\", 'UpTime');\n" \
-								"st(this, \"RSSI\", 'RSSI');\n" \
-								"st(this, \"pos\", 'Now');\n" \
-								"st(this, \"dest\", 'Dest');\n" \
-								"st(this, \"switch\", 'End1');\n" \
-								"st(this, \"mqtt\", 'MQTT');\n" \
-								"st(this, \"voltage\", 'Voltage');\n" \
-								"st(this, \"led_mode\", 'Mode');\n" \
-								"st(this, \"led_level\", 'Level');\n" \
-
-								"if (document.getElementById(\"pos\").innerHTML != document.getElementById(\"dest\").innerHTML)\n" \
-									"timeout=500;\n" \
-								"else\n" \
-									"timeout=5000;\n" \
-							"}\n" \
-						"}\n" \
-					"}\n" \
-				"}\n" \
-			"// send HTTP GET request   \n" \
-			"request.open(\"GET\", \"xml\");\n" \
-			"request.send(null);\n" \
-		"} timerId = setTimeout('GetStatus()', timeout);\n" \
-		"}\n" \
-		"function Call(url)\n" \
-		"{\n" \
-			"clearTimeout(timerId);\n" \
-			"var xhttp = new XMLHttpRequest();\n" \
-			"xhttp.open(\"GET\", url);\n" \
-			"xhttp.send();\n" \
-			"timeout=500;\n" \
-			"GetStatus();\n" \
-		"}\n" \
-		"function Open() { Call(\"set?pos=0\"); return false; }\n" \
-		"function Close() { Call(\"set?pos=100\"); return false; }\n" \
-		"function Steps(s) { Call(\"set?steps=\"+s); return false; }\n" \
-		"function Stop() { Call(\"stop\"); return false; }\n" \
-		"function TestPreset(p) { s=document.getElementById(\"preset\"+p).value;" \
-		  "m=document.getElementById(\"length\").value;" \
-		  "if (s>m) { s=m; document.getElementById(\"preset\"+p).value=s; } Steps(s); return false; }\n" \
-		"function SetPreset(p) { document.getElementById(\"preset\"+p).value = document.getElementById(\"pos\").innerHTML; }\n" \
-	"</script>\n" \
+	"<script src=\"scripts.js\"></script>\n" \
 	"</head>\n" \
 	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
-	"<div id=\"wrapper2\">\n" \
 	"<div id=\"wrapper\">\n" \
 	"<header>");
 	ret += SL("Lazy rolls", "Ленивые шторы");
 	ret += F("</header>\n" \
-	"<nav></nav>\n" \
-	"<div id=\"heading\"></div>\n");
+	"<nav></nav>\n");
+
+	ret += HTML_mainmenu();
+	ret += HTML_status();
 	return ret;
 }
 
 String HTML_footer()
 {
-	String ret = F("  </div></div>\n" \
+	String ret = F("  </div>\n" \
 	"  <footer></footer>\n" \
 	"</body>\n" \
 	"</html>");
 	return ret;
-}
-
-String HTML_openCloseStop()
-{
-	String out;
-	out = "<a href=\"open\" onclick=\"return Open();\">["+SL("Open", "Открыть")+"]</a> \n";
-	out += "<a href=\"close\" onclick=\"return Close();\">["+SL("Close", "Закрыть")+"]</a> \n";
-//  if (position != roll_to)
-	out += "<a href=\"stop\" onclick=\"return Stop();\">["+SL("Stop", "Стоп")+"]</a> \n";
-	return out;
 }
 
 String HTML_tableLine(const char *name, String val, const char *id=NULL)
@@ -1378,10 +1309,9 @@ String HTML_status()
 	FlashMode_t ideMode = ESP.getFlashChipMode();
 	String out;
 
-	out = HTML_header();
 	out.reserve(4096);
 
-	out += "    <section class=\"info\"><table>\n";
+	out += "    <section class=\"info hide\" id=\"info\"><table>\n";
 	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Status", "Статус")+"</td></tr>\n";
 	out += HTML_tableLine(L("Version", "Версия"), VERSION);
 	out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
@@ -1440,15 +1370,20 @@ String HTML_mainmenu(void)
 {
 	String out;
 
-	out.reserve(128);
-
-	out += "<section class=\"status\">\n";
-	out += HTML_openCloseStop();
-	out += "<a href=\"/\">["+SL("Main", "Главная")+"]</a> \n";
-	out += "<a href=\"settings\">["+SL("Settings", "Настройки")+"]</a> \n";
-	out += "<a href=\"alarms\">["+SL("Schedule", "Расписание")+"]</a> \n";
-	out += "</section>\n";
+	out += "<div id=\"heading\" class=\"status\">\n" \
+		"<ul><li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>["+SL("Open", "Открыть")+"]</a>\n" \
+		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>["+SL("Close", "Закрыть")+"]</a>\n" \
+		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>["+SL("Stop", "Стоп")+"]</a>\n" \
+		"</li><li class=\"menuinfo\"><a href=\"/\" onclick=\"return ShowInfo();\"><div class=\"svg\"></div>["+SL("Info", "Инфо")+"]</a>\n" \
+		"</li><li class=\"menusettings\"><a href=\"/settings\" onclick=\"return ShowSettings();\"><div class=\"svg\"></div>["+SL("Settings", "Настройки")+"]</a>\n" \
+		"</li><li class=\"menualarms\"><a href=\"/alarms\" onclick=\"return ShowAlarms();\"><div class=\"svg\"></div>["+SL("Schedule", "Расписание")+"]</a></li></ul>\n" \
+		"</div>\n";
 	return out;
+}
+
+String HTML_save()
+{
+	return "<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
 }
 
 void HTTP_handleRoot(void)
@@ -1457,12 +1392,18 @@ void HTTP_handleRoot(void)
 
 	HTTP_Activity();
 
-	out=HTML_status();
-
-	out += HTML_mainmenu();
+	out = HTML_header();
 	
-	out += SL("Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).",
-		"Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.");
+	out += F("<section class=\"main\" id=\"main\"><p>" \
+		"<ul>\n" \
+		"<li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[Open]</a>\n" \
+		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>[Stop]</a>\n" \
+		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[Close]</a>\n" \
+		"</li></p>");
+
+	out += SL("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>",
+		"<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.</p>");
+	out += "</section>\n";
 
 	out += HTML_footer();
 	httpServer.send(200, "text/html", out);
@@ -1601,41 +1542,15 @@ void HTTP_handleSettings(void)
 
 	out.reserve(20480);
 
-	out=HTML_status();
+	out=HTML_header();
 
-	out += HTML_mainmenu();
-
-	out += "<section class=\"settings\">\n";
+	out += "<section class=\"settings\" id=\"settings\">\n";
 
 	if (httpServer.hasArg("ok"))
 		out+=SL("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
 			"<p>Сохранено!<br/>Настройки сети будут применены после перезагрузки.<br/><a href=\"reboot\">[Перезагрузить]</a></p>\n");
 
-	out += F("<script>\n" \
-	"function Test(dir)\n" \
-	"{\n" \
-	"document.getElementById(\"btn_up\").disabled=true;\n" \
-	"document.getElementById(\"btn_dn\").disabled=true;\n" \
-	"pinout=document.getElementById(\"pinout\").value;\n" \
-	"reversed=document.getElementById(\"reversed\").value;\n" \
-	"delay=document.getElementById(\"delay\").value;\n" \
-	"var xhttp = new XMLHttpRequest();\n" \
-	"xhttp.onreadystatechange = function() {\n" \
-	"if (this.readyState == 4 && this.status == 200) {\n" \
-	"document.getElementById(\"btn_up\").disabled=false;\n" \
-	"document.getElementById(\"btn_dn\").disabled=false;\n" \
-	"document.getElementById(\"pos\").innerHTML=this.responseText;\n" \
-	"document.getElementById(\"dest\").innerHTML=this.responseText;\n" \
-	"  }};\n" \
-	"url=\"test?pinout=\"+pinout+\"&reversed=\"+reversed+\"&delay=\"+delay;\n" \
-	"if (dir==1) url=url+\"&up=1\"; else url=url+\"&down=1\";\n" \
-	"xhttp.open(\"GET\", url, true);\n" \
-	"xhttp.send();\n" \
-	"}\n" \
-	"function TestUp() { Test(1); }\n" \
-	"function TestDown() { Test(0); }\n" \
-	"</script>\n" \
-	"<form method=\"post\" action=\"/settings\">\n");
+	out += F("<form method=\"post\" action=\"/settings\">\n");
 
 	out+="<table>\n";
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
@@ -1759,7 +1674,7 @@ void HTTP_handleSettings(void)
 	LEVEL_OPT(LED_HIGH);
 	out+="</select></td></tr>\n";
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	out+=HTML_save();
 	out+="<tr><td colspan=\"2\"><a href=\"/update\">"+SL("Firmware update", "Обновление прошивки")+"</a></td></tr>\n";
 	out+="</table>\n";
 	out+="</form>\n";
@@ -1791,7 +1706,7 @@ String TimeToStr(uint32_t t)
 
 void HTTP_handleAlarms(void)
 {
-	String out, save;
+	String out;
 
 	HTTP_Activity();
 
@@ -1830,15 +1745,12 @@ void HTTP_handleAlarms(void)
 
 	out.reserve(16384);
 
-	out=HTML_status();
+	out=HTML_header();
 
-	out += HTML_mainmenu();
-
-	out += "<section class=\"alarms\">\n";
+	out += "<section class=\"alarms\" id=\"alarms\">\n";
 	out += "<form method=\"post\" action=\"/alarms\">\n";
 	out += "<table width=\"100%\">\n";
-	save = "<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
-	out+=save;
+	out+=HTML_save();
 	out += "<tr><td colspan=\"2\">"+ \
 	  SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
@@ -1889,7 +1801,7 @@ void HTTP_handleAlarms(void)
 		out += "</td></tr>\n";
 	}
 
-	out+=save;
+	out+=HTML_save();
 
 	out += "</table>\n";
 	out+="</form>\n";

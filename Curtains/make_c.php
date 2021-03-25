@@ -34,6 +34,7 @@ function make_c_array($filename, $var)
 
 make_c_array("data/favicon.ico", "fav_icon_data");
 make_c_array("data/styles.css", "css_data");
+make_c_array("data/scripts.js", "js_data");
 
 
 ?>
