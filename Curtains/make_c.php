@@ -7,6 +7,9 @@ date_default_timezone_set('UTC');
 echo "// generated: ".date("r")."\n\n";
 
 echo "uint32_t spiffs_time=".$time.";\n\n";
+echo '#define CLASS_URL "/styles_'.dechex($time).".css\"\n";
+echo '#define JS_URL "/scripts_'.dechex($time).".js\"\n\n";
+
 
 $BYTES_ON_LINE = 12;
 

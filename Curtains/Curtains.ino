@@ -48,7 +48,7 @@ const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
-#define VERSION "0.10 beta"
+#define VERSION "0.10 beta 2"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -772,7 +772,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 				} else
 				{
 					// endswitch hit on going down. Something wrong
-					roll_to=0;
+					roll_to=position;
 					MotorOff();
 					return;
 				}
@@ -879,7 +879,7 @@ void setup_Button()
 
 void ButtonClick()
 {
-	static uint32_t lastClick=millis();
+	static uint32_t lastClick;
 	static uint8_t lastCommand;
 	uint8_t open;
 	
@@ -896,6 +896,7 @@ void ButtonClick()
 	if (open) Open(); else Close();
 	
 	lastCommand = open;
+	lastClick=millis();
 }
 
 void ButtonLongClick()
@@ -1168,8 +1169,8 @@ void setup()
 	httpServer.on("/xml",      HTTP_handleXML);
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
-	httpServer.serveStatic(CLASS_FILE, SPIFFS, CLASS_FILE, "max-age=86400");
-	httpServer.serveStatic(JS_FILE, SPIFFS, JS_FILE, "max-age=86400");
+	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
+	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
 	httpServer.onNotFound([]() {
 		String message = "Not found URI: ";
 		message += httpServer.uri();
@@ -1215,7 +1216,7 @@ String HTML_header()
 {
 	String ret;
 
-	ret.reserve(16384);
+	ret.reserve(10240);
 
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
@@ -1226,13 +1227,13 @@ String HTML_header()
 	"<title>");
 	ret += SL("Lazy rolls", "Ленивые шторы");
 	ret += F("</title>\n" \
-	"<link rel=\"stylesheet\" href=\"styles.css\" type=\"text/css\">\n" \
+	"<link rel=\"stylesheet\" href=\""CLASS_URL"\" type=\"text/css\">\n" \
 
-	"<script src=\"scripts.js\"></script>\n" \
+	"<script src=\""JS_URL"\"></script>\n" \
 	"</head>\n" \
 	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
 	"<div id=\"wrapper\">\n" \
-	"<header>");
+	"<header onclick=\"ShowMain();\">");
 	ret += SL("Lazy rolls", "Ленивые шторы");
 	ret += F("</header>\n" \
 	"<nav></nav>\n");
@@ -1356,9 +1357,6 @@ String HTML_status()
 	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("LED", "LED")+"</td></tr>\n";
 	out += HTML_tableLine(L("Mode", "Функция"), LEDModeString(), "led_mode");
 	out += HTML_tableLine(L("Brightness", "Яркость"), LEDLevelString(), "led_level");
-	if (ini.mqtt_enabled)
-	{
-	}
 #endif
 
 	out +="</table></section>\n";
@@ -1381,9 +1379,9 @@ String HTML_mainmenu(void)
 	return out;
 }
 
-String HTML_save()
+String HTML_save(int span=2)
 {
-	return "<tr class=\"sect_name\"><td colspan=\"2\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	return "<tr class=\"sect_name\"><td colspan=\""+String(span)+"\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
 }
 
 void HTTP_handleRoot(void)
@@ -1457,6 +1455,18 @@ void HTTP_Activity(void)
 	NetworkActivity();
 }
 
+String HTML_steps(String lbl, String id, int val, String name)
+{
+	String out;
+	out+="<tr><td class=\"idname\">"+lbl;
+	out+="</td><td class=\"val_p\"><input type=\"text\" name=\""+name;
+	out+="\" id=\""+id+"\" value=\""+String(val)+="\" maxlength=\"6\"/>";
+	out+=" <input type=\"button\" value=\""+SL("Test", "Тест")+"\" onclick=\"TestPreset('"+name+"')\">\n";
+	out+=" <input type=\"button\" value=\""+SL("Here", "Тут")+"\" onclick=\"SetPreset('"+name+"')\">\n";
+	out+="</td></tr>\n";
+	return out;
+}
+	
 void HTTP_handleSettings(void)
 {
 	String out;
@@ -1553,7 +1563,7 @@ void HTTP_handleSettings(void)
 	out += F("<form method=\"post\" action=\"/settings\">\n");
 
 	out+="<table>\n";
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
+	out+=HTML_save();
 	out+="<tr><td>"+SL("Language: ", "Язык: ")+"</td><td><select id=\"lang\" name=\"lang\">\n";
 	for (int i=0; i<Languages; i++)
 	{
@@ -1562,6 +1572,7 @@ void HTTP_handleSettings(void)
 		out+=+">"+String(Language[i])+"</option>\n";
 	}
 	out+="</select></td></tr>\n";
+	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
 	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
 	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
 	out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password)-1);
@@ -1592,11 +1603,19 @@ void HTTP_handleSettings(void)
 	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Reversed", "Обратное")+"</option>\n" \
 	"</select></td></tr>\n";
 	out+=HTML_editString(L("Step delay:", "Время шага:"),"delay", String(ini.step_delay_mks).c_str(), 5);
-	out+="<tr><td colspan=\"2\">"+SL("(microsecs, "+String(MIN_STEP_DELAY)+"-65000, default 1500)", "(в мкс, "+String(MIN_STEP_DELAY)+"-65000, обычно 1500)")+"</td></tr>\n" \
+	out+="<tr><td></td><td>"+SL("(microsecs, "+String(MIN_STEP_DELAY)+"-65000, default 1500)", "(в мкс, "+String(MIN_STEP_DELAY)+"-65000, обычно 1500)")+"</td></tr>\n" \
 	"<tr><td colspan=\"2\">\n" \
 	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\""+SL("Test up", "Тест вверх")+"\" onclick=\"TestUp()\">\n" \
 	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\""+SL("Test down", "Тест вниз")+"\" onclick=\"TestDown()\">\n" \
 	"</td></tr>\n";
+
+	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
+	out+=HTML_steps(SL("Length:", "Длина:"), "length", ini.full_length, "length");
+	out+="<tr><td></td><td>"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
+	for (int i=0; i<MAX_PRESETS; i++)
+	{
+		out+=HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
+	}
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Endstop", "Концевик")+"</td></tr>\n" \
 	"<tr><td>"+SL("Type:", "Тип:")+"</td><td><select id=\"switch\" name=\"switch\">\n" \
@@ -1608,9 +1627,9 @@ void HTTP_handleSettings(void)
 	"<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
 	"</select></td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
-	out+="<tr><td colspan=\"2\">"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
+	out+="<tr><td></td><td>"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
 	out+=HTML_editString(L("Extra:", "Запас:"), "up_safe_limit", String(ini.up_safe_limit).c_str(), 5);
-	out+="<tr><td colspan=\"2\">"+SL("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")+"</td></tr>\n";
+	out+="<tr><td></td><td>"+SL("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")+"</td></tr>\n";
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Button", "Кнопка")+"</td></tr>\n" \
 	"<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\">\n";
@@ -1620,19 +1639,6 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)");
 	out+="</select></td></tr>\n";
 	
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
-	out+=HTML_editString(L("Length:", "Длина:"), "length", String(ini.full_length).c_str(), 6);
-	out+="<tr><td colspan=\"2\">"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
-	for (int i=0; i<MAX_PRESETS; i++)
-	{
-		out+="<tr><td class=\"idname\">"+SL("Preset", "Позиция")+" "+String(i+1);
-		out+="</td><td class=\"val_p\"><input type=\"text\" name=\"preset"+String(i);
-		out+="\" id=\"preset"+String(i)+"\" value=\""+String(ini.preset[i])+="\" maxlength=\"5\"/>";
-		out+=" <input type=\"button\" value=\""+SL("Test", "Тест")+"\" onclick=\"TestPreset("+String(i)+")\">\n";
-		out+=" <input type=\"button\" value=\""+SL("Here", "Тут")+"\" onclick=\"SetPreset("+String(i)+")\">\n";
-		out+="</td></tr>\n";
-	}
-
 #ifdef MQTT
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
 	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
@@ -1643,6 +1649,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_editString(L("Password:", "Пароль:"), "mqtt_password", "*", sizeof(ini.mqtt_password)-1);
 	out+=HTML_editString(L("Keep-alive:", "Keep-alive:"), "mqtt_ping_interval", String(ini.mqtt_ping_interval).c_str(), 5);
 	out+=HTML_editString(L("Commands:", "Команды:"), "mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
+	out+="<tr><td></td><td>"+SL("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", "Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)")+"</td></tr>\n";
 	out+=HTML_editString(L("State:", "Статус:"), "mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
 	out+="<tr><td>"+SL("Type:", "Формат:")+"</td><td><select id=\"mqtt_state_type\" name=\"mqtt_state_type\">\n";
 	out+=HTML_addOption(0, ini.mqtt_state_type, "0-100 (%)");
@@ -1743,33 +1750,32 @@ void HTTP_handleAlarms(void)
 		SaveSettings(&ini, sizeof(ini));
 	}
 
-	out.reserve(16384);
+	out.reserve(20480);
 
 	out=HTML_header();
 
 	out += "<section class=\"alarms\" id=\"alarms\">\n";
 	out += "<form method=\"post\" action=\"/alarms\">\n";
 	out += "<table width=\"100%\">\n";
-	out+=HTML_save();
-	out += "<tr><td colspan=\"2\">"+ \
+	out+=HTML_save(5);
+	out += "<tr><td colspan=\"5\">"+ \
 	  SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
 
 	for (int a=0; a<ALARMS; a++)
 	{
 		String n=String(a);
-		out += "<tr><td colspan=\"2\">\n";
-		out += "<hr/>\n";
-		out += "<label for=\"en"+n+"\">\n";
+		out += "<tr><td colspan=\"5\"><hr/></td></tr>\n";
+		out += "<tr><td class=\"en\"><label for=\"en"+n+"\">\n";
 		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" +
 		  ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
-		out += SL("Enabled", "Включено")+"</label></td></tr>\n";
+		out += SL("Enabled", "Включено")+"</label></td>\n";
 
-		out += "<tr><td style=\"width:1px\"><label for=\"time"+n+"\">"+
+		out += "<td class=\"narrow\"><label for=\"time"+n+"\">"+
 		  SL("Time:", "Время:")+"</label></td><td><input type=\"time\" id=\"time"+n+
-			"\" name=\"time"+n+"\" value=\""+TimeToStr(ini.alarms[a].time)+"\" required></td></tr>\n";
+			"\" name=\"time"+n+"\" value=\""+TimeToStr(ini.alarms[a].time)+"\" required></td>\n";
 
-		out += "<tr><td><label for=\"dest"+n+"\">"+
+		out += "<td class=\"narrow\"><label for=\"dest"+n+"\">"+
 		  SL("Position:", "Положение:")+"</label></td><td><select id=\"dest"+n+"\" name=\"dest"+n+"\">\n";
 		for (int p=0; p<=100; p+=20)
 		{
@@ -1788,7 +1794,7 @@ void HTTP_handleAlarms(void)
 		out += "</select>\n";
 		out += "</td></tr><tr><td>";
 
-		out += SL("Repeat:", "Повтор:")+"</td><td class=\"days\">\n";
+		out += SL("Repeat:", "Повтор:")+"</td><td colspan=\"5\" class=\"days\">\n";
 		for (int d=0; d<7; d++)
 		{
 			String id="\"d"+n+"_"+String(d)+"\"";
@@ -1801,7 +1807,7 @@ void HTTP_handleAlarms(void)
 		out += "</td></tr>\n";
 	}
 
-	out+=HTML_save();
+	out+=HTML_save(5);
 
 	out += "</table>\n";
 	out+="</form>\n";
@@ -1875,6 +1881,13 @@ void HTTP_handleSet(void)
 	{
 		int pos=atoi(httpServer.arg("steps").c_str());
 		ToPosition(pos);
+	  httpServer.send(200, "text/XML", blank_xml);
+	}
+	else if (httpServer.hasArg("stepsovr"))
+	{
+		int pos=atoi(httpServer.arg("stepsovr").c_str());
+		if (position<0) position=0;
+		roll_to=pos;
 	  httpServer.send(200, "text/XML", blank_xml);
 	}
 	else if (httpServer.hasArg("preset"))
