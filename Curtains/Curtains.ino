@@ -9,7 +9,7 @@ http://imlazy.ru/rolls/
 10.04.2019 v0.07
 02.06.2020 v0.08
 29.01.2021 v0.09
-22.03.2021 v0.10
+28.03.2021 v0.10
 
 */
 #include <ESP8266WiFi.h>
@@ -48,7 +48,7 @@ const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
-#define VERSION "0.10 beta 2"
+#define VERSION "0.10"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -81,8 +81,8 @@ uint16_t def_step_delay_mks = 1500;
 #define DAY (24*60*60) // day length in seconds
 
 const int Languages=2;
-const char *Language[Languages]={"English", "Русский"};
-const char *onoff[][Languages]={{"off", "on"}, {"выкл", "вкл"}};
+const PROGMEM char *Language[Languages]={"English", "Русский"};
+const PROGMEM char *onoff[][Languages]={{"off", "on"}, {"выкл", "вкл"}};
 
 const uint8_t steps[3][4]={
 	{PIN_A, PIN_C, PIN_B, PIN_D},
@@ -325,7 +325,7 @@ void SyncNTPTime()
 		UDP.endPacket();
 		return;
 	}
-//	Serial.println("NTP packet received");
+//	Serial.println(F("NTP packet received"));
 	if (UDP.remoteIP() == timeServerIP && UDP.read(NTPBuffer, NTP_PACKET_SIZE) == NTP_PACKET_SIZE) // read the packet into the buffer
 	{
 		// Combine the 4 timestamp bytes into one 32-bit number
@@ -347,7 +347,7 @@ String TimeStr()
 {
 	char buf[9];
 	uint32_t t=getTime();
-	sprintf(buf, "%02d:%02d:%02d", t/60/60%24, t/60%60, t%60);
+	sprintf_P(buf, PSTR("%02d:%02d:%02d"), t/60/60%24, t/60%60, t%60);
 	return String(buf);
 }
 
@@ -355,7 +355,7 @@ String UptimeStr()
 {
 	char buf[9];
 	uint32_t t=millis()/1000;
-	sprintf(buf, "%dd %02d:%02d", t/60/60/24, t/60/60%24, t/60%60);
+	sprintf_P(buf, PSTR("%dd %02d:%02d"), t/60/60/24, t/60/60%24, t/60%60);
 	return String(buf);
 }
 
@@ -392,9 +392,9 @@ const uint8_t microstep[8][4]={
 void FillStepsTable()
 {
 	uint8_t i, j, n;
-	
+
 	if (ini.pinout >= PINOUT_SD) return; // not needed for step/dir
-	
+
 	for (i=0; i<8; i++)
 	{
 		n=i;
@@ -443,7 +443,7 @@ void ToPercent(uint8_t pos)
 {
 	if ((pos<0) || (pos>100)) return;
 	if (ini.sw_at_bottom) pos=100-pos;
-	
+
 	if (position<0) position=0;
 	if (pos == 0)
 		roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
@@ -553,14 +553,19 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10));
 }
 
+String ReplaceHostname(const char *topic)
+{
+	String s;
+	s=String(topic);
+	s.replace("%HOSTNAME%", String(ini.hostname));
+	return s;
+}
+
 void setup_MQTT()
 {
-	mqtt_topic_sub = String(ini.mqtt_topic_command);
-	mqtt_topic_sub.replace("%HOSTNAME%", String(ini.hostname));
-	mqtt_topic_pub = String(ini.mqtt_topic_state);
-	mqtt_topic_pub.replace("%HOSTNAME%", String(ini.hostname));
-	mqtt_topic_lwt = String(ini.mqtt_topic_alive);
-	mqtt_topic_lwt.replace("%HOSTNAME%", String(ini.hostname));
+	mqtt_topic_sub = ReplaceHostname(ini.mqtt_topic_command);
+	mqtt_topic_pub = ReplaceHostname(ini.mqtt_topic_state);
+	mqtt_topic_lwt = ReplaceHostname(ini.mqtt_topic_alive);
 	if (mqtt)
 	{
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
@@ -588,7 +593,7 @@ void MQTT_connect()
 
 	if ((last_reconnect != 0) && (millis() - last_reconnect < 10000)) return;
 
-	Serial.print("Connecting to MQTT... ");
+	Serial.print(F("Connecting to MQTT... "));
 
 	bool res;
 	if (mqtt_topic_lwt != "-")
@@ -598,12 +603,12 @@ void MQTT_connect()
 	if (res == false)
 	{ // connect will return 0 for connected
 		Serial.println(mqtt->state());
-		Serial.println("Retrying MQTT connection in 10 seconds...");
+		Serial.println(F("Retrying MQTT connection in 10 seconds..."));
 		mqtt->disconnect();
 		last_reconnect=millis();
 	} else
 	{
-		Serial.println("MQTT Connected!");
+		Serial.println(F("MQTT Connected!"));
 		last_reconnect=0;
 		last_mqtt=0;
 		if (mqtt_topic_sub != "-")
@@ -621,17 +626,21 @@ void MQTT_discover()
 	if (!ini.mqtt_enabled) return;
 	if (!mqtt->connected()) return;
 
-	snprintf(id, 17, "lazyroll%08X", ESP.getChipId());
+	snprintf_P(id, 17, PSTR("lazyroll%08X"), ESP.getChipId());
 	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
 	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"_blind\", \"~\": \""+\
-	  mqtt_topic_sub+"\", \"set_pos_t\": \"~\", \"pos_t\": \""+mqtt_topic_pub+"\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ";
+	mqtt_data += mqtt_topic_sub;
+	mqtt_data += F("\", \"set_pos_t\": \"~\", \"pos_t\": \"");
+	mqtt_data += mqtt_topic_pub;
+	mqtt_data += F("\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ");
 	mqtt_data += "\"device\":{\"identifiers\": [\""+String(id)+"\"], \"name\": \""+String(ini.hostname)+"\", ";
-	mqtt_data += "\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \""+String(VERSION)+"\"}, ";
+	mqtt_data += F("\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \"");
+	mqtt_data += String(VERSION)+"\"}, ";
 	if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\": \""+mqtt_topic_lwt+"\", ";
 	if (ini.mqtt_invert)
-		mqtt_data+="\"pos_clsd\": 0, \"pos_open\": 100}";
+		mqtt_data+=F("\"pos_clsd\": 0, \"pos_open\": 100}");
 	else
-		mqtt_data+="\"pos_clsd\": 100, \"pos_open\": 0}";
+		mqtt_data+=F("\"pos_clsd\": 100, \"pos_open\": 0}");
 
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
@@ -672,7 +681,7 @@ void ProcessMQTT()
 			switch (ini.mqtt_state_type)
 			{
 				case 0:
-					sprintf(buf, "%i", val);
+					sprintf_P(buf, PSTR("%i"), val);
 					break;
 				case 1:
 					if (val == 0) strcpy(buf, "OFF"); else strcpy(buf, "ON");
@@ -683,7 +692,7 @@ void ProcessMQTT()
 				case 3:
 					val2=Position2Percents(roll_to);
 					if (ini.mqtt_invert) val2=100-val2;
-					sprintf(buf, "{\"state\":\"%s\", \"position\":\"%d\", \"destination\":\"%d\"}", (val == 0 ? "OFF" : "ON"), val, val2);
+					sprintf_P(buf, PSTR("{\"state\":\"%s\", \"position\":\"%d\", \"destination\":\"%d\"}"), (val == 0 ? "OFF" : "ON"), val, val2);
 					break;
 				default:
 					buf[0]=0;
@@ -734,7 +743,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 	}
 
 	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
-	
+
 	if (delay>0)
 	{
 		delay--;
@@ -843,11 +852,11 @@ void ICACHE_RAM_ATTR btnISR()
 {
 	static uint32_t lastChange=0;
 	static uint8_t lastState=0;
-	
+
 	uint32_t now;
 	uint8_t state = !digitalRead(pin); // active low
 	if (state == lastState) return; // ignore duplicate readings
-	
+
 	now=millis();
 	if (!state)
 	{
@@ -855,7 +864,7 @@ void ICACHE_RAM_ATTR btnISR()
 		else if (now - lastChange >= SHORT_PRESS_MS) button=SHORT_PRESS;
 	}
 	lastChange = now;
-	lastState = state;	
+	lastState = state;
 }
 
 void setup_Button()
@@ -863,9 +872,9 @@ void setup_Button()
 	detachInterrupt(0);
 	detachInterrupt(2);
 	detachInterrupt(3);
-	
+
 	if (!ini.btn_pin) return;
-	
+
 	switch (ini.btn_pin)
 	{
 		case 1: pin=0; break;
@@ -882,8 +891,8 @@ void ButtonClick()
 	static uint32_t lastClick;
 	static uint8_t lastCommand;
 	uint8_t open;
-	
-	if (roll_to != position) 
+
+	if (roll_to != position)
 	{
 		Stop();
 		return;
@@ -892,16 +901,16 @@ void ButtonClick()
 		open = !lastCommand; // invert direction on double click
 	else
 		open = position > ini.full_length/2;
-		
+
 	if (open) Open(); else Close();
-	
+
 	lastCommand = open;
 	lastClick=millis();
 }
 
 void ButtonLongClick()
 {
-	if (roll_to != position) 
+	if (roll_to != position)
 	{
 		Stop();
 		return;
@@ -912,7 +921,7 @@ void ButtonLongClick()
 void process_Button()
 {
 	if (button == NO_PRESS) return;
-	
+
 	if (button == SHORT_PRESS) ButtonClick();
 	if (button == LONG_PRESS) ButtonLongClick();
 	button=NO_PRESS;
@@ -934,7 +943,7 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 	{
 		File f = SPIFFS.open(filename, "w");
 		if (!f) {
-			Serial.println("file creation failed");
+			Serial.println(F("file creation failed"));
 		} else
 		{
 			bytes=len;
@@ -947,7 +956,7 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 				f.write(buf, blk);
 			}
 			f.close();
-			Serial.print("file written: ");
+			Serial.print(F("file written: "));
 			Serial.println(filename);
 		}
 	}
@@ -1000,7 +1009,7 @@ void setup_Settings(void)
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 	if (LoadSettings(&ini, sizeof(ini)))
 	{
-		Serial.println("Settings loaded");
+		Serial.println(F("Settings loaded"));
 	} else
 	{
 		sprintf(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
@@ -1028,7 +1037,7 @@ void setup_Settings(void)
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 		ini.led_mode=0;
 		ini.led_level=0;
-		Serial.println("Settings set to default");
+		Serial.println(F("Settings set to default"));
 	}
 	ValidateSettings();
 	led_mode=ini.led_mode;
@@ -1040,12 +1049,12 @@ void print_SPIFFS_info()
 	FSInfo fs_info;
 	if (SPIFFS.info(fs_info))
 	{
-		Serial.printf("SPIFFS totalBytes: %i\n", fs_info.totalBytes);
-		Serial.printf("SPIFFS usedBytes: %i\n", fs_info.usedBytes);
-		Serial.printf("SPIFFS blockSize: %i\n", fs_info.blockSize);
-		Serial.printf("SPIFFS pageSize: %i\n", fs_info.pageSize);
-		Serial.printf("SPIFFS maxOpenFiles: %i\n", fs_info.maxOpenFiles);
-		Serial.printf("SPIFFS maxPathLength: %i\n", fs_info.maxPathLength);
+		Serial.printf_P(PSTR("SPIFFS totalBytes: %i\n"), fs_info.totalBytes);
+		Serial.printf_P(PSTR("SPIFFS usedBytes: %i\n"), fs_info.usedBytes);
+		Serial.printf_P(PSTR("SPIFFS blockSize: %i\n"), fs_info.blockSize);
+		Serial.printf_P(PSTR("SPIFFS pageSize: %i\n"), fs_info.pageSize);
+		Serial.printf_P(PSTR("SPIFFS maxOpenFiles: %i\n"), fs_info.maxOpenFiles);
+		Serial.printf_P(PSTR("SPIFFS maxPathLength: %i\n"), fs_info.maxPathLength);
 		Dir dir = SPIFFS.openDir("/");
 		while (dir.next()) {
 				Serial.print(dir.fileName());
@@ -1055,17 +1064,17 @@ void print_SPIFFS_info()
 				f.close();
 		}
 	} else
-		Serial.println("SPIFFS.info() failed");
+		Serial.println(F("SPIFFS.info() failed"));
 }
 
 void setup_SPIFFS()
 {
 	if (SPIFFS.begin())
 	{
-		Serial.println("SPIFFS Active");
+		Serial.println(F("SPIFFS Active"));
 		// print_SPIFFS_info();
 	} else {
-		Serial.println("Unable to activate SPIFFS");
+		Serial.println(F("Unable to activate SPIFFS"));
 	}
 }
 
@@ -1073,21 +1082,21 @@ void setup_OTA()
 {
 	ArduinoOTA.onStart([]() {
 		StopTimer();
-		Serial.println("Updating");
+		Serial.println(F("Updating"));
 	});
 	ArduinoOTA.onEnd([]() {
-		Serial.println("\nEnd");
+		Serial.println(F("\nEnd"));
 	});
 	ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 		Serial.print(".");
 	});
 	ArduinoOTA.onError([](ota_error_t error) {
-		Serial.printf("Error[%u]: ", error);
-		if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-		else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-		else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-		else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-		else if (error == OTA_END_ERROR) Serial.println("End Failed");
+		Serial.printf_P(PSTR("Error[%u]: "), error);
+		if (error == OTA_AUTH_ERROR) Serial.println(F("Auth Failed"));
+		else if (error == OTA_BEGIN_ERROR) Serial.println(F("Begin Failed"));
+		else if (error == OTA_CONNECT_ERROR) Serial.println(F("Connect Failed"));
+		else if (error == OTA_RECEIVE_ERROR) Serial.println(F("Receive Failed"));
+		else if (error == OTA_END_ERROR) Serial.println(F("End Failed"));
 	});
 	ArduinoOTA.setHostname(ini.hostname);
 	ArduinoOTA.begin();
@@ -1113,13 +1122,13 @@ void setup()
 
 	Serial.begin(115200);
 	Serial.println();
-	Serial.println("Booting...");
+	Serial.println(F("Booting..."));
 
 	setup_SPIFFS();
 	setup_Settings(); // setup and load settings.
 	init_SPIFFS(); // create static HTML files, if needed
 
-	Serial.print("Hostname: ");
+	Serial.print(F("Hostname: "));
 	Serial.println(ini.hostname);
 
 	WiFi.persistent(false);
@@ -1132,7 +1141,7 @@ void setup()
 	{
 		WiFi.begin(ini.ssid, ini.password);
 		if (WiFi.waitForConnectResult() == WL_CONNECTED) break;
-		Serial.println("WiFi failed, retrying.");
+		Serial.println(F("WiFi failed, retrying."));
 		attempts--;
 		if (attempts>0)
 		{
@@ -1142,7 +1151,7 @@ void setup()
 		}
 		else
 		{ // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
-			Serial.print("Starting access point. SSID: ");
+			Serial.print(F("Starting access point. SSID: "));
 			Serial.println(ini.hostname);
 			WiFi.mode(WIFI_AP);
 			WiFi.softAP(ini.hostname); // ... but without password
@@ -1153,8 +1162,8 @@ void setup()
 
 	WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-	if (!MDNS.begin(ini.hostname)) Serial.println("Error setting up MDNS responder!");
-	else Serial.println("mDNS responder started");
+	if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
+	else Serial.println(F("mDNS responder started"));
 
 	httpUpdater.setup(&httpServer, update_path, update_username, update_password);
 	httpServer.on("/",         HTTP_handleRoot);
@@ -1172,7 +1181,7 @@ void setup()
 	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
 	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
 	httpServer.onNotFound([]() {
-		String message = "Not found URI: ";
+		String message = F("Not found URI: ");
 		message += httpServer.uri();
 
 		HTTP_redirect("/settings");
@@ -1215,9 +1224,11 @@ String HTML_status();
 String HTML_header()
 {
 	String ret;
+	String name;
 
-	ret.reserve(10240);
+	ret.reserve(1024);
 
+	name=SL("Lazy rolls", "Ленивые шторы");
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
 	"<head>\n" \
@@ -1225,7 +1236,7 @@ String HTML_header()
 	"<meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\">\n" \
 	"<meta name = \"viewport\" content = \"width=device-width, initial-scale=1\">\n" \
 	"<title>");
-	ret += SL("Lazy rolls", "Ленивые шторы");
+	ret += name;
 	ret += F("</title>\n" \
 	"<link rel=\"stylesheet\" href=\""CLASS_URL"\" type=\"text/css\">\n" \
 
@@ -1234,9 +1245,8 @@ String HTML_header()
 	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
 	"<div id=\"wrapper\">\n" \
 	"<header onclick=\"ShowMain();\">");
-	ret += SL("Lazy rolls", "Ленивые шторы");
-	ret += F("</header>\n" \
-	"<nav></nav>\n");
+	ret += name;
+	ret += F("</header>\n");
 
 	ret += HTML_mainmenu();
 	ret += HTML_status();
@@ -1245,8 +1255,8 @@ String HTML_header()
 
 String HTML_footer()
 {
-	String ret = F("  </div>\n" \
-	"  <footer></footer>\n" \
+	String ret = F("</div>\n" \
+	"<footer></footer>\n" \
 	"</body>\n" \
 	"</html>");
 	return ret;
@@ -1276,17 +1286,17 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
 {
 	String out;
 
-	out="<tr><td class=\"idname\">";
+	out=F("<tr><td class=\"idname\">");
 	out+=header;
-	out+="</td><td class=\"val\"><input type=\"text\" name=\"";
+	out+=F("</td><td class=\"val\"><input type=\"text\" name=\"");
 	out+=String(id);
-	out+="\" id=\"";
+	out+=F("\" id=\"");
 	out+=String(id);
-	out+="\" value=\"";
+	out+=F("\" value=\"");
 	out+=String(inistr);
-	out+="\" maxlength=\"";
+	out+=F("\" maxlength=\"");
 	out+=String(len);
-	out+="\"/></td></tr>\n";
+	out+=F("\"/></td></tr>\n");
 
 	return out;
 }
@@ -1312,8 +1322,9 @@ String HTML_status()
 
 	out.reserve(4096);
 
-	out += "    <section class=\"info hide\" id=\"info\"><table>\n";
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Status", "Статус")+"</td></tr>\n";
+	out += F("    <section class=\"info hide\" id=\"info\"><table>\n" \
+		"<tr class=\"sect_name\"><td colspan=\"2\">");
+	out += SL("Status", "Статус")+"</td></tr>\n";
 	out += HTML_tableLine(L("Version", "Версия"), VERSION);
 	out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
 	if (lastSync==0)
@@ -1359,7 +1370,7 @@ String HTML_status()
 	out += HTML_tableLine(L("Brightness", "Яркость"), LEDLevelString(), "led_level");
 #endif
 
-	out +="</table></section>\n";
+	out +=F("</table></section>\n");
 
 	return out;
 }
@@ -1368,14 +1379,26 @@ String HTML_mainmenu(void)
 {
 	String out;
 
-	out += "<div id=\"heading\" class=\"status\">\n" \
-		"<ul><li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>["+SL("Open", "Открыть")+"]</a>\n" \
-		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>["+SL("Close", "Закрыть")+"]</a>\n" \
-		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>["+SL("Stop", "Стоп")+"]</a>\n" \
-		"</li><li class=\"menuinfo\"><a href=\"/\" onclick=\"return ShowInfo();\"><div class=\"svg\"></div>["+SL("Info", "Инфо")+"]</a>\n" \
-		"</li><li class=\"menusettings\"><a href=\"/settings\" onclick=\"return ShowSettings();\"><div class=\"svg\"></div>["+SL("Settings", "Настройки")+"]</a>\n" \
-		"</li><li class=\"menualarms\"><a href=\"/alarms\" onclick=\"return ShowAlarms();\"><div class=\"svg\"></div>["+SL("Schedule", "Расписание")+"]</a></li></ul>\n" \
-		"</div>\n";
+	out.reserve(1024);
+	out += F("<div id=\"heading\" class=\"status\">\n" \
+		"<ul><li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[");
+	out += SL("Open", "Открыть");
+	out += F("]</a>\n" \
+		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[");
+	out += SL("Close", "Закрыть");
+	out += F("]</a>\n" \
+		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>[");
+	out += SL("Stop", "Стоп");
+	out += F("]</a>\n" \
+		"</li><li class=\"menuinfo\"><a href=\"/\" onclick=\"return ShowInfo();\"><div class=\"svg\"></div>[");
+	out += SL("Info", "Инфо");
+	out += F("]</a>\n" \
+		"</li><li class=\"menusettings\"><a href=\"/settings\" onclick=\"return ShowSettings();\"><div class=\"svg\"></div>[");
+	out += SL("Settings", "Настройки");
+	out += F("]</a>\n" \
+		"</li><li class=\"menualarms\"><a href=\"/alarms\" onclick=\"return ShowAlarms();\"><div class=\"svg\"></div>[");
+	out += SL("Schedule", "Расписание");
+	out += F("]</a></li></ul>\n</div>\n");
 	return out;
 }
 
@@ -1391,7 +1414,7 @@ void HTTP_handleRoot(void)
 	HTTP_Activity();
 
 	out = HTML_header();
-	
+
 	out += F("<section class=\"main\" id=\"main\"><p>" \
 		"<ul>\n" \
 		"<li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[Open]</a>\n" \
@@ -1399,9 +1422,9 @@ void HTTP_handleRoot(void)
 		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[Close]</a>\n" \
 		"</li></p>");
 
-	out += SL("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>",
-		"<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.</p>");
-	out += "</section>\n";
+	out += SL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
+		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.</p>"));
+	out += F("</section>\n");
 
 	out += HTML_footer();
 	httpServer.send(200, "text/html", out);
@@ -1466,7 +1489,7 @@ String HTML_steps(String lbl, String id, int val, String name)
 	out+="</td></tr>\n";
 	return out;
 }
-	
+
 void HTTP_handleSettings(void)
 {
 	String out;
@@ -1532,11 +1555,11 @@ void HTTP_handleSettings(void)
 
 		if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
 		{ // in soft AP mode, trying to connect to network
-			Serial.println("Trying to reconnect");
+			Serial.println(F("Trying to reconnect"));
 			WiFi.begin(ini.ssid, ini.password);
 			if (WiFi.waitForConnectResult() == WL_CONNECTED)
 			{
-				Serial.println("Reconnected to network in STA mode. Closing AP");
+				Serial.println(F("Reconnected to network in STA mode. Closing AP"));
 				HTTP_redirect("http://"+WiFi.localIP().toString()+"/settings");
 				delay(5000);
 				WiFi.softAPdisconnect(true);
@@ -1554,7 +1577,7 @@ void HTTP_handleSettings(void)
 
 	out=HTML_header();
 
-	out += "<section class=\"settings\" id=\"settings\">\n";
+	out += F("<section class=\"settings\" id=\"settings\">\n");
 
 	if (httpServer.hasArg("ok"))
 		out+=SL("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
@@ -1562,7 +1585,7 @@ void HTTP_handleSettings(void)
 
 	out += F("<form method=\"post\" action=\"/settings\">\n");
 
-	out+="<table>\n";
+	out+=F("<table>\n");
 	out+=HTML_save();
 	out+="<tr><td>"+SL("Language: ", "Язык: ")+"</td><td><select id=\"lang\" name=\"lang\">\n";
 	for (int i=0; i<Languages; i++)
@@ -1571,25 +1594,27 @@ void HTTP_handleSettings(void)
 		if (i==ini.lang) out+=" selected=\"selected\"";
 		out+=+">"+String(Language[i])+"</option>\n";
 	}
-	out+="</select></td></tr>\n";
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Network", "Сеть")+"</td></tr>\n";
+	out+=F("</select></td></tr>\n");
+	out+=F("<tr class=\"sect_name\"><td colspan=\"2\">");
+	out+=SL("Network", "Сеть")+"</td></tr>\n";
 	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
 	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
 	out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password)-1);
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Time", "Время")+"</td></tr>\n";
+	out+=F("<tr class=\"sect_name\"><td colspan=\"2\">");
+	out+=SL("Time", "Время")+"</td></tr>\n";
 	out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver)-1);
 	out+="<tr><td>"+SL("Timezone: ", "Пояс: ")+"</td><td><select id=\"timezone\" name=\"timezone\">\n";
 	for (int i=-11*60; i<=14*60; i+=15) // timezones from -11:00 to +14:00 every 15 min
 	{
 		char b[7];
-		sprintf(b, "%+d:%02d", i/60, abs(i%60));
+		sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
 		if (i<0) b[0]='-';
 		out+="<option value=\""+String(i)+"\"";
 		if (i==ini.timezone) out+=" selected=\"selected\"";
 		out+=+">UTC"+String(b)+"</option>\n";
 	}
-	out+="</select></td></tr>\n";
+	out+=F("</select></td></tr>\n");
 
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Motor", "Мотор")+"</td></tr>\n";
 	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n";
@@ -1638,7 +1663,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
 	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)");
 	out+="</select></td></tr>\n";
-	
+
 #ifdef MQTT
 	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
 	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
@@ -1707,7 +1732,7 @@ uint32_t StrToTime(String s)
 String TimeToStr(uint32_t t)
 {
 	char buf[6];
-	sprintf(buf, "%02d:%02d", t/60%24, t%60);
+	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
 	return String(buf);
 }
 
@@ -1765,7 +1790,7 @@ void HTTP_handleAlarms(void)
 	for (int a=0; a<ALARMS; a++)
 	{
 		String n=String(a);
-		out += "<tr><td colspan=\"5\"><hr/></td></tr>\n";
+		out += F("<tr><td colspan=\"5\"><hr/></td></tr>\n");
 		out += "<tr><td class=\"en\"><label for=\"en"+n+"\">\n";
 		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" +
 		  ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
@@ -1791,8 +1816,8 @@ void HTTP_handleAlarms(void)
 			  (ini.alarms[a].percent_open==101+p ? " selected" : "")+">"+
 				SL("Preset", "Позиция")+" "+String(p+1)+"</option>\n";
 		}
-		out += "</select>\n";
-		out += "</td></tr><tr><td>";
+		out += F("</select>\n");
+		out += F("</td></tr><tr><td>");
 
 		out += SL("Repeat:", "Повтор:")+"</td><td colspan=\"5\" class=\"days\">\n";
 		for (int d=0; d<7; d++)
@@ -1802,16 +1827,16 @@ void HTTP_handleAlarms(void)
 			out += "<input type=\"checkbox\" id="+id+" name="+id+
 					((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
 			out+=DoWName(d);
-			out += "</label> \n";
+			out += F("</label> \n");
 		}
-		out += "</td></tr>\n";
+		out += F("</td></tr>\n");
 	}
 
 	out+=HTML_save(5);
 
-	out += "</table>\n";
-	out+="</form>\n";
-	out+="</section>\n";
+	out += F("</table>\n" \
+		"</form>\n" \
+		"</section>\n");
 	out += HTML_footer();
 
 	httpServer.send(200, "text/html", out);
@@ -1838,7 +1863,7 @@ void HTTP_handleFormat(void)
 	SPIFFS.format();
 	setup_SPIFFS();
 	SaveSettings(&ini, sizeof(ini));
-	Serial.println("SPIFFS formatted. rebooting");
+	Serial.println(F("SPIFFS formatted. rebooting"));
 	delay(500);
 	ESP.reset();
 }
@@ -1971,9 +1996,9 @@ void HTTP_handleXML(void)
 	FlashMode_t ideMode = ESP.getFlashChipMode();
 
 	XML.reserve(1024);
-	XML="<?xml version='1.0'?>";
-	XML+="<Curtain>";
-	XML+="<Info>";
+	XML=F("<?xml version='1.0'?>");
+	XML+=F("<Curtain>");
+	XML+=F("<Info>");
 	XML+=MakeNode("Version", VERSION);
 	XML+=MakeNode("IP", WiFi.localIP().toString());
 	XML+=MakeNode("Time", ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
@@ -1982,28 +2007,26 @@ void HTTP_handleXML(void)
 	XML+=MakeNode("MQTT", MQTTstatus());
 	if (voltage_available)
 		XML+=MakeNode("Voltage", GetVoltageStr() + SL("V", "В"));
-	XML+="</Info>";
+	XML+=F("</Info>");
 
-	XML+="<ChipInfo>";
+	XML+=F("<ChipInfo>");
 	XML+=MakeNode("ID", String(ESP.getChipId(), HEX));
 	XML+=MakeNode("FlashID", String(ESP.getFlashChipId(), HEX));
 	XML+=MakeNode("RealSize", MemSize2Str(realSize));
 	XML+=MakeNode("IdeSize", MemSize2Str(ideSize));
 	XML+=MakeNode("Speed", String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц"));
 	XML+=MakeNode("IdeMode", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
-	XML+="</ChipInfo>";
+	XML+=F("</ChipInfo>");
 
-	XML+="<Position>";
+	XML+=F("<Position>");
 	XML+=MakeNode("Now", String(position));
 	XML+=MakeNode("Dest", String(roll_to));
 	XML+=MakeNode("Max", String(ini.full_length));
 	XML+=MakeNode("End1", onoff[ini.lang][IsSwitchPressed()]);
-	XML+="</Position>";
-	XML+="<LED>";
+	XML+=F("</Position><LED>");
 	XML+=MakeNode("Mode", LEDModeString());
 	XML+=MakeNode("Level", LEDLevelString());
-	XML+="</LED>";
-	XML+="</Curtain>";
+	XML+=F("</LED></Curtain>");
 
 	httpServer.send(200, "text/XML", XML);
 }
@@ -2053,12 +2076,12 @@ void loop(void)
 		if (last_reconnect==0) last_reconnect=millis();
 		if (millis()-last_reconnect > 60*1000) // every 60 sec
 		{
-			Serial.println("Trying to reconnect");
+			Serial.println(F("Trying to reconnect"));
 			last_reconnect=millis();
 			WiFi.begin(ini.ssid, ini.password);
 			if (WiFi.waitForConnectResult() == WL_CONNECTED)
 			{
-				Serial.println("Reconnected to network in STA mode. Closing AP");
+				Serial.println(F("Reconnected to network in STA mode. Closing AP"));
 				WiFi.softAPdisconnect(true);
 				WiFi.mode(WIFI_STA);
 				Serial.println(WiFi.localIP());
