@@ -82,7 +82,7 @@ function GetStatus()
 	}
 	}
 }
-// send HTTP GET request   
+// send HTTP GET request
 request.open("GET", "xml");
 request.send(null);
 	} timerId = setTimeout('GetStatus()', timeout);
@@ -118,7 +118,7 @@ document.getElementById("btn_up").disabled=false;
 document.getElementById("btn_dn").disabled=false;
 document.getElementById("pos").innerHTML=this.responseText;
 document.getElementById("dest").innerHTML=this.responseText;
-  }};
+	}};
 url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay;
 if (dir==1) url=url+"&up=1"; else url=url+"&down=1";
 xhttp.open("GET", url, true);

@@ -35,9 +35,16 @@ function make_c_array($filename, $var)
 	fclose($handle);
 }
 
-make_c_array("data/favicon.ico", "fav_icon_data");
-make_c_array("data/styles.css", "css_data");
-make_c_array("data/scripts.js", "js_data");
+$fav_filename = "data/favicon.ico";
+$css_filename = "data/styles.css";
+$js_filename = "data/scripts.js";
+
+if (file_exists($fav_filename.'.gz')) { $fav_filename = $fav_filename.'.gz'; echo "#define FAV_COMPRESSED\n"; }
+if (file_exists($css_filename.'.gz')) { $css_filename = $css_filename.'.gz'; echo "#define CSS_COMPRESSED\n"; }
+if (file_exists( $js_filename.'.gz')) {  $js_filename =  $js_filename.'.gz'; echo "#define  JS_COMPRESSED\n"; }
+make_c_array($fav_filename, "fav_icon_data");
+make_c_array($css_filename, "css_data");
+make_c_array( $js_filename, "js_data");
 
 
 ?>

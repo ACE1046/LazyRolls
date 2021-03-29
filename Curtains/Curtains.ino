@@ -79,6 +79,8 @@ uint16_t def_step_delay_mks = 1500;
 #define MIN_STEP_DELAY 50 // minimal motor step time in mks
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
 
 const int Languages=2;
 const PROGMEM char *Language[Languages]={"English", "Русский"};
@@ -966,9 +968,27 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 void init_SPIFFS()
 {
 #ifdef SPIFFS_AUTO_INIT
-	CreateFile(FAV_FILE, fav_icon_data, sizeof(fav_icon_data));
-	CreateFile(CLASS_FILE, css_data, sizeof(css_data));
-	CreateFile(JS_FILE, js_data, sizeof(js_data));
+	#ifdef FAV_COMPRESSED
+		SPIFFS.remove(FAV_FILE);
+		CreateFile(FAV_FILE ".gz", fav_icon_data, sizeof(fav_icon_data));
+	#else
+		SPIFFS.remove(FAV_FILE ".gz");
+		CreateFile(FAV_FILE, fav_icon_data, sizeof(fav_icon_data));
+	#endif
+	#ifdef CSS_COMPRESSED
+		SPIFFS.remove(CLASS_FILE);
+		CreateFile(CLASS_FILE ".gz", css_data, sizeof(css_data));
+	#else
+		SPIFFS.remove(CLASS_FILE ".gz");
+		CreateFile(CLASS_FILE, css_data, sizeof(css_data));
+	#endif
+	#ifdef JS_COMPRESSED
+		SPIFFS.remove(JS_FILE);
+		CreateFile(JS_FILE ".gz", js_data, sizeof(js_data));
+	#else
+		SPIFFS.remove(JS_FILE ".gz");
+		CreateFile(JS_FILE, js_data, sizeof(js_data));
+	#endif
 	if (ini.spiffs_time != spiffs_time)
 	{
 		ini.spiffs_time=spiffs_time;
@@ -1490,6 +1510,20 @@ String HTML_steps(String lbl, String id, int val, String name)
 	return out;
 }
 
+String HTML_hint(String hint)
+{
+	return "<tr><td></td><td>"+hint+"</td></tr>\n";
+}
+
+String HTML_section(String section)
+{
+	String out;
+	out=F("<tr class=\"sect_name\"><td colspan=\"2\">");
+	out+=section;
+	out+="</td></tr>\n";
+	return out;
+}
+
 void HTTP_handleSettings(void)
 {
 	String out;
@@ -1595,14 +1629,12 @@ void HTTP_handleSettings(void)
 		out+=+">"+String(Language[i])+"</option>\n";
 	}
 	out+=F("</select></td></tr>\n");
-	out+=F("<tr class=\"sect_name\"><td colspan=\"2\">");
-	out+=SL("Network", "Сеть")+"</td></tr>\n";
+	out+=HTML_section(SL("Network", "Сеть"));
 	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
 	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
 	out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password)-1);
 
-	out+=F("<tr class=\"sect_name\"><td colspan=\"2\">");
-	out+=SL("Time", "Время")+"</td></tr>\n";
+	out+=HTML_section(SL("Time", "Время"));
 	out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver)-1);
 	out+="<tr><td>"+SL("Timezone: ", "Пояс: ")+"</td><td><select id=\"timezone\" name=\"timezone\">\n";
 	for (int i=-11*60; i<=14*60; i+=15) // timezones from -11:00 to +14:00 every 15 min
@@ -1616,7 +1648,7 @@ void HTTP_handleSettings(void)
 	}
 	out+=F("</select></td></tr>\n");
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Motor", "Мотор")+"</td></tr>\n";
+	out+=HTML_section(SL("Motor", "Мотор"));
 	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n";
 	out+=HTML_addOption(2, ini.pinout, "A-B-C-D");
 	out+=HTML_addOption(0, ini.pinout, "A-C-B-D");
@@ -1627,23 +1659,27 @@ void HTTP_handleSettings(void)
 	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Normal", "Прямое")+"</option>\n" \
 	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Reversed", "Обратное")+"</option>\n" \
 	"</select></td></tr>\n";
-	out+=HTML_editString(L("Step delay:", "Время шага:"),"delay", String(ini.step_delay_mks).c_str(), 5);
-	out+="<tr><td></td><td>"+SL("(microsecs, "+String(MIN_STEP_DELAY)+"-65000, default 1500)", "(в мкс, "+String(MIN_STEP_DELAY)+"-65000, обычно 1500)")+"</td></tr>\n" \
-	"<tr><td colspan=\"2\">\n" \
-	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\""+SL("Test up", "Тест вверх")+"\" onclick=\"TestUp()\">\n" \
-	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\""+SL("Test down", "Тест вниз")+"\" onclick=\"TestDown()\">\n" \
-	"</td></tr>\n";
+	out+=HTML_editString(L("Step delay:", "Время шага:"), "delay", String(ini.step_delay_mks).c_str(), 5);
+	out+=HTML_hint(SL("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"));
+	out+=F("<tr><td colspan=\"2\">\n" \
+	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\"");
+	out+=SL("Test up", "Тест вверх");
+	out+=F("\" onclick=\"TestUp()\">\n" \
+	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\"");
+	out+=SL("Test down", "Тест вниз");
+	out+=F("\" onclick=\"TestDown()\">\n" \
+	"</td></tr>\n");
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Curtain", "Штора")+"</td></tr>\n";
-	out+=HTML_steps(SL("Length:", "Длина:"), "length", ini.full_length, "length");
-	out+="<tr><td></td><td>"+SL("(closed position, steps)", "(шагов до полного закрытия)")+"</td></tr>\n";
+	out+=HTML_section(SL("Curtain", "Штора"));
+	out+=HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
+	out+=HTML_hint(SL(F("(closed position, steps)"), F("(шагов до полного закрытия)")));
 	for (int i=0; i<MAX_PRESETS; i++)
 	{
 		out+=HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
 	}
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Endstop", "Концевик")+"</td></tr>\n" \
-	"<tr><td>"+SL("Type:", "Тип:")+"</td><td><select id=\"switch\" name=\"switch\">\n" \
+	out+=HTML_section(SL("Endstop", "Концевик"));
+	out+="<tr><td>"+SL("Type:", "Тип:")+"</td><td><select id=\"switch\" name=\"switch\">\n" \
 	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
 	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
 	"</select></td></tr>\n";
@@ -1652,20 +1688,22 @@ void HTTP_handleSettings(void)
 	"<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
 	"</select></td></tr>\n";
 	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
-	out+="<tr><td></td><td>"+SL("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)")+"</td></tr>\n";
+	out+=HTML_hint(SL(F("(switch ignore zone, steps, default 100)"), F("(игнорировать концевик первые шаги, обычно 100)")));
 	out+=HTML_editString(L("Extra:", "Запас:"), "up_safe_limit", String(ini.up_safe_limit).c_str(), 5);
-	out+="<tr><td></td><td>"+SL("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")+"</td></tr>\n";
+	out+=HTML_hint(SL(F("(Maximum steps below zero on open, default 300. Do not change if not sure)"), F("(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")));
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Button", "Кнопка")+"</td></tr>\n" \
-	"<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\">\n";
+	out+=HTML_section(SL("Button", "Кнопка"));
+	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\">\n";
 	out+=HTML_addOption(0, ini.btn_pin, L("None", "Нет"));
 	out+=HTML_addOption(1, ini.btn_pin, "GPIO0 (DTR)");
 	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
 	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)");
 	out+="</select></td></tr>\n";
+	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion."), 
+		F("(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.")));
 
 #ifdef MQTT
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
+	out+=HTML_section(SL("MQTT", "MQTT"));
 	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
 	out+=HTML_addCheckbox(s.c_str(), "mqtt_enabled", ini.mqtt_enabled);
 	out+=HTML_editString(L("Server:", "Сервер:"), "mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server)-1);
@@ -1674,7 +1712,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_editString(L("Password:", "Пароль:"), "mqtt_password", "*", sizeof(ini.mqtt_password)-1);
 	out+=HTML_editString(L("Keep-alive:", "Keep-alive:"), "mqtt_ping_interval", String(ini.mqtt_ping_interval).c_str(), 5);
 	out+=HTML_editString(L("Commands:", "Команды:"), "mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
-	out+="<tr><td></td><td>"+SL("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", "Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)")+"</td></tr>\n";
+	out+=HTML_hint(SL(F("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)"), F("Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)")));
 	out+=HTML_editString(L("State:", "Статус:"), "mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
 	out+="<tr><td>"+SL("Type:", "Формат:")+"</td><td><select id=\"mqtt_state_type\" name=\"mqtt_state_type\">\n";
 	out+=HTML_addOption(0, ini.mqtt_state_type, "0-100 (%)");
@@ -1687,7 +1725,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
-	out+="<tr class=\"sect_name\"><td colspan=\"2\">"+SL("LED", "Светодиод")+"</td></tr>\n";
+	out+=HTML_section(SL("LED", "Светодиод"));
 //	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
 	out+="<tr><td>"+SL("Mode:", "Функция:")+"</td><td><select id=\"led_mode\" name=\"led_mode\">\n";
 #define MODE_OPT(x) out+=HTML_addOption(x, ini.led_mode, LEDModeString(x).c_str());
