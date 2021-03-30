@@ -9,7 +9,7 @@ http://imlazy.ru/rolls/
 10.04.2019 v0.07
 02.06.2020 v0.08
 29.01.2021 v0.09
-28.03.2021 v0.10
+30.03.2021 v0.10
 
 */
 #include <ESP8266WiFi.h>
@@ -56,13 +56,14 @@ const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
 //char *temp_host;
-const char* update_path = "/update";
+const char* update_path = "/update2";
 const char* update_username = "admin";
 const char* update_password = "admin";
 uint16_t def_step_delay_mks = 1500;
 #define FAV_FILE "/favicon.ico"
 #define CLASS_FILE "/styles.css"
 #define JS_FILE "/scripts.js"
+#define INI_FILE "/settings.ini"
 #define PIN_SWITCH 14
 #define PIN_A 5
 #define PIN_B 4
@@ -1197,9 +1198,11 @@ void setup()
 	httpServer.on("/format",   HTTP_handleFormat);
 	httpServer.on("/xml",      HTTP_handleXML);
 	httpServer.on("/set",      HTTP_handleSet);
+	httpServer.on("/update",   HTTP_handleUpdate);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
 	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
+	httpServer.serveStatic(INI_FILE, SPIFFS, INI_FILE);
 	httpServer.onNotFound([]() {
 		String message = F("Not found URI: ");
 		message += httpServer.uri();
@@ -1326,6 +1329,15 @@ String HTML_addOption(int value, int selected, const char *text)
 	return "<option value=\""+String(value)+"\""+(selected==value ? " selected=\"selected\"" : "")+">"+text+"</option>\n";
 }
 
+String HTML_section(String section)
+{
+	String out;
+	out=F("<tr class=\"sect_name\"><td colspan=\"2\">");
+	out+=section;
+	out+="</td></tr>\n";
+	return out;
+}
+
 String MemSize2Str(uint32_t mem)
 {
 	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ SL(" MB", " МБ");
@@ -1342,9 +1354,8 @@ String HTML_status()
 
 	out.reserve(4096);
 
-	out += F("    <section class=\"info hide\" id=\"info\"><table>\n" \
-		"<tr class=\"sect_name\"><td colspan=\"2\">");
-	out += SL("Status", "Статус")+"</td></tr>\n";
+	out += F("    <section class=\"info hide\" id=\"info\"><table>\n");
+	out += HTML_section(SL("Status", "Статус"));
 	out += HTML_tableLine(L("Version", "Версия"), VERSION);
 	out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
 	if (lastSync==0)
@@ -1357,12 +1368,12 @@ String HTML_status()
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
 
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Position", "Положение")+"</td></tr>\n";
+	out += HTML_section(SL("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
 	out += HTML_tableLine(L("Roll to", "Цель"), String(roll_to), "dest");
 	out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()], "switch");
 
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("Memory", "Память")+"</td></tr>\n";
+	out += HTML_section(SL("Memory", "Память"));
 	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
 	out += HTML_tableLine(L("Real size", "Реально"), MemSize2Str(realSize));
 	out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
@@ -1375,7 +1386,7 @@ String HTML_status()
 	out += HTML_tableLine(L("Mode", "Режим"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 	//out += HTML_tableLine("Host", String(ini.hostname));
 	FSInfo fs_info;
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("SPIFFS", "SPIFFS")+"</td></tr>\n";
+	out += HTML_section(SL("SPIFFS", "SPIFFS"));
 	if (SPIFFS.info(fs_info))
 	{
 		out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(fs_info.totalBytes));
@@ -1383,12 +1394,16 @@ String HTML_status()
 	} else
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
 #ifdef MQTT
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("MQTT", "MQTT")+"</td></tr>\n";
+	out += HTML_section(SL("MQTT", "MQTT"));
 	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
-	out += "<tr class=\"sect_name\"><td colspan=\"2\">"+SL("LED", "LED")+"</td></tr>\n";
+#endif
+	out += HTML_section(SL("LED", "LED"));
 	out += HTML_tableLine(L("Mode", "Функция"), LEDModeString(), "led_mode");
 	out += HTML_tableLine(L("Brightness", "Яркость"), LEDLevelString(), "led_level");
-#endif
+
+	out += HTML_section(SL("Links", "Ссылки"));
+	out += HTML_tableLine("<a href=\"https://github.com/ACE1046/LazyRolls\">[Github]</a>", "<a href=\"https://t.me/lazyrolls\">[Telegram]</a>");
+	out += HTML_tableLine("<a href=\"mailto:ace@imlazy.ru\">[E-mail]</a>", "<a href=\"http://imlazy.ru\">[Website]</a>");
 
 	out +=F("</table></section>\n");
 
@@ -1498,6 +1513,35 @@ void HTTP_Activity(void)
 	NetworkActivity();
 }
 
+void HTTP_handleUpdate(void)
+{
+	String out;
+	int mem = ESP.getFlashChipRealSize();
+
+	HTTP_Activity();
+
+	out = HTML_header();
+	out += F("<section class=\"main\" id=\"main\"><p>" \
+   "<form method='POST' action='/update2' enctype='multipart/form-data'>");
+  out += SL("Firmware:", "Прошивка:");
+	out += F("<br><input type='file' accept='.bin,.bin.gz' name='firmware'>" \
+    "<input type='submit' value='");
+	out += SL("Update Firmware", "Обновить прошивку");
+	out += F("'></form></p><p>");
+	out += SL("Choose file for firmware update.<br/>New firmware can be downloaded from ", "Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: ");
+	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br/>");
+	if (mem == 1024*1024)
+		out += SL("Choose *.1Mbyte.bin.<br/>", "Выбирайте *.1Mbyte.bin.<br/>");
+	if (mem == 4*1024*1024)
+		out += SL("Choose *.4Mbyte.bin.<br/>", "Выбирайте *.4Mbyte.bin.<br/>");
+	out += SL("Settings will be lost, if downgrading to previous version.", "Настройки сбрасываются, если прошивается более старая версия.");
+	
+	out+=F("</section>\n");
+
+	out += HTML_footer();
+	httpServer.send(200, "text/html", out);
+}
+
 String HTML_steps(String lbl, String id, int val, String name)
 {
 	String out;
@@ -1513,15 +1557,6 @@ String HTML_steps(String lbl, String id, int val, String name)
 String HTML_hint(String hint)
 {
 	return "<tr><td></td><td>"+hint+"</td></tr>\n";
-}
-
-String HTML_section(String section)
-{
-	String out;
-	out=F("<tr class=\"sect_name\"><td colspan=\"2\">");
-	out+=section;
-	out+="</td></tr>\n";
-	return out;
 }
 
 void HTTP_handleSettings(void)
