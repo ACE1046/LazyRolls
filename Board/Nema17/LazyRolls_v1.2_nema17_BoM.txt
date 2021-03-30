@@ -1,0 +1,14 @@
+C1 - Tantal capacitor 10uF 16V(size A/B)
+C2 - Tantal capacitor 22uF (size A/B)
+C3, C5 - 100nF (0.1uF) (0805)
+C4 - 10nF (0.01uF) (0805)
+C6 - 100 uF
+L1 - 10uH
+R1 - R8 - 10 kOm (0805 - "103")
+R9 - 10 kOm 1% (0805 - "1002")
+R10 - 47 kOm 1% (0805 - "4702")
+R11 - 100 kOm (0805 - "104")
+R12 - 150 kOm (0805 - "154")
+U1 - MP2225
+U2 - ESP07
+U3 - Stepper driver (A4988, DRV8255, TMC2208 etc)
