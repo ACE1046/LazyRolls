@@ -10,6 +10,7 @@ http://imlazy.ru/rolls/
 02.06.2020 v0.08
 29.01.2021 v0.09
 30.03.2021 v0.10
+24.04.2021 v0.11
 
 */
 #include <ESP8266WiFi.h>
@@ -48,7 +49,7 @@ const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 #endif
 
-#define VERSION "0.10"
+#define VERSION "0.11 beta"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -78,10 +79,18 @@ uint16_t def_step_delay_mks = 1500;
 #define DEFAULT_UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
 #define DEFAULT_SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
 #define MIN_STEP_DELAY 50 // minimal motor step time in mks
+#define UART_PING_INTERVAL_MS (30*1000) // Master ping slaves every 30 seconds
+#define SLAVE_MAX_NO_PING_MS (70*1000) // Enable WiFi in slave mode if no ping from master
+#define SLAVE_SLEEP_TIMEOUT_MS (180*1000) // Disable WiFi in slave mode after network idle
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
+#define MASTER (ini.slave == 255)
+#define SLAVE (ini.slave != 255 && ini.slave != 0)
+#define ADDR_MASTER 0
+#define ADDR_SELF_ONLY 0
+#define ADDR_ALL 255
 
 const int Languages=2;
 const PROGMEM char *Language[Languages]={"English", "Русский"};
@@ -97,6 +106,14 @@ volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 bool voltage_available=0;
 uint32_t last_network_time=0; // last network activity time
+bool WiFi_active = false;
+bool WiFi_connected = false;
+bool WiFi_AP_disabled = false; // AP mode disabled after successfull connection to home network or after first ping msg from master
+int WiFi_attempts = 0;
+unsigned long last_reconnect = 0;
+uint32_t uart_crc_errors = 0;
+#define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
+
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -144,6 +161,8 @@ struct {
 	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
 	int up_safe_limit; // make extra rotations up if not hit switch
 	uint8_t btn_pin; // hardware button pin selection
+	uint8_t btn_mode; // auto/mqtt report
+	uint8_t slave; // master/slave mode
 } ini;
 
 // language functions
@@ -165,6 +184,15 @@ void NetworkActivity(void)
 	WiFi.setSleepMode(WIFI_NONE_SLEEP);
 	last_network_time=millis();
 }
+
+void ToPercent(uint8_t pos, uint8_t address);
+void ToPosition(int pos, uint8_t address);
+void ToPreset(uint8_t preset, uint8_t address);
+void Open(uint8_t address);
+void Close(uint8_t address);
+void Stop(uint8_t address);
+void WiFi_On();
+void WiFi_Off();
 
 //===================== LED ============================================
 
@@ -244,6 +272,8 @@ void ProcessLED()
 {
 	static uint32_t last_blink=0;
 
+	if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP) return;
+		
 	if (led_mode == LED_ON)
 	{
 		if (led_level == LED_LOW) analogWrite(PIN_LED, 980); else
@@ -381,6 +411,138 @@ int DayOfWeek(uint32_t time)
 	return ((time / DAY) + 3) % 7;
 }
 
+// ===================== UART master/slave =============================
+
+#define UART_CMD_PERCENT '%'
+#define UART_CMD_POSITION '='
+#define UART_CMD_PRESET '@'
+#define UART_CMD_OPEN 'o'
+#define UART_CMD_CLOSE 'c'
+#define UART_CMD_STOP 's'
+#define UART_CMD_PING 'p'
+#define UART_CMD_WAKE 'w' // enable wifi
+#define UART_CMD_BLINK 'b' // blink led
+#define CRC_INIT 0xEA // just a random nonzero number for checksum
+
+uint32_t lastUARTping = 0;
+char const *int2hex="0123456789ABCDEF";
+void SendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
+{
+	uint8_t buf[11], crc;
+	
+	if (!MASTER) return;
+	buf[0]='~';
+	if (address == ADDR_ALL) buf[1]='*'; else buf[1]='0'+address;
+	buf[2]=cmd;
+	buf[3]='0' + ((val / 10000) % 10);
+	buf[4]='0' + ((val / 1000) % 10);
+	buf[5]='0' + ((val / 100) % 10);
+	buf[6]='0' + ((val / 10) % 10);
+	buf[7]='0' + ((val    ) % 10);
+	crc=CRC_INIT;
+	for (int i=0; i<8; i++) crc += buf[i];
+	buf[8] = int2hex[crc>>4];
+	buf[9] = int2hex[crc & 0x0F];
+	buf[10] = 0;
+	
+	Serial.print((char *)&buf);
+}
+
+void SendUARTPing()
+{
+	static uint32_t lastping;
+	uint32_t time;
+	uint8_t buf[11], crc;
+	
+	if (millis() - lastping < UART_PING_INTERVAL_MS) return;
+	lastping = millis();
+	if (lastSync == 0) time = 0;
+	else time = UNIXTime + (millis() - lastSync)/1000;
+	
+	if (!MASTER) return;
+	buf[0]='~';
+	buf[1]='*';
+	buf[2]=UART_CMD_PING;
+	buf[3]=(time >> 24);
+	buf[4]=(time >> 16) & 0xFF;
+	buf[5]=(time >>  8) & 0xFF;
+	buf[6]=(time      ) & 0xFF;
+	buf[7]='0';
+	crc=CRC_INIT;
+	for (int i=0; i<8; i++) crc += buf[i];
+	buf[8] = int2hex[crc>>4];
+	buf[9] = int2hex[crc & 0x0F];
+	buf[10] = 0;
+	
+	Serial.write(buf, 10);
+}
+
+void UARTPingReceived(uint32_t time)
+{
+	WiFi_AP_disabled = true; // Disabling AP mode if master alive
+	lastUARTping = lastSync = millis();
+	UNIXTime = time;
+	//	Serial.println(TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]");
+}
+
+void ProcessUART()
+{
+	static uint8_t buf[11];
+	static uint8_t inbuf = 0;
+	uint8_t crc;
+	uint32_t val;
+
+	// Enable WiFi in slave mode if no ping from master for SLAVE_MAX_NO_PING_MS
+	if (SLAVE && !WiFi_AP_disabled && !WiFi_active && (millis() - lastUARTping > SLAVE_MAX_NO_PING_MS))
+	{
+		Serial.println(F("No ping from master, enabling WiFi"));
+		WiFi_On();
+	}
+	
+	while (Serial.available())
+	{
+		buf[inbuf++] = Serial.read();
+		
+		if (inbuf == 10)
+		{
+			crc=CRC_INIT;
+			for (int i=0; i<8; i++) crc += buf[i];
+			if (buf[0] == '~' && buf[8] == int2hex[crc>>4] && buf[9] == int2hex[crc & 0x0F])
+			{ // valid command
+				if (buf[1] == '*' || buf[1]-'0' == ini.slave)
+				{ // our address
+					if (buf[2] == UART_CMD_PING)
+						val = ((uint32_t)buf[3] << 24) + ((uint32_t)buf[4] << 16) + ((uint32_t)buf[5] << 8) + buf[6];
+					else
+						val = (buf[3]-'0')*10000 + (buf[4]-'0')*1000 + (buf[5]-'0')*100 + (buf[6]-'0')*10 + (buf[7]-'0');
+					switch (buf[2])
+					{
+						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY); break;
+						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY); break;
+						case UART_CMD_STOP: Stop(ADDR_SELF_ONLY); break;
+						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY); break;
+						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY); break;
+						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY); break;
+						case UART_CMD_WAKE: WiFi_On(); break;
+						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
+						case UART_CMD_PING: UARTPingReceived(val); break;
+					}
+				}
+				inbuf=0;
+			} else
+			{  // invalid command
+				if (buf[0] == '~') 
+				{
+					Serial.println(F("Invalid CRC in uart packet"));
+					uart_crc_errors++;
+				}
+				for (int i=0; i<10-1; i++) buf[i] = buf[i+1]; // shifting buffer, removing 1st byte
+				inbuf--;
+			}
+		}
+	}
+}
+
 //----------------------- Motor ----------------------------------------
 #define PINOUT_SD 3
 const uint8_t microstep[8][4]={
@@ -442,46 +604,65 @@ int Position2Percents(int pos)
 	return percent;
 }
 
-void ToPercent(uint8_t pos)
+void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 {
 	if ((pos<0) || (pos>100)) return;
-	if (ini.sw_at_bottom) pos=100-pos;
 
-	if (position<0) position=0;
-	if (pos == 0)
-		roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
-	else
-		roll_to=ini.full_length * pos / 100;
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, pos);
+	if (address == ADDR_MASTER || address == ADDR_ALL)
+	{
+		if (ini.sw_at_bottom) pos=100-pos;
+
+		if (position<0) position=0;
+		if (pos == 0)
+			roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
+		else
+			roll_to=ini.full_length * pos / 100;
+	}
 }
 
-void ToPosition(int pos)
+void ToPosition(int pos, uint8_t address=ADDR_ALL)
 {
-	if (pos<0 || pos>ini.full_length) return;
-	if (position<0) position=0;
-	roll_to=pos;
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_POSITION, address, pos);
+	if (address == ADDR_MASTER || address == ADDR_ALL)
+	{
+		if (pos<0 || pos>ini.full_length) return;
+		if (position<0) position=0;
+		roll_to=pos;
+	}
 }
 
-void ToPreset(uint8_t preset)
+void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
 {
-	if (preset==0 || preset > MAX_PRESETS) return;
-	if (position<0) position=0;
-	roll_to=ini.preset[preset-1];
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_PRESET, address, preset);
+	if (address == ADDR_MASTER || address == ADDR_ALL)
+	{
+		if (preset==0 || preset > MAX_PRESETS) return;
+		if (position<0) position=0;
+		roll_to=ini.preset[preset-1];
+	}
 }
 
-void Open()
+void Open(uint8_t address=ADDR_ALL)
 {
-	ToPercent(0);
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_OPEN, address);
+	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER);
 }
 
-void Close()
+void Close(uint8_t address=ADDR_ALL)
 {
-	ToPercent(100);
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_CLOSE, address);
+	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER);
 }
 
-void Stop()
+void Stop(uint8_t address=ADDR_ALL)
 {
-	roll_to=position;
-	MotorOff();
+	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_STOP, address);
+	if (address == ADDR_MASTER || address == ADDR_ALL)
+	{
+		roll_to=position;
+		MotorOff();
+	}
 }
 
 uint32_t GetVoltage()
@@ -529,8 +710,18 @@ String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt;
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
 	int x;
+	uint8_t address;
 	char *str=(char*)payload;
 	if (len==0) return;
+	
+	address=ADDR_ALL;
+	if (len>2 && str[0]=='$') // master/slave selected
+	{
+		if (str[1] >= '0' && str[1] <='9') address = str[1]-'0';
+		str+=2;
+		len-=2;
+	}
+
 	if (led_mode == LED_MQTT || led_mode == LED_MQTT_HTTP) LED_Blink();
 
 	NetworkActivity();
@@ -542,18 +733,18 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	if (x>0 && x<=100 || strcmp(str, "0") == 0)
 	{
 		if (ini.mqtt_invert)
-			ToPercent(100-x);
+			ToPercent(100-x, address);
 		else
-			ToPercent(x);
+			ToPercent(x, address);
 	}
-	else if (strcmp(str, "on") == 0) Open();
-	else if (strcmp(str, "off") == 0) Close();
-	else if (strcmp(str, "open") == 0) Open();
-	else if (strcmp(str, "close") == 0) Close();
-	else if (strcmp(str, "stop") == 0) { Stop(); last_mqtt=0; } // report current position after stop command
+	else if (strcmp(str, "on") == 0) Open(address);
+	else if (strcmp(str, "off") == 0) Close(address);
+	else if (strcmp(str, "open") == 0) Open(address);
+	else if (strcmp(str, "close") == 0) Close(address);
+	else if (strcmp(str, "stop") == 0) { Stop(address); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
-	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10));
-	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10));
+	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10), address);
+	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10), address);
 }
 
 String ReplaceHostname(const char *topic)
@@ -931,6 +1122,96 @@ void process_Button()
 	if (led_mode == LED_BUTTON) LED_Blink();
 }
 
+// ======================= WiFi =================================
+
+void ProcessWiFi()
+{
+	if (!WiFi_active) return;
+
+	if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
+	{ // in soft AP mode, trying to connect to network
+		if (WiFi.status() == WL_CONNECTED)
+		{
+			Serial.println(F("Reconnected to network in STA mode. Closing AP"));
+			WiFi.softAPdisconnect(true);
+			WiFi.mode(WIFI_STA);
+			Serial.println(WiFi.localIP());
+			LED_Off();
+			CP_delete();
+			WiFi_AP_disabled = true; // Disabling AP mode until next reboot
+		} else
+		{
+			if (last_reconnect==0) last_reconnect=millis();
+			if (millis()-last_reconnect > 60*1000) // every 60 sec
+			{
+				Serial.println(F("Trying to reconnect"));
+				last_reconnect=millis();
+				WiFi.begin(ini.ssid, ini.password);
+			}
+		}
+		return;
+	}
+
+	if (WiFi.status() == WL_CONNECTED)
+	{
+		if (!WiFi_connected)
+		{ // Connected successfully
+			WiFi_connected = true;
+			WiFi.setSleepMode(WIFI_NONE_SLEEP);
+
+			Serial.println(WiFi.localIP());
+
+			if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
+			else Serial.println(F("mDNS responder started"));
+			MDNS.addService("http", "tcp", 80);
+		} else return;
+	}
+	
+	if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS && WiFi.status() != WL_DISCONNECTED)
+	{
+		if (WiFi_attempts < MAX_RECONNECT_ATTEMPS)
+		{
+			WiFi.begin(ini.ssid, ini.password);
+			Serial.println(F("WiFi failed, retrying."));
+			LED_On();
+			delay(500);
+			LED_Off();
+			if (!WiFi_AP_disabled) WiFi_attempts++; // Do not count attempts if AP mode disabled (it is enable only at startup)
+		}
+		else
+		{ // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
+			Serial.print(F("Starting access point. SSID: "));
+			Serial.println(ini.hostname);
+			WiFi.mode(WIFI_AP);
+			WiFi.softAP(ini.hostname); // ... but without password
+			LED_On();
+			CP_create();
+		}
+	}
+}
+	
+WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
+void WiFi_On()
+{
+	if (SLAVE) Serial.println(F("Enabling WiFi"));
+	last_network_time = millis();
+	WiFi_active = true;
+	WiFi_attempts = 0;
+	WiFi.hostname(ini.hostname);
+	WiFi.begin(ini.ssid, ini.password);
+	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)   {     Serial.println(F("Disconnected"));   });
+	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event)   {     Serial.println(F("Auth mode changed"));   });
+	ProcessWiFi();
+}
+
+void WiFi_Off()
+{
+	WiFi_active = false;
+	WiFi_connected = false;
+	WiFi.mode(WIFI_OFF);
+	WiFi.forceSleepBegin();
+}
+
 // ==================== initialization ===============================
 
 #ifdef SPIFFS_AUTO_INIT
@@ -1141,6 +1422,13 @@ void setup()
 	pinMode(PIN_LED, OUTPUT);
 	LED_On();
 
+	if (WiFi.getMode() != WIFI_OFF) 
+	{
+		WiFi.persistent(true);
+		WiFi.mode(WIFI_OFF);
+	}
+	WiFi.persistent(false);	
+
 	Serial.begin(115200);
 	Serial.println();
 	Serial.println(F("Booting..."));
@@ -1152,39 +1440,10 @@ void setup()
 	Serial.print(F("Hostname: "));
 	Serial.println(ini.hostname);
 
-	WiFi.persistent(false);
-	WiFi.hostname(ini.hostname);
-	WiFi.mode(WIFI_STA);
+	lastUARTping = lastSync = millis();
 
 	LED_Off();
-	int attempts=3;
-	while (attempts>0)
-	{
-		WiFi.begin(ini.ssid, ini.password);
-		if (WiFi.waitForConnectResult() == WL_CONNECTED) break;
-		Serial.println(F("WiFi failed, retrying."));
-		attempts--;
-		if (attempts>0)
-		{
-			LED_On();
-			delay(1000);
-			LED_Off();
-		}
-		else
-		{ // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
-			Serial.print(F("Starting access point. SSID: "));
-			Serial.println(ini.hostname);
-			WiFi.mode(WIFI_AP);
-			WiFi.softAP(ini.hostname); // ... but without password
-			LED_On();
-			CP_create();
-		}
-	}
-
-	WiFi.setSleepMode(WIFI_NONE_SLEEP);
-
-	if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
-	else Serial.println(F("mDNS responder started"));
+	if (!SLAVE) WiFi_On(); else { WiFi.setSleepMode(WIFI_MODEM_SLEEP); WiFi.forceSleepBegin(); }
 
 	httpUpdater.setup(&httpServer, update_path, update_username, update_password);
 	httpServer.on("/",         HTTP_handleRoot);
@@ -1211,10 +1470,6 @@ void setup()
 		Serial.println(message);
 	});
 	httpServer.begin();
-
-	Serial.println(WiFi.localIP());
-
-	MDNS.addService("http", "tcp", 80);
 
 	pinMode(PIN_SWITCH, INPUT_PULLUP);
 	pinMode(PIN_A, OUTPUT);
@@ -1400,6 +1655,12 @@ String HTML_status()
 	out += HTML_section(SL("LED", "LED"));
 	out += HTML_tableLine(L("Mode", "Функция"), LEDModeString(), "led_mode");
 	out += HTML_tableLine(L("Brightness", "Яркость"), LEDLevelString(), "led_level");
+
+	if (SLAVE)
+	{
+		out += HTML_section(SL("Slave", "Ведомый"));
+		out += HTML_tableLine(L("Errors", "Ошибок"), String(uart_crc_errors), "uart_crc_errors");
+	}
 
 	out += HTML_section(SL("Links", "Ссылки"));
 	out += HTML_tableLine("<a href=\"https://github.com/ACE1046/LazyRolls\">[Github]</a>", "<a href=\"https://t.me/lazyrolls\">[Telegram]</a>");
@@ -1608,6 +1869,7 @@ void HTTP_handleSettings(void)
 		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
 		SaveInt("led_mode", &ini.led_mode);
 		SaveInt("led_level", &ini.led_level);
+		SaveInt("slave", &ini.slave);
 
 		led_mode=ini.led_mode;
 		led_level=ini.led_level;
@@ -1759,6 +2021,17 @@ void HTTP_handleSettings(void)
 	out+=HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
 	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
+
+	out+=HTML_section(SL("Master/slave", "Главный/ведомый"));
+	out+="<tr><td>"+SL("Role:", "Роль:")+"</td><td><select id=\"slave\" name=\"slave\">\n";
+	out+=HTML_addOption(0, ini.slave, L("Standalone", "Независимый"));
+	out+=HTML_addOption(255, ini.slave, L("Master", "Главный"));
+	out+=HTML_addOption(1, ini.slave, L("Slave 1", "Ведомый 1"));
+	out+=HTML_addOption(2, ini.slave, L("Slave 2", "Ведомый 2"));
+	out+=HTML_addOption(3, ini.slave, L("Slave 3", "Ведомый 3"));
+	out+=HTML_addOption(4, ini.slave, L("Slave 4", "Ведомый 4"));
+	out+=HTML_addOption(5, ini.slave, L("Slave 5", "Ведомый 5"));
+	out+="</select></td></tr>\n";
 
 	out+=HTML_section(SL("LED", "Светодиод"));
 //	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
@@ -1946,39 +2219,50 @@ const char * const blank_xml = "<xml></xml>";
 void HTTP_handleOpen(void)
 {
 	HTTP_Activity();
-	Open();
+	if (httpServer.hasArg("addr"))
+		Open(atoi(httpServer.arg("addr").c_str()));
+	else
+		Open();
 	httpServer.send(200, "text/XML", blank_xml);
 }
 
 void HTTP_handleClose(void)
 {
 	HTTP_Activity();
-	Close();
+	if (httpServer.hasArg("addr"))
+		Close(atoi(httpServer.arg("addr").c_str()));
+	else
+		Close();
 	httpServer.send(200, "text/XML", blank_xml);
 }
 
 void HTTP_handleStop(void)
 {
 	HTTP_Activity();
-	Stop();
+	if (httpServer.hasArg("addr"))
+		Stop(atoi(httpServer.arg("addr").c_str()));
+	else
+		Stop();
 	httpServer.send(200, "text/XML", blank_xml);
 }
 
 void HTTP_handleSet(void)
 {
+	uint8_t addr=ADDR_ALL;
 	HTTP_Activity();
+	if (httpServer.hasArg("addr")) addr=atoi(httpServer.arg("addr").c_str());
 	if (httpServer.hasArg("pos"))
 	{
 		int pos=atoi(httpServer.arg("pos").c_str());
-		if (pos==0) Open();
-		else if (pos==100) Close();
-		else if (pos>0 && pos<100) ToPercent(pos);
+		if (pos==0) Open(addr);
+		else if (pos==100) Close(addr);
+		else if (pos>0 && pos<100) ToPercent(pos, addr);
 	  httpServer.send(200, "text/XML", blank_xml);
 	}
 	else if (httpServer.hasArg("steps"))
 	{
 		int pos=atoi(httpServer.arg("steps").c_str());
-		ToPosition(pos);
+		ToPosition(pos, addr);
 	  httpServer.send(200, "text/XML", blank_xml);
 	}
 	else if (httpServer.hasArg("stepsovr"))
@@ -1991,7 +2275,7 @@ void HTTP_handleSet(void)
 	else if (httpServer.hasArg("preset"))
 	{
 		int preset=atoi(httpServer.arg("preset").c_str());
-		ToPreset(preset);
+		ToPreset(preset, addr);
 	  httpServer.send(200, "text/XML", blank_xml);
 	}
 	else if (httpServer.hasArg("led"))
@@ -2002,7 +2286,18 @@ void HTTP_handleSet(void)
 			httpServer.send(200, "text/XML", blank_xml);
 		else
 			httpServer.send(400, "text/XML", blank_xml); // 400 Bad Request
-	} else
+	}
+	else if (httpServer.hasArg("wake"))
+	{
+		SendUART(UART_CMD_WAKE, addr);
+	  httpServer.send(200, "text/XML", blank_xml);
+	}
+	else if (httpServer.hasArg("blink"))
+	{
+		SendUART(UART_CMD_BLINK, addr);
+	  httpServer.send(200, "text/XML", blank_xml);
+	}
+	else
 		httpServer.send(400, "text/XML", blank_xml); // 400 Bad Request
 }
 
@@ -2141,40 +2436,30 @@ void Scheduler()
 	}
 }
 
-unsigned long last_reconnect=0;
 void loop(void)
 {
-	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
-	{ // in soft AP mode, trying to connect to network
-		if (last_reconnect==0) last_reconnect=millis();
-		if (millis()-last_reconnect > 60*1000) // every 60 sec
-		{
-			Serial.println(F("Trying to reconnect"));
-			last_reconnect=millis();
-			WiFi.begin(ini.ssid, ini.password);
-			if (WiFi.waitForConnectResult() == WL_CONNECTED)
-			{
-				Serial.println(F("Reconnected to network in STA mode. Closing AP"));
-				WiFi.softAPdisconnect(true);
-				WiFi.mode(WIFI_STA);
-				Serial.println(WiFi.localIP());
-				LED_Off();
-				CP_delete();
-			} else
-				WiFi.mode(WIFI_AP);
-		}
-	} else ProcessLED();
+	ProcessWiFi();
+	ProcessLED();
 
 	httpServer.handleClient();
 	ArduinoOTA.handle();
 	SyncNTPTime();
 	Scheduler();
-	ProcessMQTT();
+	if (!SLAVE) ProcessMQTT();
 	CP_process();
 	process_Button();
+	if (MASTER) SendUARTPing();
+	if (SLAVE) ProcessUART();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
+	if (SLAVE && WiFi_active && 
+		(millis() - last_network_time > SLAVE_SLEEP_TIMEOUT_MS) &&
+		(millis() - lastUARTping < SLAVE_MAX_NO_PING_MS))
+	{
+		Serial.println(F("Network idle. WiFi shutdown"));
+		WiFi_Off();
+	}
 
 	delay(1); // this delay enables light sleep mode
 }
