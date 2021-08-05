@@ -51,7 +51,7 @@ const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
 const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
 #endif
 
-#define VERSION "0.11 beta"
+#define VERSION "0.11"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
