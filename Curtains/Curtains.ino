@@ -47,6 +47,7 @@ const uint16_t def_mqtt_port=1883;
 const char* def_mqtt_topic_state = "lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
+const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
 #endif
 
 #define VERSION "0.11 beta"
@@ -163,6 +164,8 @@ struct {
 	uint8_t btn_pin; // hardware button pin selection
 	uint8_t btn_mode; // auto/mqtt report
 	uint8_t slave; // master/slave mode
+	uint8_t aux_pin; // auxiliary pin selection
+	char mqtt_topic_aux[127+1]; // auxiliary input topic
 } ini;
 
 // language functions
@@ -705,7 +708,7 @@ PubSubClient *mqtt = NULL;
 
 uint32_t last_mqtt=0;
 
-String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt;
+String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux;
 
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
@@ -760,6 +763,7 @@ void setup_MQTT()
 	mqtt_topic_sub = ReplaceHostname(ini.mqtt_topic_command);
 	mqtt_topic_pub = ReplaceHostname(ini.mqtt_topic_state);
 	mqtt_topic_lwt = ReplaceHostname(ini.mqtt_topic_alive);
+	mqtt_topic_aux = ReplaceHostname(ini.mqtt_topic_aux);
 	if (mqtt)
 	{
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
@@ -910,10 +914,21 @@ const char *MQTTstatus()
 		return L("Disabled", "Выключен");
 }
 
+void MQTT_ReportAux(bool on)
+{
+	if (mqtt_topic_aux != "-")
+	{
+		char buf[4];
+		if (on) strcpy(buf, "ON"); else strcpy(buf, "OFF");
+		mqtt->publish(mqtt_topic_aux.c_str(), buf);
+	}
+}
+
 #else
 void setup_MQTT() {}
 void ProcessMQTT() {}
 char *MQTTstatus() { return "Off"; }
+void MQTT_ReportAux(bool on) {}
 #endif
 
 // ==================== timer & interrupt ===============================
@@ -1038,9 +1053,23 @@ void StopTimer()
 #define LONG_PRESS_MS 1000
 #define SHORT_PRESS_MS 50
 #define DOUBLE_CLICK_MS 3000
+#define AUX_DEBOUNCE_MS 50
 
-uint8_t pin, button;
+uint8_t pin_btn, pin_aux, button, aux_state;
 enum BTN_STATES { NO_PRESS, SHORT_PRESS, LONG_PRESS };
+enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
+
+void ICACHE_RAM_ATTR auxISR()
+{
+	static uint8_t lastState=0;
+
+	uint8_t state = !digitalRead(pin_aux); // active low
+	if (state == lastState) return; // ignore duplicate readings
+	
+	if (state) aux_state = AUX_ON; else aux_state = AUX_OFF;
+
+	lastState = state;
+}
 
 void ICACHE_RAM_ATTR btnISR()
 {
@@ -1048,7 +1077,7 @@ void ICACHE_RAM_ATTR btnISR()
 	static uint8_t lastState=0;
 
 	uint32_t now;
-	uint8_t state = !digitalRead(pin); // active low
+	uint8_t state = !digitalRead(pin_btn); // active low
 	if (state == lastState) return; // ignore duplicate readings
 
 	now=millis();
@@ -1061,23 +1090,36 @@ void ICACHE_RAM_ATTR btnISR()
 	lastState = state;
 }
 
+int pin2hw_pin(int pin)
+{
+	switch (pin)
+	{
+		case 1: return 0; break;
+		case 2: return 2; break;
+		case 3: return 3; break;
+		default: return 0;
+	}
+}
+
 void setup_Button()
 {
 	detachInterrupt(0);
 	detachInterrupt(2);
 	detachInterrupt(3);
 
-	if (!ini.btn_pin) return;
-
-	switch (ini.btn_pin)
+	if (ini.btn_pin)
 	{
-		case 1: pin=0; break;
-		case 2: pin=2; break;
-		case 3: pin=3; break;
-		default: return;
+		pin_btn = pin2hw_pin(ini.btn_pin);
+		pinMode(pin_btn, INPUT_PULLUP);
+		attachInterrupt(digitalPinToInterrupt(pin_btn), btnISR, CHANGE);
 	}
-	pinMode(pin, INPUT_PULLUP);
-	attachInterrupt(digitalPinToInterrupt(pin), btnISR, CHANGE);
+
+	if (ini.aux_pin)
+	{
+		pin_aux = pin2hw_pin(ini.aux_pin);
+		pinMode(pin_aux, INPUT_PULLUP);
+		attachInterrupt(digitalPinToInterrupt(pin_aux), auxISR, CHANGE);
+	}
 }
 
 void ButtonClick()
@@ -1120,6 +1162,15 @@ void process_Button()
 	if (button == LONG_PRESS) ButtonLongClick();
 	button=NO_PRESS;
 	if (led_mode == LED_BUTTON) LED_Blink();
+}
+
+void process_Aux()
+{
+	bool on;
+	if (aux_state == AUX_NONE) return;
+	on = (aux_state == AUX_ON);
+	aux_state = AUX_NONE;
+	MQTT_ReportAux(on);
 }
 
 // ======================= WiFi =================================
@@ -1298,6 +1349,7 @@ void ValidateSettings()
 	if (ini.mqtt_topic_state[0] == 0) strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
 	if (ini.mqtt_topic_command[0] == 0) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
 	if (ini.mqtt_topic_alive[0] == 0) strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
+	if (ini.mqtt_topic_aux[0] == 0) strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level;
@@ -1334,6 +1386,7 @@ void setup_Settings(void)
 		strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
 		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
 		strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
+		strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
 		ini.mqtt_state_type=0;
 		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
@@ -1520,7 +1573,7 @@ String HTML_header()
 
 	"<script src=\""JS_URL"\"></script>\n" \
 	"</head>\n" \
-	"<body onload=\"{ active=true; GetStatus(); };\">\n" \
+	"<body onload=\"{ active=true; GetStatus(); PinChange(); };\">\n" \
 	"<div id=\"wrapper\">\n" \
 	"<header onclick=\"ShowMain();\">");
 	ret += name;
@@ -1579,9 +1632,13 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
 	return out;
 }
 
-String HTML_addOption(int value, int selected, const char *text)
+String HTML_addOption(int value, int selected, const char *text, const char *id = NULL)
 {
-	return "<option value=\""+String(value)+"\""+(selected==value ? " selected=\"selected\"" : "")+">"+text+"</option>\n";
+	String s;
+	s="<option value=\""+String(value)+"\""+(selected==value ? " selected=\"selected\"" : "");
+	if (id) s+=" id=\""+String(id)+"\"";
+	s+=">"+String(text)+"</option>\n";
+	return s;
 }
 
 String HTML_section(String section)
@@ -1847,6 +1904,7 @@ void HTTP_handleSettings(void)
 		SaveInt("sw_at_bottom", &ini.sw_at_bottom);
 		SaveInt("switch_ignore", &ini.switch_ignore_steps);
 		SaveInt("btn_pin", &ini.btn_pin);
+		SaveInt("aux_pin", &ini.aux_pin);
 		SaveInt("up_safe_limit", &ini.up_safe_limit);
 		for (int i=0; i<MAX_PRESETS; i++)
 			SaveInt(String("preset"+String(i)), &ini.preset[i]);
@@ -1864,6 +1922,7 @@ void HTTP_handleSettings(void)
 		SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
 		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
 		SaveString("mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive));
+		SaveString("mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux));
 		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
 		ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
 		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
@@ -1989,16 +2048,6 @@ void HTTP_handleSettings(void)
 	out+=HTML_editString(L("Extra:", "Запас:"), "up_safe_limit", String(ini.up_safe_limit).c_str(), 5);
 	out+=HTML_hint(SL(F("(Maximum steps below zero on open, default 300. Do not change if not sure)"), F("(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")));
 
-	out+=HTML_section(SL("Button", "Кнопка"));
-	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\">\n";
-	out+=HTML_addOption(0, ini.btn_pin, L("None", "Нет"));
-	out+=HTML_addOption(1, ini.btn_pin, "GPIO0 (DTR)");
-	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
-	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)");
-	out+="</select></td></tr>\n";
-	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion."), 
-		F("(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.")));
-
 #ifdef MQTT
 	out+=HTML_section(SL("MQTT", "MQTT"));
 	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
@@ -2022,8 +2071,31 @@ void HTTP_handleSettings(void)
 	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
+	out+=HTML_section(SL("Button", "Кнопка"));
+	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n";
+	out+=HTML_addOption(0, ini.btn_pin, L("None", "Нет"));
+	out+=HTML_addOption(1, ini.btn_pin, "GPIO0 (DTR)");
+	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
+	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)", "pin_RX");
+	out+="</select></td></tr>\n";
+	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)"), 
+		F("(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.)")));
+
+#ifdef MQTT
+	out+=HTML_section(SL("Aux input", "Доп. вход"));
+	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"aux_pin\" name=\"aux_pin\" onchange=\"PinChange()\">\n";
+	out+=HTML_addOption(0, ini.aux_pin, L("None", "Нет"));
+	out+=HTML_addOption(1, ini.aux_pin, "GPIO0 (DTR)");
+	out+=HTML_addOption(2, ini.aux_pin, "GPIO2");
+	out+=HTML_addOption(3, ini.aux_pin, "GPIO3 (RX)", "aux_RX");
+	out+="</select></td></tr>\n";
+	out+=HTML_editString(L("MQTT topic:", "MQTT топик:"), "mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
+	out+=HTML_hint(SL(F("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)"), 
+		F("(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)")));
+#endif
+
 	out+=HTML_section(SL("Master/slave", "Главный/ведомый"));
-	out+="<tr><td>"+SL("Role:", "Роль:")+"</td><td><select id=\"slave\" name=\"slave\">\n";
+	out+="<tr><td>"+SL("Role:", "Роль:")+"</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange()\">\n";
 	out+=HTML_addOption(0, ini.slave, L("Standalone", "Независимый"));
 	out+=HTML_addOption(255, ini.slave, L("Master", "Главный"));
 	out+=HTML_addOption(1, ini.slave, L("Slave 1", "Ведомый 1"));
@@ -2032,6 +2104,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(4, ini.slave, L("Slave 4", "Ведомый 4"));
 	out+=HTML_addOption(5, ini.slave, L("Slave 5", "Ведомый 5"));
 	out+="</select></td></tr>\n";
+	out+=HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
 	out+=HTML_section(SL("LED", "Светодиод"));
 //	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
@@ -2448,6 +2521,7 @@ void loop(void)
 	if (!SLAVE) ProcessMQTT();
 	CP_process();
 	process_Button();
+	process_Aux();
 	if (MASTER) SendUARTPing();
 	if (SLAVE) ProcessUART();
 

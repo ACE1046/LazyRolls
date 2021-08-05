@@ -126,3 +126,28 @@ xhttp.send();
 }
 function TestUp() { Test(1); }
 function TestDown() { Test(0); }
+
+
+function PinChange() {
+var slave=document.getElementById('slave');
+var btn_pin=document.getElementById('btn_pin');
+var aux_pin=document.getElementById('aux_pin');
+if (!slave || !btn_pin || !aux_pin) return;
+if (aux_pin.selectedIndex == btn_pin.selectedIndex) aux_pin.selectedIndex=0;
+var op = btn_pin.getElementsByTagName("option");
+for (var i = 1; i < op.length; i++) op[i].disabled = (i == aux_pin.selectedIndex);
+op = aux_pin.getElementsByTagName("option");
+for (var i = 1; i < op.length; i++) op[i].disabled = (i == btn_pin.selectedIndex);
+
+if (slave.selectedIndex > 1) 
+{
+document.getElementById('pin_RX').disabled = true;
+document.getElementById('aux_RX').disabled = true;
+}
+
+var dis = false;
+if (btn_pin.options[btn_pin.selectedIndex].id == 'pin_RX') dis = true;
+if (aux_pin.options[aux_pin.selectedIndex].id == 'aux_RX') dis = true;
+var op = document.getElementById('slave').getElementsByTagName("option");
+for (var i = 2; i < op.length; i++) op[i].disabled = dis;
+}
