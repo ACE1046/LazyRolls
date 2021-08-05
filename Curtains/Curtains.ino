@@ -10,7 +10,7 @@ http://imlazy.ru/rolls/
 02.06.2020 v0.08
 29.01.2021 v0.09
 30.03.2021 v0.10
-24.04.2021 v0.11
+05.08.2021 v0.11
 
 */
 #include <ESP8266WiFi.h>
@@ -48,6 +48,7 @@ const char* def_mqtt_topic_state = "lazyroll/%HOSTNAME%/state";
 const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
+const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
 #endif
 
 #define VERSION "0.11 beta"
@@ -92,6 +93,7 @@ uint16_t def_step_delay_mks = 1500;
 #define ADDR_MASTER 0
 #define ADDR_SELF_ONLY 0
 #define ADDR_ALL 255
+#define MQTT_INFO_SECONDS 5*60 // Send mqtt info (rssi, uptime, etc) every N seconds
 
 const int Languages=2;
 const PROGMEM char *Language[Languages]={"English", "Русский"};
@@ -114,6 +116,7 @@ int WiFi_attempts = 0;
 unsigned long last_reconnect = 0;
 uint32_t uart_crc_errors = 0;
 #define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
+String aux_state_str; // current aux input state string
 
 
 ESP8266WebServer httpServer(80);
@@ -166,6 +169,7 @@ struct {
 	uint8_t slave; // master/slave mode
 	uint8_t aux_pin; // auxiliary pin selection
 	char mqtt_topic_aux[127+1]; // auxiliary input topic
+	char mqtt_topic_info[127+1]; // information topic (IP, RSSI, etc)
 } ini;
 
 // language functions
@@ -706,9 +710,9 @@ const char * GetVoltageStr()
 WiFiClient espClient;
 PubSubClient *mqtt = NULL;
 
-uint32_t last_mqtt=0;
+uint32_t last_mqtt=0, last_mqtt_info=0;
 
-String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux;
+String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf;
 
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
@@ -764,6 +768,7 @@ void setup_MQTT()
 	mqtt_topic_pub = ReplaceHostname(ini.mqtt_topic_state);
 	mqtt_topic_lwt = ReplaceHostname(ini.mqtt_topic_alive);
 	mqtt_topic_aux = ReplaceHostname(ini.mqtt_topic_aux);
+	mqtt_topic_inf = ReplaceHostname(ini.mqtt_topic_info);
 	if (mqtt)
 	{
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
@@ -808,12 +813,27 @@ void MQTT_connect()
 	{
 		Serial.println(F("MQTT Connected!"));
 		last_reconnect=0;
-		last_mqtt=0;
+		last_mqtt=last_mqtt_info=0;
 		if (mqtt_topic_sub != "-")
 			mqtt->subscribe(mqtt_topic_sub.c_str());
 		if (ini.mqtt_discovery) MQTT_discover();
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "online", true);
 	}
+}
+
+void MQTT_Delete_HA_Sensors()
+{
+	String mqtt_topic;
+	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_ip/config";
+	mqtt->publish(mqtt_topic.c_str(), "", false);
+	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_rssi/config";
+	mqtt->publish(mqtt_topic.c_str(), "", false);
+	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_uptime/config";
+	mqtt->publish(mqtt_topic.c_str(), "", false);
+	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_voltage/config";
+	mqtt->publish(mqtt_topic.c_str(), "", false);
+	mqtt_topic = "homeassistant/binary_sensor/"+String(ini.hostname)+"_aux/config";
+	mqtt->publish(mqtt_topic.c_str(), "", false);
 }
 
 void MQTT_discover()
@@ -826,21 +846,99 @@ void MQTT_discover()
 
 	snprintf_P(id, 17, PSTR("lazyroll%08X"), ESP.getChipId());
 	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
-	mqtt_data = "{\"name\": \""+String(ini.hostname)+"\", \"unique_id\": \""+String(id)+"_blind\", \"~\": \""+\
+	mqtt_data = "{\"name\":\""+String(ini.hostname)+"\",\"unique_id\":\""+String(id)+"_blind\",\"~\": \"";
 	mqtt_data += mqtt_topic_sub;
-	mqtt_data += F("\", \"set_pos_t\": \"~\", \"pos_t\": \"");
+	mqtt_data += F("\",\"set_pos_t\":\"~\",\"pos_t\":\"");
 	mqtt_data += mqtt_topic_pub;
-	mqtt_data += F("\", \"cmd_t\": \"~\", \"dev_cla\": \"blind\", ");
-	mqtt_data += "\"device\":{\"identifiers\": [\""+String(id)+"\"], \"name\": \""+String(ini.hostname)+"\", ";
-	mqtt_data += F("\"mdl\": \"LazyRoll\", \"mf\": \"imlazy.ru\", \"sw\": \"");
+	mqtt_data += F("\",\"cmd_t\":\"~\",\"dev_cla\":\"blind\",");
+	mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"],\"name\":\""+String(ini.hostname)+"\",";
+	mqtt_data += F("\"mdl\":\"LazyRoll [");
+	mqtt_data += WiFi.localIP().toString();
+	mqtt_data += F("]\",\"mf\":\"imlazy.ru\",\"sw\":\"");
 	mqtt_data += String(VERSION)+"\"}, ";
-	if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\": \""+mqtt_topic_lwt+"\", ";
+	if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
 	if (ini.mqtt_invert)
-		mqtt_data+=F("\"pos_clsd\": 0, \"pos_open\": 100}");
+		mqtt_data+=F("\"pos_clsd\":0,\"pos_open\":100}");
 	else
-		mqtt_data+=F("\"pos_clsd\": 100, \"pos_open\": 0}");
+		mqtt_data+=F("\"pos_clsd\":100,\"pos_open\":0}");
 
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+	
+	// Additional HA sensors
+	if (mqtt_topic_inf != "-")
+	{
+		// ip
+		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_ip/config";
+		mqtt_data = "{\"name\":\""+String(ini.hostname)+" IP\",\"unique_id\":\""+String(id)+"_ip\",";
+		mqtt_data += F("\"stat_t\":\"");
+		mqtt_data += mqtt_topic_inf;
+		mqtt_data += F("\",");//\"dev_cla\":\"none\",");
+		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
+		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+		mqtt_data += F("\"ic\":\"mdi:ip-network-outline\",");
+		mqtt_data += F("\"unit_of_meas\":\"\",");
+		mqtt_data += F("\"val_tpl\":\"{{value_json.ip}}\"}");
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+
+		// rssi
+		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_rssi/config";
+		mqtt_data = "{\"name\":\""+String(ini.hostname)+" RSSI\",\"unique_id\":\""+String(id)+"_rssi\",";
+		mqtt_data += F("\"stat_t\":\"");
+		mqtt_data += mqtt_topic_inf;
+		mqtt_data += F("\",\"dev_cla\":\"signal_strength\",");
+		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
+		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+		//mqtt_data += F("\"ic\":\"mdi:ip-network-outline\",");
+		mqtt_data += F("\"unit_of_meas\":\"dBm\",");
+		mqtt_data += F("\"val_tpl\":\"{{value_json.rssi}}\"}");
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+
+		// uptime
+		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_uptime/config";
+		mqtt_data = "{\"name\":\""+String(ini.hostname)+" uptime\",\"unique_id\":\""+String(id)+"_uptime\",";
+		mqtt_data += F("\"stat_t\":\"");
+		mqtt_data += mqtt_topic_inf;
+		mqtt_data += F("\", ");
+		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
+		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+		mqtt_data += F("\"ic\":\"mdi:clock-time-five-outline\",");
+		mqtt_data += F("\"unit_of_meas\":\"\",");
+		mqtt_data += F("\"val_tpl\":\"{{value_json.uptime}}\"}");
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+
+		// voltage
+		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_voltage/config";
+		mqtt_data = "{\"name\":\""+String(ini.hostname)+" voltage\",\"unique_id\":\""+String(id)+"_voltage\",";
+		mqtt_data += F("\"stat_t\":\"");
+		mqtt_data += mqtt_topic_inf;
+		mqtt_data += F("\",\"dev_cla\":\"voltage\",");
+		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
+		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+		mqtt_data += F("\"unit_of_meas\":\"V\",");
+		mqtt_data += F("\"val_tpl\":\"{{value_json.voltage}}\"}");
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+
+		// aux input
+		mqtt_topic = "homeassistant/binary_sensor/"+String(ini.hostname)+"_aux/config";
+		if (ini.aux_pin !=0)
+		{
+			mqtt_data = "{\"name\":\""+String(ini.hostname)+" aux\",\"unique_id\":\""+String(id)+"_aux\",";
+			mqtt_data += F("\"stat_t\":\"");
+			mqtt_data += mqtt_topic_inf;
+			mqtt_data += F("\",\"dev_cla\":\"window\",");
+			mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
+			if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+			mqtt_data += F("\"val_tpl\":\"{{value_json.aux}}\"}");
+		} else mqtt_data="";
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+	}
+	else
+		MQTT_Delete_HA_Sensors();
 }
 
 void ProcessMQTT()
@@ -897,6 +995,19 @@ void ProcessMQTT()
 					break;
 			}
 			mqtt->publish(mqtt_topic_pub.c_str(), buf);
+		}
+	}
+	// Information
+	if (mqtt_topic_inf != "-")
+	{
+		if (last_mqtt_info==0 || millis()-last_mqtt_info > MQTT_INFO_SECONDS*1000)
+		{
+			char buf[128];
+			IPAddress ip=WiFi.localIP();
+			last_mqtt_info=millis();
+			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\"}"), 
+				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str.c_str());
+			mqtt->publish(mqtt_topic_inf.c_str(), buf);
 		}
 	}
 }
@@ -1061,14 +1172,16 @@ enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
 
 void ICACHE_RAM_ATTR auxISR()
 {
-	static uint8_t lastState=0;
+	static uint8_t lastState=255;
 
 	uint8_t state = !digitalRead(pin_aux); // active low
 	if (state == lastState) return; // ignore duplicate readings
 	
 	if (state) aux_state = AUX_ON; else aux_state = AUX_OFF;
+	if (state) aux_state_str = "ON"; else aux_state_str = "OFF";
 
 	lastState = state;
+	last_mqtt_info=0;
 }
 
 void ICACHE_RAM_ATTR btnISR()
@@ -1119,7 +1232,9 @@ void setup_Button()
 		pin_aux = pin2hw_pin(ini.aux_pin);
 		pinMode(pin_aux, INPUT_PULLUP);
 		attachInterrupt(digitalPinToInterrupt(pin_aux), auxISR, CHANGE);
-	}
+		auxISR();
+	} else
+		aux_state_str="";
 }
 
 void ButtonClick()
@@ -1350,6 +1465,7 @@ void ValidateSettings()
 	if (ini.mqtt_topic_command[0] == 0) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
 	if (ini.mqtt_topic_alive[0] == 0) strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 	if (ini.mqtt_topic_aux[0] == 0) strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
+	if (ini.mqtt_topic_info[0] == 0) strcpy(ini.mqtt_topic_info, def_mqtt_topic_info);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level;
@@ -1387,6 +1503,7 @@ void setup_Settings(void)
 		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
 		strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 		strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
+		strcpy(ini.mqtt_topic_info, def_mqtt_topic_info);
 		ini.mqtt_state_type=0;
 		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
@@ -1923,6 +2040,7 @@ void HTTP_handleSettings(void)
 		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
 		SaveString("mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive));
 		SaveString("mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux));
+		SaveString("mqtt_topic_info", ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info));
 		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
 		ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
 		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
@@ -1963,9 +2081,9 @@ void HTTP_handleSettings(void)
 		return;
 	}
 
-	out.reserve(20480);
-
 	out=HTML_header();
+
+	out.reserve(16384);
 
 	out += F("<section class=\"settings\" id=\"settings\">\n");
 
@@ -1993,7 +2111,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_section(SL("Time", "Время"));
 	out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver)-1);
 	out+="<tr><td>"+SL("Timezone: ", "Пояс: ")+"</td><td><select id=\"timezone\" name=\"timezone\">\n";
-	for (int i=-11*60; i<=14*60; i+=15) // timezones from -11:00 to +14:00 every 15 min
+	for (int i=-11*60; i<=14*60; i+=30) // timezones from -11:00 to +14:00 every 30 min
 	{
 		char b[7];
 		sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
@@ -2067,6 +2185,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
 	out+="</select></td></tr>\n";
 	out+=HTML_editString(L("Alive:", "Живой:"), "mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive)-1);
+	out+=HTML_editString(L("Info:", "Инфо:"), "mqtt_topic_info", ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info)-1);
 	out+=HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
 	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
@@ -2124,6 +2243,7 @@ void HTTP_handleSettings(void)
 	LEVEL_OPT(LED_MED);
 	LEVEL_OPT(LED_HIGH);
 	out+="</select></td></tr>\n";
+	out+=HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/led.html\">imlazy.ru/rolls/led.html</a>");
 
 	out+=HTML_save();
 	out+="<tr><td colspan=\"2\"><a href=\"/update\">"+SL("Firmware update", "Обновление прошивки")+"</a></td></tr>\n";
@@ -2194,9 +2314,9 @@ void HTTP_handleAlarms(void)
 		SaveSettings(&ini, sizeof(ini));
 	}
 
-	out.reserve(20480);
-
 	out=HTML_header();
+
+	out.reserve(20480);
 
 	out += "<section class=\"alarms\" id=\"alarms\">\n";
 	out += "<form method=\"post\" action=\"/alarms\">\n";
