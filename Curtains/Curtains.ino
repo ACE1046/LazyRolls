@@ -51,7 +51,7 @@ const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
 const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
 #endif
 
-#define VERSION "0.11"
+#define VERSION "0.11.2"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -1610,7 +1610,7 @@ void setup()
 	Serial.print(F("Hostname: "));
 	Serial.println(ini.hostname);
 
-	lastUARTping = lastSync = millis();
+	lastUARTping = millis();
 
 	LED_Off();
 	if (!SLAVE) WiFi_On(); else { WiFi.setSleepMode(WIFI_MODEM_SLEEP); WiFi.forceSleepBegin(); }
