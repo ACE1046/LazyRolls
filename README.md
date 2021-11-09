@@ -96,6 +96,9 @@ Board\Gerbers - gerber files для заказа плат на фабрике\
 * Новый топик MQTT, сообщает в формате JSON состояние (ip, rssi, uptime, voltage, aux_input). При включенном HA MQTT Discovery, автоматически добавляет эти сенсоры в Home Assistant.
 * (v0.11.2) Исправлен баг с получением времени по NTP при старте.
 
+09.11.2021 v0.11.3
+* Исправлен баг с отображением hostname в сети. В XML статус добавлен hostname. Разрешена отдача XML сторонним страницам (CORS). Спасибо Samos.
+
 ### Authors
 
 * **ACE** - [e-mail](mailto:ace@imlazy.ru)

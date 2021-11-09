@@ -51,7 +51,7 @@ const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
 const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
 #endif
 
-#define VERSION "0.11.2"
+#define VERSION "0.11.3"
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -280,7 +280,7 @@ void ProcessLED()
 	static uint32_t last_blink=0;
 
 	if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP) return;
-		
+
 	if (led_mode == LED_ON)
 	{
 		if (led_level == LED_LOW) analogWrite(PIN_LED, 980); else
@@ -436,7 +436,7 @@ char const *int2hex="0123456789ABCDEF";
 void SendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 {
 	uint8_t buf[11], crc;
-	
+
 	if (!MASTER) return;
 	buf[0]='~';
 	if (address == ADDR_ALL) buf[1]='*'; else buf[1]='0'+address;
@@ -451,7 +451,7 @@ void SendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 	buf[8] = int2hex[crc>>4];
 	buf[9] = int2hex[crc & 0x0F];
 	buf[10] = 0;
-	
+
 	Serial.print((char *)&buf);
 }
 
@@ -460,12 +460,12 @@ void SendUARTPing()
 	static uint32_t lastping;
 	uint32_t time;
 	uint8_t buf[11], crc;
-	
+
 	if (millis() - lastping < UART_PING_INTERVAL_MS) return;
 	lastping = millis();
 	if (lastSync == 0) time = 0;
 	else time = UNIXTime + (millis() - lastSync)/1000;
-	
+
 	if (!MASTER) return;
 	buf[0]='~';
 	buf[1]='*';
@@ -480,7 +480,7 @@ void SendUARTPing()
 	buf[8] = int2hex[crc>>4];
 	buf[9] = int2hex[crc & 0x0F];
 	buf[10] = 0;
-	
+
 	Serial.write(buf, 10);
 }
 
@@ -505,11 +505,11 @@ void ProcessUART()
 		Serial.println(F("No ping from master, enabling WiFi"));
 		WiFi_On();
 	}
-	
+
 	while (Serial.available())
 	{
 		buf[inbuf++] = Serial.read();
-		
+
 		if (inbuf == 10)
 		{
 			crc=CRC_INIT;
@@ -538,7 +538,7 @@ void ProcessUART()
 				inbuf=0;
 			} else
 			{  // invalid command
-				if (buf[0] == '~') 
+				if (buf[0] == '~')
 				{
 					Serial.println(F("Invalid CRC in uart packet"));
 					uart_crc_errors++;
@@ -720,7 +720,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	uint8_t address;
 	char *str=(char*)payload;
 	if (len==0) return;
-	
+
 	address=ADDR_ALL;
 	if (len>2 && str[0]=='$') // master/slave selected
 	{
@@ -863,7 +863,7 @@ void MQTT_discover()
 		mqtt_data+=F("\"pos_clsd\":100,\"pos_open\":0}");
 
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-	
+
 	// Additional HA sensors
 	if (mqtt_topic_inf != "-")
 	{
@@ -1005,7 +1005,7 @@ void ProcessMQTT()
 			char buf[128];
 			IPAddress ip=WiFi.localIP();
 			last_mqtt_info=millis();
-			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\"}"), 
+			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\"}"),
 				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str.c_str());
 			mqtt->publish(mqtt_topic_inf.c_str(), buf);
 		}
@@ -1176,7 +1176,7 @@ void ICACHE_RAM_ATTR auxISR()
 
 	uint8_t state = !digitalRead(pin_aux); // active low
 	if (state == lastState) return; // ignore duplicate readings
-	
+
 	if (state) aux_state = AUX_ON; else aux_state = AUX_OFF;
 	if (state) aux_state_str = "ON"; else aux_state_str = "OFF";
 
@@ -1332,7 +1332,7 @@ void ProcessWiFi()
 			MDNS.addService("http", "tcp", 80);
 		} else return;
 	}
-	
+
 	if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS && WiFi.status() != WL_DISCONNECTED)
 	{
 		if (WiFi_attempts < MAX_RECONNECT_ATTEMPS)
@@ -1355,7 +1355,7 @@ void ProcessWiFi()
 		}
 	}
 }
-	
+
 WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
 void WiFi_On()
 {
@@ -1363,6 +1363,7 @@ void WiFi_On()
 	last_network_time = millis();
 	WiFi_active = true;
 	WiFi_attempts = 0;
+	WiFi.mode(WIFI_STA);
 	WiFi.hostname(ini.hostname);
 	WiFi.begin(ini.ssid, ini.password);
 	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)   {     Serial.println(F("Disconnected"));   });
@@ -1592,12 +1593,12 @@ void setup()
 	pinMode(PIN_LED, OUTPUT);
 	LED_On();
 
-	if (WiFi.getMode() != WIFI_OFF) 
+	if (WiFi.getMode() != WIFI_OFF)
 	{
 		WiFi.persistent(true);
 		WiFi.mode(WIFI_OFF);
 	}
-	WiFi.persistent(false);	
+	WiFi.persistent(false);
 
 	Serial.begin(115200);
 	Serial.println();
@@ -1957,10 +1958,10 @@ void HTTP_handleUpdate(void)
 
 	out = HTML_header();
 	out += F("<section class=\"main\" id=\"main\"><p>" \
-   "<form method='POST' action='/update2' enctype='multipart/form-data'>");
-  out += SL("Firmware:", "Прошивка:");
+	 "<form method='POST' action='/update2' enctype='multipart/form-data'>");
+	out += SL("Firmware:", "Прошивка:");
 	out += F("<br><input type='file' accept='.bin,.bin.gz' name='firmware'>" \
-    "<input type='submit' value='");
+		"<input type='submit' value='");
 	out += SL("Update Firmware", "Обновить прошивку");
 	out += F("'></form></p><p>");
 	out += SL("Choose file for firmware update.<br/>New firmware can be downloaded from ", "Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: ");
@@ -1970,7 +1971,7 @@ void HTTP_handleUpdate(void)
 	if (mem == 4*1024*1024)
 		out += SL("Choose *.4Mbyte.bin.<br/>", "Выбирайте *.4Mbyte.bin.<br/>");
 	out += SL("Settings will be lost, if downgrading to previous version.", "Настройки сбрасываются, если прошивается более старая версия.");
-	
+
 	out+=F("</section>\n");
 
 	out += HTML_footer();
@@ -2076,6 +2077,8 @@ void HTTP_handleSettings(void)
 				CP_delete();
 			}
 		}
+
+		WiFi.hostname(ini.hostname);
 
 		HTTP_redirect("/settings?ok=1");
 		return;
@@ -2197,7 +2200,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
 	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)", "pin_RX");
 	out+="</select></td></tr>\n";
-	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)"), 
+	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)"),
 		F("(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.)")));
 
 #ifdef MQTT
@@ -2209,7 +2212,7 @@ void HTTP_handleSettings(void)
 	out+=HTML_addOption(3, ini.aux_pin, "GPIO3 (RX)", "aux_RX");
 	out+="</select></td></tr>\n";
 	out+=HTML_editString(L("MQTT topic:", "MQTT топик:"), "mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
-	out+=HTML_hint(SL(F("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)"), 
+	out+=HTML_hint(SL(F("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)"),
 		F("(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)")));
 #endif
 
@@ -2562,6 +2565,7 @@ void HTTP_handleXML(void)
 	XML+=F("<Info>");
 	XML+=MakeNode("Version", VERSION);
 	XML+=MakeNode("IP", WiFi.localIP().toString());
+	XML+=MakeNode("Hostname", String(ini.hostname));
 	XML+=MakeNode("Time", ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
 	XML+=MakeNode("UpTime", UptimeStr());
 	XML+=MakeNode("RSSI", String(WiFi.RSSI()) + SL(" dBm", " дБм"));
@@ -2589,6 +2593,7 @@ void HTTP_handleXML(void)
 	XML+=MakeNode("Level", LEDLevelString());
 	XML+=F("</LED></Curtain>");
 
+	httpServer.sendHeader(F("Access-Control-Allow-Origin"), "*"); // Allowing Cross-Origin Resource Sharing
 	httpServer.send(200, "text/XML", XML);
 }
 
@@ -2647,7 +2652,7 @@ void loop(void)
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
-	if (SLAVE && WiFi_active && 
+	if (SLAVE && WiFi_active &&
 		(millis() - last_network_time > SLAVE_SLEEP_TIMEOUT_MS) &&
 		(millis() - lastUARTping < SLAVE_MAX_NO_PING_MS))
 	{
