@@ -26,8 +26,9 @@ sw_t=1.6;
 b_o=1;
 
 motor_hole_w=10;
-motor_hole_l=30;
+motor_hole_l=17;
 motor_shift=2.2;
+motor_offset=10;
 
 //micro switch
 msw_w=6+0.6;
@@ -38,7 +39,7 @@ msw_conn=3;
 
 // cap
 cap_t=1.0;
-cap_sp=0.4; // space
+cap_sp=0.2; // space
 cap_fix_h=5;
 cap_fix_t=2;
 cap_fix_w=5;
@@ -88,8 +89,8 @@ module base()
 		//translate([-motor_hole_w/2+motor_shift, 0, -base_t-1]) cube([motor_hole_w, arm_l-side_t, base_t+2]);
 		hull()
 		{
-			translate([motor_shift, motor_hole_w/2, -base_t-1]) cylinder(d=motor_hole_w, h=base_t+2, $fn=30);
-			translate([motor_shift, -motor_hole_w/2+motor_hole_l, -base_t-1]) cylinder(d=motor_hole_w, h=base_t+2, $fn=30);
+			translate([motor_shift, motor_offset+motor_hole_w/2, -base_t-1]) cylinder(d=motor_hole_w, h=base_t+2, $fn=30);
+			translate([motor_shift, motor_offset-motor_hole_w/2+motor_hole_l, -base_t-1]) cylinder(d=motor_hole_w, h=base_t+2, $fn=30);
 		}
 		
 		
@@ -100,7 +101,7 @@ module base()
 			translate([ full_h/2-back_r, back_r-side_ofs, -arm_t-1]) cylinder(h=full_w+arm_t+2, r=back_r-sw_t, $fn=30);
 			translate([ full_h/2-sw_t-sw_hole, back_r-side_ofs-10+0.01, -arm_t-1]) cube([10,10,full_w+arm_t+2]);
 		}
-		translate([+base_space/2+motor_shift, -side_t-1, -arm_t-1]) cube([sw_hole, side_t+0.5+back_r-side_t, full_w+1]);
+		translate([+base_space/2+motor_shift, -side_t-1, -arm_t+1]) cube([sw_hole, side_t+0.5+back_r-side_t, full_w+1]);
 
 	}
 
@@ -134,6 +135,16 @@ module base()
 		translate([-lock_w/2, arm_l-side_t-lock_h/2, full_w-0.1]) cube([lock_w, side_t, 0.1]);
 		translate([-lock_w/2, arm_l-side_t, full_w-lock_h]) cube([lock_w, side_t, 0.1]);
 	}
+    hull()
+    {
+		translate([10,-base_offset,0]) cube([4,4,0.4]);
+		translate([10,-base_offset,8]) cube([4,0.1,0.4]);
+    }
+    hull()
+    {
+		translate([-10,-base_offset,0]) cube([4,4,0.4]);
+		translate([-10,-base_offset,8]) cube([4,0.1,0.4]);
+    }
 }
 
 module cap()
