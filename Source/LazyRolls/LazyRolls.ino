@@ -1,4 +1,4 @@
-/*
+					/*
 LazyRolls
 (C) 2019-2021 ACE, a_c_e@mail.ru
 http://imlazy.ru/rolls/
@@ -710,6 +710,8 @@ const char * GetVoltageStr()
 WiFiClient espClient;
 PubSubClient *mqtt = NULL;
 
+void MQTT_discover();
+
 uint32_t last_mqtt=0, last_mqtt_info=0;
 
 String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf;
@@ -821,19 +823,121 @@ void MQTT_connect()
 	}
 }
 
-void MQTT_Delete_HA_Sensors()
+void MQTT_discover_delete_sensor(String sensor_id, bool binary = false)
 {
 	String mqtt_topic;
-	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_ip/config";
+	if (binary)
+		mqtt_topic = F("homeassistant/binary_sensor/");
+	else
+		mqtt_topic = F("homeassistant/sensor/");
+	mqtt_topic += String(ini.hostname)+"/" + sensor_id + F("/config");
 	mqtt->publish(mqtt_topic.c_str(), "", false);
-	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_rssi/config";
-	mqtt->publish(mqtt_topic.c_str(), "", false);
-	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_uptime/config";
-	mqtt->publish(mqtt_topic.c_str(), "", false);
-	mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_voltage/config";
-	mqtt->publish(mqtt_topic.c_str(), "", false);
-	mqtt_topic = "homeassistant/binary_sensor/"+String(ini.hostname)+"_aux/config";
-	mqtt->publish(mqtt_topic.c_str(), "", false);
+}
+
+void MQTT_Delete_HA_Sensors()
+{
+	MQTT_discover_delete_sensor("ip");
+	MQTT_discover_delete_sensor("rssi");
+	MQTT_discover_delete_sensor("uptime");
+	MQTT_discover_delete_sensor("voltage");
+	MQTT_discover_delete_sensor("aux", true);
+}
+
+String quoted_pair(const __FlashStringHelper *var, const String &val, const bool last = false)
+{ // returns "var":"val",
+	String s;
+	s = F("\"");
+	s+= var;
+	s+= F("\":\"");
+	s+= val;
+	if (last)
+		s += F("\"");
+	else
+		s += F("\",");
+	
+	return s;
+}
+String quoted_pair(const __FlashStringHelper *var, const __FlashStringHelper *val, const bool last = false)
+{
+	return quoted_pair(var, String(val), last);
+	//return "=";
+}
+
+String quoted_var(const String &var, const String &val, const bool last = false)
+{ // returns "var":val,
+	String s;
+	s = "\"" + var + F("\":") + val;
+	if (!last)
+		s += F(",");
+	return s;
+}
+
+void MQTT_discover_add_sensor(const char * device_id, 
+	const __FlashStringHelper* name, 
+	const __FlashStringHelper* sensor_id, 
+	const __FlashStringHelper* dev_class,
+	const __FlashStringHelper* icon, 
+	const __FlashStringHelper* unit, 
+	bool binary = false)
+{
+	String mqtt_topic, mqtt_data;
+	
+	// if (binary)
+		// mqtt_topic = F("homeassistant/binary_sensor/");
+	// else
+		// mqtt_topic = F("homeassistant/sensor/");
+	// mqtt_topic += String(ini.hostname)+F("_") + sensor_id + F("/config");
+	// mqtt_data = "{";
+	// mqtt_data += quoted_pair(F("name"), String(ini.hostname)+" " + name);
+	// mqtt_data += quoted_pair(F("unique_id"), device_id + F("_") + sensor_id);
+	// mqtt_data += quoted_pair(F("stat_t"), mqtt_topic_inf);
+	// if (dev_class != "")
+		// mqtt_data += quoted_pair(F("dev_cla"), dev_class);
+	// mqtt_data += quoted_var(F("dev"), String(F("{\"ids\":[\"")) + device_id + String(F("\"]}")));
+	// if (mqtt_topic_lwt != "-")
+		// mqtt_data += quoted_pair(F("avty_t"), mqtt_topic_lwt);
+	// if (icon != "")
+		// mqtt_data += quoted_pair(F("ic"), icon);
+	// mqtt_data += quoted_pair(F("unit_of_meas"), unit);
+	// mqtt_data += quoted_pair(F("val_tpl"), String(F("{{value_json.")) + sensor_id + String(F("}}")), true);
+	// mqtt_data += F("}");
+
+	// mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+#define q "\""
+#define qcq "\":\""
+#define qp(a) F("\"" a "\":\"") // ", "a":"
+#define cqp(a) F("\",\"" a "\":\"") // ", "a":"
+#define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // ", "a":"b
+#define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // ", "a":"b
+#define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b
+#define cqpc(a, b) { mqtt_data += F("\",\"" a "\":\"" b); } // ", "a":"b
+#define sqpv(a, b) { mqtt_data = F("{\"" a "\":\""); mqtt_data += b;} // {"a":"b
+	if (binary)
+		mqtt_topic = F("homeassistant/binary_sensor/");
+	else
+		mqtt_topic = F("homeassistant/sensor/");
+		mqtt_topic += String(ini.hostname)+"/"+sensor_id+"/config";
+		sqpv("name", ini.hostname);
+		mqtt_data += " ";
+		mqtt_data += name;
+		cqpv("stat_t", mqtt_topic_inf);
+		cqpc("entity_category", "diagnostic");
+		if (dev_class) cqpv("dev_cla", dev_class);
+		mqtt_data += F("\",\"dev\":{\"ids\":[\"");
+		mqtt_data += device_id;
+		mqtt_data += "\"]},";
+		qpv("unique_id", device_id);
+		mqtt_data += "_";
+		mqtt_data += sensor_id;
+		if (icon) cqpv("ic", icon);
+		if (mqtt_topic_lwt != "-")
+			cqpv("avty_t", mqtt_topic_lwt);
+		if (unit) cqpv("unit_of_meas", unit);
+		mqtt_data += F("\",\"val_tpl\":\"{{value_json.");
+		mqtt_data += sensor_id;
+		mqtt_data += F("}}\"}");
+
+		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
 
 void MQTT_discover()
@@ -845,97 +949,54 @@ void MQTT_discover()
 	if (!mqtt->connected()) return;
 
 	snprintf_P(id, 17, PSTR("lazyroll%08X"), ESP.getChipId());
-	mqtt_topic = "homeassistant/cover/"+String(ini.hostname)+"/config";
-	mqtt_data = "{\"name\":\""+String(ini.hostname)+"\",\"unique_id\":\""+String(id)+"_blind\",\"~\": \"";
-	mqtt_data += mqtt_topic_sub;
-	mqtt_data += F("\",\"set_pos_t\":\"~\",\"pos_t\":\"");
-	mqtt_data += mqtt_topic_pub;
-	mqtt_data += F("\",\"cmd_t\":\"~\",\"dev_cla\":\"blind\",");
-	mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"],\"name\":\""+String(ini.hostname)+"\",";
-	mqtt_data += F("\"mdl\":\"LazyRoll [");
+	mqtt_topic = F("homeassistant/cover/");
+	mqtt_topic += ini.hostname;
+	mqtt_topic += F("/config");
+	sqpv("name", ini.hostname);
+	cqpv("unique_id", id);
+	mqtt_data += F("_blind");
+	cqpv("~", mqtt_topic_sub);
+	cqpc("set_pos_t", "~");
+	cqpv("pos_t", mqtt_topic_pub);
+	cqpc("cmd_t", "~");
+	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
+	mqtt_data += id;
+	mqtt_data += "\"],";
+	qpv("name", ini.hostname);
+	cqpc("mdl", "LazyRoll [");
 	mqtt_data += WiFi.localIP().toString();
-	mqtt_data += F("]\",\"mf\":\"imlazy.ru\",\"sw\":\"");
-	mqtt_data += String(VERSION)+"\"}, ";
-	if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
+	mqtt_data += F("]");
+	cqpc("mf", "imlazy.ru");
+	cqpv("cu", "http://" + WiFi.localIP().toString() + F("/settings"));
+	cqpc("sw", VERSION "\"},");
+	qpc("dev_cla", "blind");
+	if (mqtt_topic_lwt != "-")
+			cqpv("avty_t", mqtt_topic_lwt);
 	if (ini.mqtt_invert)
-		mqtt_data+=F("\"pos_clsd\":0,\"pos_open\":100}");
+		mqtt_data+=F("\",\"pos_clsd\":0,\"pos_open\":100}");
 	else
-		mqtt_data+=F("\"pos_clsd\":100,\"pos_open\":0}");
+		mqtt_data+=F("\",\"pos_clsd\":100,\"pos_open\":0}");
 
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 
 	// Additional HA sensors
 	if (mqtt_topic_inf != "-")
 	{
-		// ip
-		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_ip/config";
-		mqtt_data = "{\"name\":\""+String(ini.hostname)+" IP\",\"unique_id\":\""+String(id)+"_ip\",";
-		mqtt_data += F("\"stat_t\":\"");
-		mqtt_data += mqtt_topic_inf;
-		mqtt_data += F("\",");//\"dev_cla\":\"none\",");
-		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
-		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
-		mqtt_data += F("\"ic\":\"mdi:ip-network-outline\",");
-		mqtt_data += F("\"unit_of_meas\":\"\",");
-		mqtt_data += F("\"val_tpl\":\"{{value_json.ip}}\"}");
-
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-
-		// rssi
-		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_rssi/config";
-		mqtt_data = "{\"name\":\""+String(ini.hostname)+" RSSI\",\"unique_id\":\""+String(id)+"_rssi\",";
-		mqtt_data += F("\"stat_t\":\"");
-		mqtt_data += mqtt_topic_inf;
-		mqtt_data += F("\",\"dev_cla\":\"signal_strength\",");
-		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
-		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
-		//mqtt_data += F("\"ic\":\"mdi:ip-network-outline\",");
-		mqtt_data += F("\"unit_of_meas\":\"dBm\",");
-		mqtt_data += F("\"val_tpl\":\"{{value_json.rssi}}\"}");
-
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-
-		// uptime
-		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_uptime/config";
-		mqtt_data = "{\"name\":\""+String(ini.hostname)+" uptime\",\"unique_id\":\""+String(id)+"_uptime\",";
-		mqtt_data += F("\"stat_t\":\"");
-		mqtt_data += mqtt_topic_inf;
-		mqtt_data += F("\", ");
-		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
-		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
-		mqtt_data += F("\"ic\":\"mdi:clock-time-five-outline\",");
-		mqtt_data += F("\"unit_of_meas\":\"\",");
-		mqtt_data += F("\"val_tpl\":\"{{value_json.uptime}}\"}");
-
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-
-		// voltage
-		mqtt_topic = "homeassistant/sensor/"+String(ini.hostname)+"_voltage/config";
-		mqtt_data = "{\"name\":\""+String(ini.hostname)+" voltage\",\"unique_id\":\""+String(id)+"_voltage\",";
-		mqtt_data += F("\"stat_t\":\"");
-		mqtt_data += mqtt_topic_inf;
-		mqtt_data += F("\",\"dev_cla\":\"voltage\",");
-		mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
-		if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
-		mqtt_data += F("\"unit_of_meas\":\"V\",");
-		mqtt_data += F("\"val_tpl\":\"{{value_json.voltage}}\"}");
-
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-
-		// aux input
-		mqtt_topic = "homeassistant/binary_sensor/"+String(ini.hostname)+"_aux/config";
+		MQTT_discover_add_sensor(id, F("IP"), F("ip"), NULL, F("mdi:ip-network-outline"), NULL);
+		MQTT_discover_add_sensor(id, F("RSSI"), F("rssi"), F("signal_strength"), NULL, F("dBm"));
+		MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
+		MQTT_discover_add_sensor(id, F("voltage"), F("voltage"), F("voltage"), NULL, NULL);
 		if (ini.aux_pin !=0)
 		{
-			mqtt_data = "{\"name\":\""+String(ini.hostname)+" aux\",\"unique_id\":\""+String(id)+"_aux\",";
-			mqtt_data += F("\"stat_t\":\"");
-			mqtt_data += mqtt_topic_inf;
-			mqtt_data += F("\",\"dev_cla\":\"window\",");
-			mqtt_data += "\"dev\":{\"ids\":[\""+String(id)+"\"]},";
-			if (mqtt_topic_lwt != "-") mqtt_data += "\"avty_t\":\""+mqtt_topic_lwt+"\",";
-			mqtt_data += F("\"val_tpl\":\"{{value_json.aux}}\"}");
-		} else mqtt_data="";
-
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+			MQTT_discover_add_sensor(id, F("aux"), F("aux"), F("window"), NULL, NULL, true);
+		} else
+		{
+			mqtt_topic = F("homeassistant/binary_sensor/");
+			mqtt_topic += ini.hostname;
+			mqtt_topic += F("/aux/config");
+			mqtt->publish(mqtt_topic.c_str(), "", true);
+		}
+		last_mqtt_info=0;
 	}
 	else
 		MQTT_Delete_HA_Sensors();
