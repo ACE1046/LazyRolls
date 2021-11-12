@@ -23,7 +23,13 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
+#define VERSION "0.12 beta"
 #define MQTT 1
+#define SPIFFS_AUTO_INIT
+
+#ifdef SPIFFS_AUTO_INIT
+#include "spiff_files.h"
+#endif
 
 #ifdef MQTT
  // For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
@@ -49,13 +55,6 @@ const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
 const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
 const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
 const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
-#endif
-
-#define VERSION "0.11.3"
-#define SPIFFS_AUTO_INIT
-
-#ifdef SPIFFS_AUTO_INIT
-#include "spiff_files.h"
 #endif
 
 //char *temp_host;
@@ -411,6 +410,7 @@ String DoWName(int d)
 		case 5: return SL("Sa", "Сб"); break;
 		case 6: return SL("Su", "Вс"); break;
 	}
+	return "";
 }
 
 int DayOfWeek(uint32_t time)
@@ -735,11 +735,11 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 
 	NetworkActivity();
 
-	for(int i = 0; i<len; i++) str[i] = tolower(str[i]); // make it lowercase
+	for(unsigned int i = 0; i<len; i++) str[i] = tolower(str[i]); // make it lowercase
 	str[len]=0;
 
 	x=strtol(str, NULL, 10);
-	if (x>0 && x<=100 || strcmp(str, "0") == 0)
+	if ((x>0 && x<=100) || strcmp(str, "0") == 0)
 	{
 		if (ini.mqtt_invert)
 			ToPercent(100-x, address);
@@ -775,10 +775,8 @@ void setup_MQTT()
 	{
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
 		mqtt->disconnect();
-		delete mqtt;
-	}
-
-	mqtt = new PubSubClient(espClient);
+	} else
+		mqtt = new PubSubClient(espClient);
 	mqtt->setServer(ini.mqtt_server, ini.mqtt_port);
 	mqtt->setKeepAlive(ini.mqtt_ping_interval);
 	mqtt->setBufferSize(1024);
@@ -788,7 +786,6 @@ void setup_MQTT()
 
 void MQTT_connect()
 {
-	int8_t ret;
 	static uint32_t last_reconnect=0;
 
 	if (!ini.mqtt_enabled) return;
@@ -1461,7 +1458,7 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 			bytes=len;
 			while (bytes>0)
 			{
-				blk=min(bytes, sizeof(buf));
+				blk=min(bytes, (unsigned int)sizeof(buf));
 				memcpy_P(buf, data, blk);
 				data+=blk;
 				bytes-=blk;
@@ -1529,8 +1526,8 @@ void ValidateSettings()
 	if (ini.mqtt_topic_aux[0] == 0) strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
 	if (ini.mqtt_topic_info[0] == 0) strcpy(ini.mqtt_topic_info, def_mqtt_topic_info);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
-	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode;
-	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level;
+	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode=0;
+	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level=0;
 	for (int i=0; i<MAX_PRESETS; i++)
 		if (ini.preset[i] > ini.full_length) ini.preset[i] = ini.full_length;
 }
@@ -1748,9 +1745,8 @@ String HTML_header()
 	"<title>");
 	ret += name;
 	ret += F("</title>\n" \
-	"<link rel=\"stylesheet\" href=\""CLASS_URL"\" type=\"text/css\">\n" \
-
-	"<script src=\""JS_URL"\"></script>\n" \
+	"<link rel=\"stylesheet\" href=\"" CLASS_URL "\" type=\"text/css\">\n" \
+	"<script src=\"" JS_URL "\"></script>\n" \
 	"</head>\n" \
 	"<body onload=\"{ active=true; GetStatus(); PinChange(); };\">\n" \
 	"<div id=\"wrapper\">\n" \
@@ -2609,7 +2605,7 @@ void HTTP_handleTest(void)
 	httpServer.send(200, "text/html", String(position));
 }
 
-String MakeNode(char *name, String val)
+String MakeNode(const char *name, String val)
 {
 	return "<" + String(name) + ">" + val + "</" + String(name) + ">";
 }
