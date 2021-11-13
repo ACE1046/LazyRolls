@@ -197,6 +197,8 @@ void ToPreset(uint8_t preset, uint8_t address);
 void Open(uint8_t address);
 void Close(uint8_t address);
 void Stop(uint8_t address);
+void ButtonClick(uint8_t address);
+void ButtonLongClick(uint8_t address);
 void WiFi_On();
 void WiFi_Off();
 
@@ -429,6 +431,8 @@ int DayOfWeek(uint32_t time)
 #define UART_CMD_PING 'p'
 #define UART_CMD_WAKE 'w' // enable wifi
 #define UART_CMD_BLINK 'b' // blink led
+#define UART_CMD_CLICK 'k' // button klick
+#define UART_CMD_LONGCLICK 'K' // button long press
 #define CRC_INIT 0xEA // just a random nonzero number for checksum
 
 uint32_t lastUARTping = 0;
@@ -533,6 +537,8 @@ void ProcessUART()
 						case UART_CMD_WAKE: WiFi_On(); break;
 						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
 						case UART_CMD_PING: UARTPingReceived(val); break;
+						case UART_CMD_CLICK: ButtonClick(ADDR_SELF_ONLY); break;
+						case UART_CMD_LONGCLICK: ButtonLongClick(ADDR_SELF_ONLY); break;
 					}
 				}
 				inbuf=0;
@@ -615,7 +621,7 @@ void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 {
 	if ((pos<0) || (pos>100)) return;
 
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, pos);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (ini.sw_at_bottom) pos=100-pos;
@@ -630,7 +636,7 @@ void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 
 void ToPosition(int pos, uint8_t address=ADDR_ALL)
 {
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_POSITION, address, pos);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_POSITION, address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (pos<0 || pos>ini.full_length) return;
@@ -641,7 +647,7 @@ void ToPosition(int pos, uint8_t address=ADDR_ALL)
 
 void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
 {
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_PRESET, address, preset);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PRESET, address, preset);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (preset==0 || preset > MAX_PRESETS) return;
@@ -652,19 +658,19 @@ void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
 
 void Open(uint8_t address=ADDR_ALL)
 {
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_OPEN, address);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_OPEN, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER);
 }
 
 void Close(uint8_t address=ADDR_ALL)
 {
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_CLOSE, address);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_CLOSE, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER);
 }
 
 void Stop(uint8_t address=ADDR_ALL)
 {
-	if (MASTER & (address != ADDR_MASTER)) SendUART(UART_CMD_STOP, address);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_STOP, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		roll_to=position;
@@ -750,6 +756,8 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	else if (strcmp(str, "off") == 0) Close(address);
 	else if (strcmp(str, "open") == 0) Open(address);
 	else if (strcmp(str, "close") == 0) Close(address);
+	else if (strcmp(str, "click") == 0) ButtonClick(address);
+	else if (strcmp(str, "longclick") == 0) ButtonLongClick(address);
 	else if (strcmp(str, "stop") == 0) { Stop(address); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
 	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10), address);
@@ -879,62 +887,41 @@ void MQTT_discover_add_sensor(const char * device_id,
 {
 	String mqtt_topic, mqtt_data;
 	
-	// if (binary)
-		// mqtt_topic = F("homeassistant/binary_sensor/");
-	// else
-		// mqtt_topic = F("homeassistant/sensor/");
-	// mqtt_topic += String(ini.hostname)+F("_") + sensor_id + F("/config");
-	// mqtt_data = "{";
-	// mqtt_data += quoted_pair(F("name"), String(ini.hostname)+" " + name);
-	// mqtt_data += quoted_pair(F("unique_id"), device_id + F("_") + sensor_id);
-	// mqtt_data += quoted_pair(F("stat_t"), mqtt_topic_inf);
-	// if (dev_class != "")
-		// mqtt_data += quoted_pair(F("dev_cla"), dev_class);
-	// mqtt_data += quoted_var(F("dev"), String(F("{\"ids\":[\"")) + device_id + String(F("\"]}")));
-	// if (mqtt_topic_lwt != "-")
-		// mqtt_data += quoted_pair(F("avty_t"), mqtt_topic_lwt);
-	// if (icon != "")
-		// mqtt_data += quoted_pair(F("ic"), icon);
-	// mqtt_data += quoted_pair(F("unit_of_meas"), unit);
-	// mqtt_data += quoted_pair(F("val_tpl"), String(F("{{value_json.")) + sensor_id + String(F("}}")), true);
-	// mqtt_data += F("}");
-
-	// mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
-#define q "\""
-#define qcq "\":\""
-#define qp(a) F("\"" a "\":\"") // ", "a":"
-#define cqp(a) F("\",\"" a "\":\"") // ", "a":"
-#define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // ", "a":"b
-#define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // ", "a":"b
-#define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b
-#define cqpc(a, b) { mqtt_data += F("\",\"" a "\":\"" b); } // ", "a":"b
+//#define q "\""
+//#define qcq "\":\""
+//#define qp(a) F("\"" a "\":\"") // ", "a":"
+//#define cqp(a) F("\",\"" a "\":\"") // ", "a":"
+#define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // "a":"b (b - string)
+#define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // "a":"b (b - const)
+#define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b (b - string)
+#define cqpc(a, b) { mqtt_data += F("\",\"" a "\":\"" b); } // ", "a":"b (b - const)
 #define sqpv(a, b) { mqtt_data = F("{\"" a "\":\""); mqtt_data += b;} // {"a":"b
 	if (binary)
 		mqtt_topic = F("homeassistant/binary_sensor/");
 	else
 		mqtt_topic = F("homeassistant/sensor/");
-		mqtt_topic += String(ini.hostname)+"/"+sensor_id+"/config";
-		sqpv("name", ini.hostname);
-		mqtt_data += " ";
-		mqtt_data += name;
-		cqpv("stat_t", mqtt_topic_inf);
-		cqpc("entity_category", "diagnostic");
-		if (dev_class) cqpv("dev_cla", dev_class);
-		mqtt_data += F("\",\"dev\":{\"ids\":[\"");
-		mqtt_data += device_id;
-		mqtt_data += "\"]},";
-		qpv("unique_id", device_id);
-		mqtt_data += "_";
-		mqtt_data += sensor_id;
-		if (icon) cqpv("ic", icon);
-		if (mqtt_topic_lwt != "-")
-			cqpv("avty_t", mqtt_topic_lwt);
-		if (unit) cqpv("unit_of_meas", unit);
-		mqtt_data += F("\",\"val_tpl\":\"{{value_json.");
-		mqtt_data += sensor_id;
-		mqtt_data += F("}}\"}");
+	mqtt_topic += String(ini.hostname)+"/"+sensor_id+"/config";
+	sqpv("name", ini.hostname);
+	mqtt_data += " ";
+	mqtt_data += name;
+	cqpv("stat_t", mqtt_topic_inf);
+	cqpc("entity_category", "diagnostic");
+	if (dev_class) cqpv("dev_cla", dev_class);
+	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
+	mqtt_data += device_id;
+	mqtt_data += "\"]},";
+	qpv("unique_id", device_id);
+	mqtt_data += "_";
+	mqtt_data += sensor_id;
+	if (icon) cqpv("ic", icon);
+	if (mqtt_topic_lwt != "-")
+		cqpv("avty_t", mqtt_topic_lwt);
+	if (unit) cqpv("unit_of_meas", unit);
+	mqtt_data += F("\",\"val_tpl\":\"{{value_json.");
+	mqtt_data += sensor_id;
+	mqtt_data += F("}}\"}");
 
-		mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
 }
 
 void MQTT_discover()
@@ -1295,15 +1282,21 @@ void setup_Button()
 		aux_state_str="";
 }
 
-void ButtonClick()
+void ButtonClick(uint8_t address=ADDR_ALL)
 {
 	static uint32_t lastClick;
 	static uint8_t lastCommand;
 	uint8_t open;
 
-	if (roll_to != position)
+	if (MASTER && (address != ADDR_MASTER) && (address != ADDR_ALL))
 	{
-		Stop();
+		SendUART(UART_CMD_CLICK, address);
+		return;
+	}
+
+	if (roll_to != position)
+	{ // in motion
+		Stop(address);
 		return;
 	}
 	if (millis() - lastClick < DOUBLE_CLICK_MS)
@@ -1311,20 +1304,26 @@ void ButtonClick()
 	else
 		open = position > ini.full_length/2;
 
-	if (open) Open(); else Close();
+	if (open) Open(address); else Close(address);
 
 	lastCommand = open;
 	lastClick=millis();
 }
 
-void ButtonLongClick()
+void ButtonLongClick(uint8_t address=ADDR_ALL)
 {
-	if (roll_to != position)
+	if (MASTER && (address != ADDR_MASTER) && (address != ADDR_ALL))
 	{
-		Stop();
+		SendUART(UART_CMD_LONGCLICK, address);
 		return;
 	}
-	if (position == ini.preset[0]) ToPreset(2); else ToPreset(1);
+
+	if (roll_to != position)
+	{ // in motion
+		Stop(address);
+		return;
+	}
+	if (position == ini.preset[0]) ToPreset(2, address); else ToPreset(1, address);
 }
 
 void process_Button()
@@ -2469,6 +2468,11 @@ void HTTP_handleFormat(void)
 
 const char * const blank_xml = "<xml></xml>";
 
+void Return200()
+{
+	httpServer.send(200, "text/XML", blank_xml);
+}
+
 void HTTP_handleOpen(void)
 {
 	HTTP_Activity();
@@ -2476,7 +2480,7 @@ void HTTP_handleOpen(void)
 		Open(atoi(httpServer.arg("addr").c_str()));
 	else
 		Open();
-	httpServer.send(200, "text/XML", blank_xml);
+	Return200();
 }
 
 void HTTP_handleClose(void)
@@ -2486,7 +2490,7 @@ void HTTP_handleClose(void)
 		Close(atoi(httpServer.arg("addr").c_str()));
 	else
 		Close();
-	httpServer.send(200, "text/XML", blank_xml);
+	Return200();
 }
 
 void HTTP_handleStop(void)
@@ -2496,7 +2500,7 @@ void HTTP_handleStop(void)
 		Stop(atoi(httpServer.arg("addr").c_str()));
 	else
 		Stop();
-	httpServer.send(200, "text/XML", blank_xml);
+	Return200();
 }
 
 void HTTP_handleSet(void)
@@ -2510,45 +2514,55 @@ void HTTP_handleSet(void)
 		if (pos==0) Open(addr);
 		else if (pos==100) Close(addr);
 		else if (pos>0 && pos<100) ToPercent(pos, addr);
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
 	}
 	else if (httpServer.hasArg("steps"))
 	{
 		int pos=atoi(httpServer.arg("steps").c_str());
 		ToPosition(pos, addr);
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
 	}
 	else if (httpServer.hasArg("stepsovr"))
 	{
 		int pos=atoi(httpServer.arg("stepsovr").c_str());
 		if (position<0) position=0;
 		roll_to=pos;
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
 	}
 	else if (httpServer.hasArg("preset"))
 	{
 		int preset=atoi(httpServer.arg("preset").c_str());
 		ToPreset(preset, addr);
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
 	}
 	else if (httpServer.hasArg("led"))
 	{
 		String s = httpServer.arg("led");
 		s.toLowerCase();
 		if (LED_Command(s.c_str()))
-			httpServer.send(200, "text/XML", blank_xml);
+			Return200();
 		else
 			httpServer.send(400, "text/XML", blank_xml); // 400 Bad Request
 	}
 	else if (httpServer.hasArg("wake"))
 	{
 		SendUART(UART_CMD_WAKE, addr);
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
+	}
+	else if (httpServer.hasArg("click"))
+	{
+		ButtonClick(addr);
+		Return200();
+	}
+	else if (httpServer.hasArg("longclick"))
+	{
+		ButtonLongClick(addr);
+		Return200();
 	}
 	else if (httpServer.hasArg("blink"))
 	{
 		SendUART(UART_CMD_BLINK, addr);
-	  httpServer.send(200, "text/XML", blank_xml);
+		Return200();
 	}
 	else
 		httpServer.send(400, "text/XML", blank_xml); // 400 Bad Request

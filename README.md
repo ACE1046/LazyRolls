@@ -99,6 +99,10 @@ Board\Gerbers - gerber files для заказа плат на фабрике\
 09.11.2021 v0.11.3
 * Исправлен баг с отображением hostname в сети. В XML статус добавлен hostname. Разрешена отдача XML сторонним страницам (CORS). Спасибо Samos.
 
+14.11.2021 v0.12
+* В MQTT Discovery добавлены фичи Home Assistant 2021.11: ссылка на страницу конфигурации (visit device), доп. статусы попадают в раздел "Diagnostic".
+* Добавлены команды click, longclick для MQTT и /set?click, /set?longclick для HTTP. Делают то же самое, что и кнопка управления (открыть/закрыть/стоп; пресет1/2). Включать аппаратную кнопку не требуется.
+
 ### Authors
 
 * **ACE** - [e-mail](mailto:ace@imlazy.ru)
