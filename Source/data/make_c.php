@@ -35,9 +35,9 @@ function make_c_array($filename, $var)
 	fclose($handle);
 }
 
-$fav_filename = "data/favicon.ico";
-$css_filename = "data/styles.css";
-$js_filename = "data/scripts.js";
+$fav_filename = "favicon.ico";
+$css_filename = "styles.css";
+$js_filename = "scripts.js";
 
 if (file_exists($fav_filename.'.gz')) { $fav_filename = $fav_filename.'.gz'; echo "#define FAV_COMPRESSED\n"; }
 if (file_exists($css_filename.'.gz')) { $css_filename = $css_filename.'.gz'; echo "#define CSS_COMPRESSED\n"; }

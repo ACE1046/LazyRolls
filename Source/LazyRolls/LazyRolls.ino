@@ -42,7 +42,7 @@ http://imlazy.ru/rolls/
 
 #ifndef SSID_AND_PASS
 // if "wifi_settings.h" not included
-const char* def_ssid = "lazyrolls";
+const char* def_ssid = ""; // Empty ssid to create SoftAP at start
 const char* def_password = "";
 const char* def_ntpserver = "ru.pool.ntp.org";
 const char* def_hostname = "lazyroll-%06X";
@@ -170,10 +170,15 @@ struct {
 	char mqtt_topic_aux[127+1]; // auxiliary input topic
 	char mqtt_topic_info[127+1]; // information topic (IP, RSSI, etc)
 	char name[64+1]; // Name
+	ip4_addr ip, mask, gw, dns; // Network config
 } ini;
 
 // language functions
 const char * L(const char *s1, const char *s2)
+{
+	return (ini.lang==0) ? s1 : s2;
+}
+const __FlashStringHelper * FL(const __FlashStringHelper *s1, const __FlashStringHelper *s2)
 {
 	return (ini.lang==0) ? s1 : s2;
 }
@@ -1348,6 +1353,26 @@ void process_Aux()
 
 // ======================= WiFi =================================
 
+#define SSID_NOT_EMPTY (ini.ssid[0] != 0)
+
+void setup_IP()
+{
+	if (ini.ip.addr == 0) // IP address 0.0.0.0
+		WiFi.config(0, 0, 0, 0); // DHCP
+	else
+		WiFi.config(ini.ip, ini.gw, ini.mask, ini.dns); // Static
+}
+
+void StartSoftAP()
+{ // Lets make our own Access Point with blackjack and hookers
+	Serial.print(F("Starting access point. SSID: "));
+	Serial.println(ini.hostname);
+	WiFi.mode(WIFI_AP);
+	WiFi.softAP(ini.hostname); // ... but without password
+	LED_On();
+	CP_create();
+}
+
 void ProcessWiFi()
 {
 	if (!WiFi_active) return;
@@ -1370,6 +1395,7 @@ void ProcessWiFi()
 			{
 				Serial.println(F("Trying to reconnect"));
 				last_reconnect=millis();
+				setup_IP();
 				WiFi.begin(ini.ssid, ini.password);
 			}
 		}
@@ -1393,7 +1419,7 @@ void ProcessWiFi()
 
 	if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS && WiFi.status() != WL_DISCONNECTED)
 	{
-		if (WiFi_attempts < MAX_RECONNECT_ATTEMPS)
+		if (SSID_NOT_EMPTY && WiFi_attempts < MAX_RECONNECT_ATTEMPS)
 		{
 			WiFi.begin(ini.ssid, ini.password);
 			Serial.println(F("WiFi failed, retrying."));
@@ -1403,13 +1429,8 @@ void ProcessWiFi()
 			if (!WiFi_AP_disabled) WiFi_attempts++; // Do not count attempts if AP mode disabled (it is enable only at startup)
 		}
 		else
-		{ // Cannot connect to WiFi. Lets make our own Access Point with blackjack and hookers
-			Serial.print(F("Starting access point. SSID: "));
-			Serial.println(ini.hostname);
-			WiFi.mode(WIFI_AP);
-			WiFi.softAP(ini.hostname); // ... but without password
-			LED_On();
-			CP_create();
+		{ // Cannot connect to WiFi
+			StartSoftAP();
 		}
 	}
 }
@@ -1423,7 +1444,11 @@ void WiFi_On()
 	WiFi_attempts = 0;
 	WiFi.mode(WIFI_STA);
 	WiFi.hostname(ini.hostname);
-	WiFi.begin(ini.ssid, ini.password);
+	setup_IP();
+	if (SSID_NOT_EMPTY)
+		WiFi.begin(ini.ssid, ini.password);
+	else
+		StartSoftAP();
 	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) { Serial.println(F("Disconnected")); });
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
 	ProcessWiFi();
@@ -1681,7 +1706,7 @@ void setup()
 	httpServer.on("/stop",     HTTP_handleStop);
 	httpServer.on("/test",     HTTP_handleTest);
 	httpServer.on("/settings", HTTP_handleSettings);
-	httpServer.on("/alarms", 	 HTTP_handleAlarms);
+	httpServer.on("/alarms",   HTTP_handleAlarms);
 	httpServer.on("/reboot",   HTTP_handleReboot);
 	httpServer.on("/format",   HTTP_handleFormat);
 	httpServer.on("/xml",      HTTP_handleXML);
@@ -1771,22 +1796,39 @@ String HTML_footer()
 
 String HTML_tableLine(const char *name, String val, const char *id=NULL)
 {
-	String ret="<tr><td>";
-	ret+=name;
+	String ret=F("<tr><td>");
+	ret += name;
 	if (id==NULL)
-		ret+="</td><td>";
+		ret += F("</td><td>");
 	else
-		ret+="</td><td id=\""+String(id)+"\">";
-	ret+=val;
-	ret+="</td></tr>\n";
+	{
+		ret += F("</td><td id=\"");
+		ret += String(id);
+		ret += F("\">");
+	}
+	ret += val;
+	ret += F("</td></tr>\n");
 	return ret;
 }
 
 String HTML_addCheckbox(const char* text, const char* id, bool checked)
 {
-	return "<tr><td colspan=\"2\"><label for=\""+String(id)+"\">\n"+\
-		"<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
-		String(text)+"</label></td></tr>\n";
+	// return "<tr><td colspan=\"2\"><label for=\""+String(id)+"\">\n"+\
+	// 	"<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
+	// 	String(text)+"</label></td></tr>\n";
+	String s;
+	s=F("<tr><td colspan=\"2\"><label for=\"");
+	s+=String(id);
+	s += F("\">\n<input type=\"checkbox\" id=\"");
+	s += String(id);
+	s += F("\" name=\"");
+	s += String(id);
+	s += "\"";
+	s += String(checked ? F(" checked") : F(""));
+	s += F("/>\n");
+	s += String(text);
+	s += F("</label></td></tr>\n");
+	return s;
 }
 
 String HTML_editString(const char *header, const char *id, const char *inistr, int len)
@@ -1808,21 +1850,44 @@ String HTML_editString(const char *header, const char *id, const char *inistr, i
 	return out;
 }
 
+String HTML_editIP(const __FlashStringHelper* header, const __FlashStringHelper* id, ip4_addr* inifield)
+{
+	String out;
+
+	out=F("<tr><td class=\"idip\">");
+	out+=header;
+	out+=F("</td><td class=\"val_ip\">");
+	for (int i=0; i<4; i++)
+	{
+		out+=F("<input type=\"text\" name=\"");
+		out+=id;
+		out+=i+1;
+		out+=F("\" value=\"");
+		out+=String(ip4_addr_get_byte(inifield, i));
+		//out+=F("\" maxlength=3\"");
+		out+=F("\"/>");
+		if (i<3) out+=" . ";
+	}
+	out+=F("</td></tr>\n");
+
+	return out;
+}
+
 String HTML_addOption(int value, int selected, const char *text, const char *id = NULL)
 {
 	String s;
-	s="<option value=\""+String(value)+"\""+(selected==value ? " selected=\"selected\"" : "");
-	if (id) s+=" id=\""+String(id)+"\"";
-	s+=">"+String(text)+"</option>\n";
+	s = "<option value=\"" + String(value) + "\"" + (selected==value ? " selected=\"selected\"" : "");
+	if (id) s += " id=\"" + String(id) + "\"";
+	s += ">" + String(text) + "</option>\n";
 	return s;
 }
 
 String HTML_section(String section)
 {
 	String out;
-	out=F("<tr class=\"sect_name\"><td colspan=\"2\">");
-	out+=section;
-	out+="</td></tr>\n";
+	out = F("<tr class=\"sect_name\"><td colspan=\"2\">");
+	out += section;
+	out += F("</td></tr>\n");
 	return out;
 }
 
@@ -1899,7 +1964,7 @@ String HTML_status()
 	out += HTML_tableLine("<a href=\"https://github.com/ACE1046/LazyRolls\">[Github]</a>", "<a href=\"https://t.me/lazyrolls\">[Telegram]</a>");
 	out += HTML_tableLine("<a href=\"mailto:ace@imlazy.ru\">[E-mail]</a>", "<a href=\"http://imlazy.ru\">[Website]</a>");
 
-	out +=F("</table></section>\n");
+	out += F("</table></section>\n");
 
 	return out;
 }
@@ -1911,29 +1976,35 @@ String HTML_mainmenu(void)
 	out.reserve(1024);
 	out += F("<div id=\"heading\" class=\"status\">\n" \
 		"<ul><li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[");
-	out += SL("Open", "Открыть");
+	out += FL(F("Open"), F("Открыть"));
 	out += F("]</a>\n" \
 		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[");
-	out += SL("Close", "Закрыть");
+	out += FL(F("Close"), F("Закрыть"));
 	out += F("]</a>\n" \
 		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>[");
-	out += SL("Stop", "Стоп");
+	out += FL(F("Stop"), F("Стоп"));
 	out += F("]</a>\n" \
 		"</li><li class=\"menuinfo\"><a href=\"/\" onclick=\"return ShowInfo();\"><div class=\"svg\"></div>[");
-	out += SL("Info", "Инфо");
+	out += FL(F("Info"), F("Инфо"));
 	out += F("]</a>\n" \
 		"</li><li class=\"menusettings\"><a href=\"/settings\" onclick=\"return ShowSettings();\"><div class=\"svg\"></div>[");
-	out += SL("Settings", "Настройки");
+	out += FL(F("Settings"), F("Настройки"));
 	out += F("]</a>\n" \
 		"</li><li class=\"menualarms\"><a href=\"/alarms\" onclick=\"return ShowAlarms();\"><div class=\"svg\"></div>[");
-	out += SL("Schedule", "Расписание");
+	out += FL(F("Schedule"), F("Расписание"));
 	out += F("]</a></li></ul>\n</div>\n");
 	return out;
 }
 
 String HTML_save(int span=2)
 {
-	return "<tr class=\"sect_name\"><td colspan=\""+String(span)+"\"><input id=\"save\" type=\"submit\" name=\"save\" value=\""+SL("Save", "Сохранить")+"\"></td></tr>\n";
+	String s;
+	s=F("<tr class=\"sect_name\"><td colspan=\"");
+	s += String(span);
+	s += F("\"><input id=\"save\" type=\"submit\" name=\"save\" value=\"");
+	s += FL(F("Save"), F("Сохранить"));
+	s += F("\"></td></tr>\n");
+	return s;
 }
 
 void HTTP_handleRoot(void)
@@ -1951,7 +2022,7 @@ void HTTP_handleRoot(void)
 		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[Close]</a>\n" \
 		"</li></p>");
 
-	out += SL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
+	out += FL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
 		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.</p>"));
 	out += F("</section>\n");
 
@@ -2001,6 +2072,20 @@ void SaveInt(const char *id, bool *iniint)
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
 
+void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, const __FlashStringHelper *id3, const __FlashStringHelper *id4, ip4_addr *iniip)
+{
+	if (!httpServer.hasArg(id1)) return;
+	if (!httpServer.hasArg(id2)) return;
+	if (!httpServer.hasArg(id3)) return;
+	if (!httpServer.hasArg(id4)) return;
+	IP4_ADDR(iniip, 
+		atoi(httpServer.arg(id1).c_str()),
+		atoi(httpServer.arg(id2).c_str()),
+		atoi(httpServer.arg(id3).c_str()),
+		atoi(httpServer.arg(id4).c_str())
+	);
+}
+
 void HTTP_Activity(void)
 {
 	if (led_mode == LED_HTTP || led_mode == LED_MQTT_HTTP) LED_Blink();
@@ -2017,19 +2102,19 @@ void HTTP_handleUpdate(void)
 	out = HTML_header();
 	out += F("<section class=\"main\" id=\"main\"><p>" \
 	 "<form method='POST' action='/update2' enctype='multipart/form-data'>");
-	out += SL("Firmware:", "Прошивка:");
+	out += FL(F("Firmware:"), F("Прошивка:"));
 	out += F("<br><input type='file' accept='.bin,.bin.gz' name='firmware'>" \
 		"<input type='submit' value='");
-	out += SL("Update Firmware", "Обновить прошивку");
+	out += FL(F("Update Firmware"), F("Обновить прошивку"));
 	out += F("'></form></p><p>");
-	out += SL("Choose file for firmware update.<br/>New firmware can be downloaded from ", "Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: ");
+	out += FL(F("Choose file for firmware update.<br/>New firmware can be downloaded from "), F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
 	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br/>");
 	if (mem == 1024*1024)
-		out += SL("Choose *.1Mbyte.bin.<br/>", "Выбирайте *.1Mbyte.bin.<br/>");
+		out += FL(F("Choose *.1Mbyte.bin.<br/>"), F("Выбирайте *.1Mbyte.bin.<br/>"));
 	if (mem == 4*1024*1024)
-		out += SL("Choose *.4Mbyte.bin.<br/>", "Выбирайте *.4Mbyte.bin.<br/>");
-	out += SL("Settings will be lost, if downgrading to previous version. ", "Настройки сбрасываются, если прошивается более старая версия. ");
-	out += SL("Default password admin admin.", "Пароль по умолчанию admin admin");
+		out += FL(F("Choose *.4Mbyte.bin.<br/>"), F("Выбирайте *.4Mbyte.bin.<br/>"));
+	out += FL(F("Settings will be lost, if downgrading to previous version. Default password admin admin."), 
+		F("Настройки сбрасываются, если прошивается более старая версия. Пароль по умолчанию admin admin"));
 
 	out+=F("</section>\n");
 
@@ -2040,18 +2125,33 @@ void HTTP_handleUpdate(void)
 String HTML_steps(String lbl, String id, int val, String name)
 {
 	String out;
-	out+="<tr><td class=\"idname\">"+lbl;
-	out+="</td><td class=\"val_p\"><input type=\"text\" name=\""+name;
-	out+="\" id=\""+id+"\" value=\""+String(val)+="\" maxlength=\"6\"/>";
-	out+=" <input type=\"button\" value=\""+SL("Test", "Тест")+"\" onclick=\"TestPreset('"+name+"')\">\n";
-	out+=" <input type=\"button\" value=\""+SL("Here", "Тут")+"\" onclick=\"SetPreset('"+name+"')\">\n";
-	out+="</td></tr>\n";
+	out+=F("<tr><td class=\"idname\">");
+	out+=lbl;
+	out+=F("</td><td class=\"val_p\"><input type=\"text\" name=\"");
+	out+=name;
+	out+=F("\" id=\"");
+	out+=id;
+	out+=F("\" value=\"");
+	out+=String(val);
+	out+=F("\" maxlength=\"6\"/>\n<input type=\"button\" value=\"");
+	out+=SL("Test", "Тест");
+	out+=F("\" onclick=\"TestPreset('");
+	out+=name;
+	out+=F("')\">\n<input type=\"button\" value=\"");
+	out+=SL("Here", "Тут");
+	out+=F("\" onclick=\"SetPreset('");
+	out+=name;
+	out+=F("')\">\n</td></tr>\n");
 	return out;
 }
 
 String HTML_hint(String hint)
 {
-	return "<tr><td></td><td>"+hint+"</td></tr>\n";
+	String s;
+	s = F("<tr><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
 }
 
 void HTTP_handleSettings(void)
@@ -2071,6 +2171,12 @@ void HTTP_handleSettings(void)
 		SaveString("password", pass,         sizeof(ini.password));
 		SaveString("ntp",      ini.ntpserver,sizeof(ini.ntpserver));
 		if (strcmp(pass, "*")!=0) memcpy(ini.password, pass, sizeof(ini.password));
+
+#define IP_ID(a) F(a "1"), F(a "2"), F(a "3"), F(a "4")
+		SaveIP(IP_ID("ip"),   &ini.ip);
+		SaveIP(IP_ID("mask"), &ini.mask);
+		SaveIP(IP_ID("gw"),   &ini.gw);
+		SaveIP(IP_ID("dns"),  &ini.dns);
 
 		SaveInt("lang", &ini.lang);
 		SaveInt("pinout", &ini.pinout);
@@ -2118,7 +2224,7 @@ void HTTP_handleSettings(void)
 
 		setup_MQTT();
 		setup_Button();
-
+		
 		FillStepsTable();
 		AdjustTimerInterval();
 
@@ -2171,6 +2277,11 @@ void HTTP_handleSettings(void)
 	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
 	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
 	out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password)-1);
+	out+=HTML_hint(SL("Leave zeros for DHCP", "Оставить нули для DHCP"));
+	out+=HTML_editIP(F("IP"), F("ip"), &ini.ip);
+	out+=HTML_editIP(FL(F("Mask"), F("Маска")), F("mask"), &ini.mask);
+	out+=HTML_editIP(FL(F("Gateway"), F("Шлюз")), F("gw"), &ini.gw);
+	out+=HTML_editIP(F("DNS"), F("dns"), &ini.dns);
 
 	out+=HTML_section(SL("Time", "Время"));
 	out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver)-1);
