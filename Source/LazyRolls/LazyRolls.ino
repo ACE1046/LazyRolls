@@ -1,4 +1,4 @@
-					/*
+/*
 LazyRolls
 (C) 2019-2021 ACE, a_c_e@mail.ru
 http://imlazy.ru/rolls/
@@ -169,6 +169,7 @@ struct {
 	uint8_t aux_pin; // auxiliary pin selection
 	char mqtt_topic_aux[127+1]; // auxiliary input topic
 	char mqtt_topic_info[127+1]; // information topic (IP, RSSI, etc)
+	char name[64+1]; // Name
 } ini;
 
 // language functions
@@ -326,11 +327,11 @@ void CP_process()
 //===================== NTP ============================================
 
 const unsigned long NTP_WAIT=5000;
-const unsigned long NTP_SYNC=24*60*60*1000;  // sync clock once a day
+const unsigned long NTP_SYNC=24*60*60*1000; // sync clock once a day
 unsigned long lastRequest=0; // timestamp of last request
 unsigned long lastSync=0; // timestamp of last successful synchronization
 IPAddress timeServerIP;
-const int NTP_PACKET_SIZE = 48;  // NTP time stamp is in the first 48 bytes of the message
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
 // Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
 const uint32_t seventyYears = 2208988800UL;
@@ -353,9 +354,9 @@ void SyncNTPTime()
 		if (lastSync!=0 && (millis()-lastSync < NTP_SYNC)) return; // time ok
 		if (millis()-lastRequest < NTP_WAIT) return; // waiting for answer
 		lastRequest=millis();
-		memset(NTPBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
+		memset(NTPBuffer, 0, NTP_PACKET_SIZE); // set all bytes in the buffer to 0
 		// Initialize values needed to form NTP request
-		NTPBuffer[0] = 0b11100011;   // LI, Version, Mode
+		NTPBuffer[0] = 0b11100011; // LI, Version, Mode
 		if(!WiFi.hostByName(ini.ntpserver, timeServerIP))
 		{ // Get the IP address of the NTP server failed
 			return;
@@ -543,7 +544,7 @@ void ProcessUART()
 				}
 				inbuf=0;
 			} else
-			{  // invalid command
+			{ // invalid command
 				if (buf[0] == '~')
 				{
 					Serial.println(F("Invalid CRC in uart packet"));
@@ -603,7 +604,7 @@ void inline ICACHE_RAM_ATTR MotorOff()
 
 bool ICACHE_RAM_ATTR IsSwitchPressed()
 {
-	//  return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
+	// return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
 	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
 }
 
@@ -691,7 +692,7 @@ uint32_t GetVoltage()
 		v=analogRead(A0);
 		if (v<min) min=v;
 	}
-	return min*121/8;  // *1000*16/1024 mV, 150K:10K divider gives *125/8, but can be adjusted a little
+	return min*121/8; // *1000*16/1024 mV, 150K:10K divider gives *125/8, but can be adjusted a little
 }
 
 const char * GetVoltageStr()
@@ -1142,7 +1143,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 				{
 					// Zero found, now can go down, ignoring switch for some steps
 					position=0; // zero point found
-				  switch_ignore_steps=ini.switch_ignore_steps;
+					switch_ignore_steps=ini.switch_ignore_steps;
 				} else
 				{
 					// endswitch hit on going down. Something wrong
@@ -1423,8 +1424,8 @@ void WiFi_On()
 	WiFi.mode(WIFI_STA);
 	WiFi.hostname(ini.hostname);
 	WiFi.begin(ini.ssid, ini.password);
-	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)   {     Serial.println(F("Disconnected"));   });
-	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event)   {     Serial.println(F("Auth mode changed"));   });
+	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) { Serial.println(F("Disconnected")); });
+	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
 	ProcessWiFi();
 }
 
@@ -1447,7 +1448,7 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 
 	// update file if not exist or if version changed
 	if ((ini.spiffs_time!=0 && ini.spiffs_time != spiffs_time) ||
-	  (!SPIFFS.exists(filename)))
+		(!SPIFFS.exists(filename)))
 	{
 		File f = SPIFFS.open(filename, "w");
 		if (!f) {
@@ -1735,6 +1736,7 @@ String HTML_header()
 	ret.reserve(1024);
 
 	name=SL("Lazy rolls", "Ленивые шторы");
+	if (ini.name[0]) name=ini.name;
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
 	"<head>\n" \
@@ -1783,8 +1785,8 @@ String HTML_tableLine(const char *name, String val, const char *id=NULL)
 String HTML_addCheckbox(const char* text, const char* id, bool checked)
 {
 	return "<tr><td colspan=\"2\"><label for=\""+String(id)+"\">\n"+\
-	  "<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
-	  String(text)+"</label></td></tr>\n";
+		"<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
+		String(text)+"</label></td></tr>\n";
 }
 
 String HTML_editString(const char *header, const char *id, const char *inistr, int len)
@@ -2026,7 +2028,8 @@ void HTTP_handleUpdate(void)
 		out += SL("Choose *.1Mbyte.bin.<br/>", "Выбирайте *.1Mbyte.bin.<br/>");
 	if (mem == 4*1024*1024)
 		out += SL("Choose *.4Mbyte.bin.<br/>", "Выбирайте *.4Mbyte.bin.<br/>");
-	out += SL("Settings will be lost, if downgrading to previous version.", "Настройки сбрасываются, если прошивается более старая версия.");
+	out += SL("Settings will be lost, if downgrading to previous version. ", "Настройки сбрасываются, если прошивается более старая версия. ");
+	out += SL("Default password admin admin.", "Пароль по умолчанию admin admin");
 
 	out+=F("</section>\n");
 
@@ -2063,6 +2066,7 @@ void HTTP_handleSettings(void)
 		pass[0]='*';
 		pass[1]='\0';
 		SaveString("hostname", ini.hostname, sizeof(ini.hostname));
+		SaveString("name",     ini.name,     sizeof(ini.name));
 		SaveString("ssid",     ini.ssid,     sizeof(ini.ssid));
 		SaveString("password", pass,         sizeof(ini.password));
 		SaveString("ntp",      ini.ntpserver,sizeof(ini.ntpserver));
@@ -2162,6 +2166,7 @@ void HTTP_handleSettings(void)
 		out+=+">"+String(Language[i])+"</option>\n";
 	}
 	out+=F("</select></td></tr>\n");
+	out+=HTML_editString(L("Name:", "Название:"),       "name",     ini.name,     sizeof(ini.name)-1);
 	out+=HTML_section(SL("Network", "Сеть"));
 	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
 	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
@@ -2344,10 +2349,10 @@ void HTTP_handleAlarms(void)
 	{
 		for (int a=0; a<ALARMS; a++)
 		{
-		  String n=String(a);
+			String n=String(a);
 			if (httpServer.hasArg("en"+n))
 				ini.alarms[a].flags |= ALARM_FLAG_ENABLED;
-		  else
+			else
 				ini.alarms[a].flags &= ~ALARM_FLAG_ENABLED;
 
 			if (httpServer.hasArg("time"+n))
@@ -2382,7 +2387,7 @@ void HTTP_handleAlarms(void)
 	out += "<table width=\"100%\">\n";
 	out+=HTML_save(5);
 	out += "<tr><td colspan=\"5\">"+ \
-	  SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
+		SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
 
 	for (int a=0; a<ALARMS; a++)
@@ -2391,27 +2396,27 @@ void HTTP_handleAlarms(void)
 		out += F("<tr><td colspan=\"5\"><hr/></td></tr>\n");
 		out += "<tr><td class=\"en\"><label for=\"en"+n+"\">\n";
 		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" +
-		  ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
+			((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
 		out += SL("Enabled", "Включено")+"</label></td>\n";
 
 		out += "<td class=\"narrow\"><label for=\"time"+n+"\">"+
-		  SL("Time:", "Время:")+"</label></td><td><input type=\"time\" id=\"time"+n+
+			SL("Time:", "Время:")+"</label></td><td><input type=\"time\" id=\"time"+n+
 			"\" name=\"time"+n+"\" value=\""+TimeToStr(ini.alarms[a].time)+"\" required></td>\n";
 
 		out += "<td class=\"narrow\"><label for=\"dest"+n+"\">"+
-		  SL("Position:", "Положение:")+"</label></td><td><select id=\"dest"+n+"\" name=\"dest"+n+"\">\n";
+			SL("Position:", "Положение:")+"</label></td><td><select id=\"dest"+n+"\" name=\"dest"+n+"\">\n";
 		for (int p=0; p<=100; p+=20)
 		{
 			String s = String(p)+"%";
 			if (p==0)   s=SL("Open", "Открыть");
 			if (p==100) s=SL("Close", "Закрыть");
 			out += "<option value=\""+String(p)+"\""+
-			  (ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
+				(ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
 		}
 		for (int p=0; p<MAX_PRESETS; p++)
 		{
 			out += "<option value=\""+String(101+p)+"\""+
-			  (ini.alarms[a].percent_open==101+p ? " selected" : "")+">"+
+				(ini.alarms[a].percent_open==101+p ? " selected" : "")+">"+
 				SL("Preset", "Позиция")+" "+String(p+1)+"</option>\n";
 		}
 		out += F("</select>\n");
@@ -2625,7 +2630,7 @@ String MakeNode(const char *name, String val)
 }
 void HTTP_handleXML(void)
 {
-	String XML;
+	String XML, s;
 	uint32_t realSize = ESP.getFlashChipRealSize();
 	uint32_t ideSize = ESP.getFlashChipSize();
 	FlashMode_t ideMode = ESP.getFlashChipMode();
@@ -2636,6 +2641,10 @@ void HTTP_handleXML(void)
 	XML+=F("<Info>");
 	XML+=MakeNode("Version", VERSION);
 	XML+=MakeNode("IP", WiFi.localIP().toString());
+	s=String(ini.name);
+	s.replace(F("<"), F("&lt;"));
+	s.replace(F(">"), F("&gt;"));
+	XML+=MakeNode("Name", s);
 	XML+=MakeNode("Hostname", String(ini.hostname));
 	XML+=MakeNode("Time", ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
 	XML+=MakeNode("UpTime", UptimeStr());
