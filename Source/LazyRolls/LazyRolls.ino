@@ -95,7 +95,9 @@ uint16_t def_step_delay_mks = 1500;
 #define MQTT_INFO_SECONDS 5*60 // Send mqtt info (rssi, uptime, etc) every N seconds
 
 const int Languages=2;
-const PROGMEM char *Language[Languages]={"English", "Русский"};
+const char ru_ru[] PROGMEM = "Русский";
+const char en_en[] PROGMEM = "English";
+const __FlashStringHelper *Language[Languages]={ (__FlashStringHelper*)en_en, (__FlashStringHelper*)ru_ru };
 const PROGMEM char *onoff[][Languages]={{"off", "on"}, {"выкл", "вкл"}};
 
 const uint8_t steps[3][4]={
@@ -182,6 +184,7 @@ const __FlashStringHelper * FL(const __FlashStringHelper *s1, const __FlashStrin
 {
 	return (ini.lang==0) ? s1 : s2;
 }
+#define FLF(a, b) FL(F(a), F(b))
 String SL(const char *s1, const char *s2)
 {
 	return (ini.lang==0) ? String(s1) : String(s2);
@@ -215,26 +218,26 @@ typedef enum { LED_LOW = 0, LED_MED, LED_HIGH, LED_LEVEL_MAX } led_levels;
 uint8_t led_mode;
 uint8_t led_level;
 
-String LEDModeString(uint8_t mode = 0xFF)
+const __FlashStringHelper* LEDModeString(uint8_t mode = 0xFF)
 {
 	if (mode == 0xFF) mode = led_mode;
-	if (mode == LED_OFF) return SL("Off", "Выключен");
-	if (mode == LED_ON) return SL("On", "Включен");
-	if (mode == LED_MQTT) return SL("On MQTT commands", "При MQTT командах");
-	if (mode == LED_HTTP) return SL("On HTTP requests", "При HTTP запросах");
-	if (mode == LED_MQTT_HTTP) return SL("On MQTT and HTTP", "При MQTT и HTTP");
-	if (mode == LED_ALIVE) return SL("Blink alive", "Мигать периодически");
-	if (mode == LED_BUTTON) return SL("On button press", "По нажатию кнопки");
-	return "";
+	if (mode == LED_OFF) return FLF("Off", "Выключен");
+	if (mode == LED_ON) return FLF("On", "Включен");
+	if (mode == LED_MQTT) return FLF("On MQTT commands", "При MQTT командах");
+	if (mode == LED_HTTP) return FLF("On HTTP requests", "При HTTP запросах");
+	if (mode == LED_MQTT_HTTP) return FLF("On MQTT and HTTP", "При MQTT и HTTP");
+	if (mode == LED_ALIVE) return FLF("Blink alive", "Мигать периодически");
+	if (mode == LED_BUTTON) return FLF("On button press", "По нажатию кнопки");
+	return F("");
 }
 
-String LEDLevelString(uint8_t level = 0xFF)
+const __FlashStringHelper* LEDLevelString(uint8_t level = 0xFF)
 {
 	if (level == 0xFF) level = led_level;
-	if (level == LED_LOW) return SL("Low", "Низкая");
-	if (level == LED_MED) return SL("Medium", "Средняя");
-	if (level == LED_HIGH) return SL("High", "Высокая");
-	return "";
+	if (level == LED_LOW) return FLF("Low", "Низкая");
+	if (level == LED_MED) return FLF("Medium", "Средняя");
+	if (level == LED_HIGH) return FLF("High", "Высокая");
+	return F("");
 }
 
 void LED_On()
@@ -406,19 +409,19 @@ String UptimeStr()
 	return String(buf);
 }
 
-String DoWName(int d)
+const __FlashStringHelper* DoWName(int d)
 {
 	switch (d)
 	{
-		case 0: return SL("Mo", "Пн"); break;
-		case 1: return SL("Tu", "Вт"); break;
-		case 2: return SL("We", "Ср"); break;
-		case 3: return SL("Th", "Чт"); break;
-		case 4: return SL("Fr", "Пт"); break;
-		case 5: return SL("Sa", "Сб"); break;
-		case 6: return SL("Su", "Вс"); break;
+		case 0: return FLF("Mo", "Пн"); break;
+		case 1: return FLF("Tu", "Вт"); break;
+		case 2: return FLF("We", "Ср"); break;
+		case 3: return FLF("Th", "Чт"); break;
+		case 4: return FLF("Fr", "Пт"); break;
+		case 5: return FLF("Sa", "Сб"); break;
+		case 6: return FLF("Su", "Вс"); break;
 	}
-	return "";
+	return F("");
 }
 
 int DayOfWeek(uint32_t time)
@@ -834,53 +837,27 @@ void MQTT_connect()
 	}
 }
 
-void MQTT_discover_delete_sensor(String sensor_id, bool binary = false)
+void MQTT_discover_delete_sensor(const __FlashStringHelper* sensor_id, bool binary = false)
 {
 	String mqtt_topic;
 	if (binary)
 		mqtt_topic = F("homeassistant/binary_sensor/");
 	else
 		mqtt_topic = F("homeassistant/sensor/");
-	mqtt_topic += String(ini.hostname)+"/" + sensor_id + F("/config");
+	mqtt_topic += ini.hostname;
+	mqtt_topic += F("/");
+	mqtt_topic += sensor_id;
+	mqtt_topic += F("/config");
 	mqtt->publish(mqtt_topic.c_str(), "", false);
 }
 
 void MQTT_Delete_HA_Sensors()
 {
-	MQTT_discover_delete_sensor("ip");
-	MQTT_discover_delete_sensor("rssi");
-	MQTT_discover_delete_sensor("uptime");
-	MQTT_discover_delete_sensor("voltage");
-	MQTT_discover_delete_sensor("aux", true);
-}
-
-String quoted_pair(const __FlashStringHelper *var, const String &val, const bool last = false)
-{ // returns "var":"val",
-	String s;
-	s = F("\"");
-	s+= var;
-	s+= F("\":\"");
-	s+= val;
-	if (last)
-		s += F("\"");
-	else
-		s += F("\",");
-	
-	return s;
-}
-String quoted_pair(const __FlashStringHelper *var, const __FlashStringHelper *val, const bool last = false)
-{
-	return quoted_pair(var, String(val), last);
-	//return "=";
-}
-
-String quoted_var(const String &var, const String &val, const bool last = false)
-{ // returns "var":val,
-	String s;
-	s = "\"" + var + F("\":") + val;
-	if (!last)
-		s += F(",");
-	return s;
+	MQTT_discover_delete_sensor(F("ip"));
+	MQTT_discover_delete_sensor(F("rssi"));
+	MQTT_discover_delete_sensor(F("uptime"));
+	MQTT_discover_delete_sensor(F("voltage"));
+	MQTT_discover_delete_sensor(F("aux"), true);
 }
 
 void MQTT_discover_add_sensor(const char * device_id, 
@@ -893,10 +870,6 @@ void MQTT_discover_add_sensor(const char * device_id,
 {
 	String mqtt_topic, mqtt_data;
 	
-//#define q "\""
-//#define qcq "\":\""
-//#define qp(a) F("\"" a "\":\"") // ", "a":"
-//#define cqp(a) F("\",\"" a "\":\"") // ", "a":"
 #define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // "a":"b (b - string)
 #define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // "a":"b (b - const)
 #define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b (b - string)
@@ -1063,17 +1036,17 @@ void ProcessMQTT()
 	}
 }
 
-const char *MQTTstatus()
+const __FlashStringHelper *MQTTstatus()
 {
 	if (ini.mqtt_enabled)
 	{
 		if (mqtt->connected())
-			return L("Connected", "Подключен");
+			return FL(F("Connected"), F("Подключен"));
 		else
-			return L("Disconnected", "Отключен");
+			return FL(F("Disconnected"), F("Отключен"));
 	}
 	else
-		return L("Disabled", "Выключен");
+		return FL(F("Disabled"), F("Выключен"));
 }
 
 void MQTT_ReportAux(bool on)
@@ -1760,7 +1733,7 @@ String HTML_header()
 
 	ret.reserve(1024);
 
-	name=SL("Lazy rolls", "Ленивые шторы");
+	name=FL(F("Lazy rolls"), F("Ленивые шторы"));
 	if (ini.name[0]) name=ini.name;
 	ret = F("<!doctype html>\n" \
 	"<html>\n" \
@@ -1813,39 +1786,27 @@ String HTML_tableLine(const char *name, String val, const char *id=NULL)
 
 String HTML_addCheckbox(const char* text, const char* id, bool checked)
 {
-	// return "<tr><td colspan=\"2\"><label for=\""+String(id)+"\">\n"+\
-	// 	"<input type=\"checkbox\" id=\""+String(id)+"\" name=\""+String(id)+"\"" + String(checked ? " checked" : "") + "/>\n"+\
-	// 	String(text)+"</label></td></tr>\n";
-	String s;
-	s=F("<tr><td colspan=\"2\"><label for=\"");
-	s+=String(id);
-	s += F("\">\n<input type=\"checkbox\" id=\"");
-	s += String(id);
-	s += F("\" name=\"");
-	s += String(id);
-	s += "\"";
-	s += String(checked ? F(" checked") : F(""));
-	s += F("/>\n");
-	s += String(text);
-	s += F("</label></td></tr>\n");
-	return s;
+	char buf[255];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td colspan=\"2\"><label for=\"%s\">\n<input type=\"checkbox\" id=\"%s\" name=\"%s\"%s/>\n%s</label></td></tr>\n"),
+		id, id, id, (checked ? " checked" : ""), text);
+	return buf;
 }
 
-String HTML_editString(const char *header, const char *id, const char *inistr, int len)
+String HTML_editString(const __FlashStringHelper *header, const __FlashStringHelper *id, const char *inistr, int len)
 {
 	String out;
 
 	out=F("<tr><td class=\"idname\">");
-	out+=header;
-	out+=F("</td><td class=\"val\"><input type=\"text\" name=\"");
-	out+=String(id);
-	out+=F("\" id=\"");
-	out+=String(id);
-	out+=F("\" value=\"");
-	out+=String(inistr);
-	out+=F("\" maxlength=\"");
-	out+=String(len);
-	out+=F("\"/></td></tr>\n");
+	out += header;
+	out += F("</td><td class=\"val\"><input type=\"text\" name=\"");
+	out += id;
+	out += F("\" id=\"");
+	out += id;
+	out += F("\" value=\"");
+	out += inistr;
+	out += F("\" maxlength=\"");
+	out += len;
+	out += F("\"/></td></tr>\n");
 
 	return out;
 }
@@ -1855,34 +1816,39 @@ String HTML_editIP(const __FlashStringHelper* header, const __FlashStringHelper*
 	String out;
 
 	out=F("<tr><td class=\"idip\">");
-	out+=header;
-	out+=F("</td><td class=\"val_ip\">");
+	out += header;
+	out += F("</td><td class=\"val_ip\">");
 	for (int i=0; i<4; i++)
 	{
-		out+=F("<input type=\"text\" name=\"");
-		out+=id;
-		out+=i+1;
-		out+=F("\" value=\"");
-		out+=String(ip4_addr_get_byte(inifield, i));
-		//out+=F("\" maxlength=3\"");
-		out+=F("\"/>");
-		if (i<3) out+=" . ";
+		out += F("<input type=\"text\" name=\"");
+		out += id;
+		out += i+1;
+		out += F("\" value=\"");
+		out += String(ip4_addr_get_byte(inifield, i));
+		//out += F("\" maxlength=3\"");
+		out += F("\"/>");
+		if (i<3) out += " . ";
 	}
-	out+=F("</td></tr>\n");
+	out += F("</td></tr>\n");
 
 	return out;
 }
 
-String HTML_addOption(int value, int selected, const char *text, const char *id = NULL)
+String HTML_addOption(int value, int selected, const __FlashStringHelper *text, const char *id = NULL)
 {
 	String s;
-	s = "<option value=\"" + String(value) + "\"" + (selected==value ? " selected=\"selected\"" : "");
-	if (id) s += " id=\"" + String(id) + "\"";
-	s += ">" + String(text) + "</option>\n";
+	s = F("<option value=\"");
+	s += String(value);
+	s += F("\"");
+	s += (selected==value ? F(" selected=\"selected\"") : F(""));
+	if (id) { s += F(" id=\""); s += id; s += F("\""); };
+	s += F(">");
+	s += text;
+	s += F("</option>\n");
 	return s;
 }
 
-String HTML_section(String section)
+String HTML_section(const __FlashStringHelper* section)
 {
 	String out;
 	out = F("<tr class=\"sect_name\"><td colspan=\"2\">");
@@ -1893,9 +1859,9 @@ String HTML_section(String section)
 
 String MemSize2Str(uint32_t mem)
 {
-	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ SL(" MB", " МБ");
-	if (mem%1024 == 0) return String(mem/1024)+SL(" KB"," КБ");
-	return String(mem)+SL(" B", " Б");
+	if (mem%(1024*1024) == 0) return String(mem/1024/1024)+ FLF(" MB", " МБ");
+	if (mem%1024 == 0) return String(mem/1024)+FLF(" KB"," КБ");
+	return String(mem)+FLF(" B", " Б");
 }
 
 String HTML_status()
@@ -1908,7 +1874,7 @@ String HTML_status()
 	out.reserve(4096);
 
 	out += F("    <section class=\"info hide\" id=\"info\"><table>\n");
-	out += HTML_section(SL("Status", "Статус"));
+	out += HTML_section(FLF("Status", "Статус"));
 	out += HTML_tableLine(L("Version", "Версия"), VERSION);
 	out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
 	if (lastSync==0)
@@ -1921,12 +1887,12 @@ String HTML_status()
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
 
-	out += HTML_section(SL("Position", "Положение"));
+	out += HTML_section(FLF("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
 	out += HTML_tableLine(L("Roll to", "Цель"), String(roll_to), "dest");
 	out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()], "switch");
 
-	out += HTML_section(SL("Memory", "Память"));
+	out += HTML_section(FLF("Memory", "Память"));
 	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
 	out += HTML_tableLine(L("Real size", "Реально"), MemSize2Str(realSize));
 	out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
@@ -1939,7 +1905,7 @@ String HTML_status()
 	out += HTML_tableLine(L("Mode", "Режим"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 	//out += HTML_tableLine("Host", String(ini.hostname));
 	FSInfo fs_info;
-	out += HTML_section(SL("SPIFFS", "SPIFFS"));
+	out += HTML_section(FLF("SPIFFS", "SPIFFS"));
 	if (SPIFFS.info(fs_info))
 	{
 		out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(fs_info.totalBytes));
@@ -1947,20 +1913,20 @@ String HTML_status()
 	} else
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
 #ifdef MQTT
-	out += HTML_section(SL("MQTT", "MQTT"));
+	out += HTML_section(FLF("MQTT", "MQTT"));
 	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
 #endif
-	out += HTML_section(SL("LED", "LED"));
+	out += HTML_section(FLF("LED", "LED"));
 	out += HTML_tableLine(L("Mode", "Функция"), LEDModeString(), "led_mode");
 	out += HTML_tableLine(L("Brightness", "Яркость"), LEDLevelString(), "led_level");
 
 	if (SLAVE)
 	{
-		out += HTML_section(SL("Slave", "Ведомый"));
+		out += HTML_section(FLF("Slave", "Ведомый"));
 		out += HTML_tableLine(L("Errors", "Ошибок"), String(uart_crc_errors), "uart_crc_errors");
 	}
 
-	out += HTML_section(SL("Links", "Ссылки"));
+	out += HTML_section(FLF("Links", "Ссылки"));
 	out += HTML_tableLine("<a href=\"https://github.com/ACE1046/LazyRolls\">[Github]</a>", "<a href=\"https://t.me/lazyrolls\">[Telegram]</a>");
 	out += HTML_tableLine("<a href=\"mailto:ace@imlazy.ru\">[E-mail]</a>", "<a href=\"http://imlazy.ru\">[Website]</a>");
 
@@ -2030,7 +1996,7 @@ void HTTP_handleRoot(void)
 	httpServer.send(200, "text/html", out);
 }
 
-void SaveString(const char *id, char *inistr, int len)
+void SaveString(const __FlashStringHelper *id, char *inistr, int len)
 {
 	String s;
 	if (!httpServer.hasArg(id)) return;
@@ -2041,7 +2007,7 @@ void SaveString(const char *id, char *inistr, int len)
 	inistr[len-1]='\0';
 }
 
-void SaveInt(const char *id, uint8_t *iniint)
+void SaveInt(const __FlashStringHelper *id, uint8_t *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
@@ -2051,22 +2017,22 @@ void SaveInt(const char *id, uint16_t *iniint)
 	if (!httpServer.hasArg(id)) return;
 	*iniint=min(65535, atoi(httpServer.arg(id).c_str()));
 }
-void SaveInt(String id, uint16_t *iniint)
+void SaveInt(const __FlashStringHelper *id, uint16_t *iniint)
 {
-	if (!httpServer.hasArg(id.c_str())) return;
-	*iniint=min(65535, atoi(httpServer.arg(id.c_str()).c_str()));
+	if (!httpServer.hasArg(id)) return;
+	*iniint=min(65535, atoi(httpServer.arg(id).c_str()));
 }
-void SaveInt(const char *id, uint32_t *iniint)
+void SaveInt(const __FlashStringHelper *id, uint32_t *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
-void SaveInt(const char *id, int *iniint)
+void SaveInt(const __FlashStringHelper *id, int *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
-void SaveInt(const char *id, bool *iniint)
+void SaveInt(const __FlashStringHelper *id, bool *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
@@ -2116,7 +2082,7 @@ void HTTP_handleUpdate(void)
 	out += FL(F("Settings will be lost, if downgrading to previous version. Default password admin admin."), 
 		F("Настройки сбрасываются, если прошивается более старая версия. Пароль по умолчанию admin admin"));
 
-	out+=F("</section>\n");
+	out += F("</section>\n");
 
 	out += HTML_footer();
 	httpServer.send(200, "text/html", out);
@@ -2125,27 +2091,27 @@ void HTTP_handleUpdate(void)
 String HTML_steps(String lbl, String id, int val, String name)
 {
 	String out;
-	out+=F("<tr><td class=\"idname\">");
-	out+=lbl;
-	out+=F("</td><td class=\"val_p\"><input type=\"text\" name=\"");
-	out+=name;
-	out+=F("\" id=\"");
-	out+=id;
-	out+=F("\" value=\"");
-	out+=String(val);
-	out+=F("\" maxlength=\"6\"/>\n<input type=\"button\" value=\"");
-	out+=SL("Test", "Тест");
-	out+=F("\" onclick=\"TestPreset('");
-	out+=name;
-	out+=F("')\">\n<input type=\"button\" value=\"");
-	out+=SL("Here", "Тут");
-	out+=F("\" onclick=\"SetPreset('");
-	out+=name;
-	out+=F("')\">\n</td></tr>\n");
+	out += F("<tr><td class=\"idname\">");
+	out += lbl;
+	out += F("</td><td class=\"val_p\"><input type=\"text\" name=\"");
+	out += name;
+	out += F("\" id=\"");
+	out += id;
+	out += F("\" value=\"");
+	out += String(val);
+	out += F("\" maxlength=\"6\"/>\n<input type=\"button\" value=\"");
+	out += FLF("Test", "Тест");
+	out += F("\" onclick=\"TestPreset('");
+	out += name;
+	out += F("')\">\n<input type=\"button\" value=\"");
+	out += FLF("Here", "Тут");
+	out += F("\" onclick=\"SetPreset('");
+	out += name;
+	out += F("')\">\n</td></tr>\n");
 	return out;
 }
 
-String HTML_hint(String hint)
+String HTML_hint(const __FlashStringHelper* hint)
 {
 	String s;
 	s = F("<tr><td></td><td>");
@@ -2154,256 +2120,290 @@ String HTML_hint(String hint)
 	return s;
 }
 
+String HTML_hint(const String &hint)
+{
+	String s;
+	s = F("<tr><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
+}
+
+void HTTP_saveSettings()
+{
+	char pass[sizeof(ini.password)];
+
+	pass[0]='*';
+	pass[1]='\0';
+	SaveString(F("hostname"), ini.hostname, sizeof(ini.hostname));
+	SaveString(F("name"),     ini.name,     sizeof(ini.name));
+	SaveString(F("ssid"),     ini.ssid,     sizeof(ini.ssid));
+	SaveString(F("password"), pass,         sizeof(ini.password));
+	SaveString(F("ntp"),      ini.ntpserver,sizeof(ini.ntpserver));
+	if (strcmp(pass, "*")!=0) memcpy(ini.password, pass, sizeof(ini.password));
+
+#define IP_ID(a) F(a "1"), F(a "2"), F(a "3"), F(a "4")
+	SaveIP(IP_ID("ip"),   &ini.ip);
+	SaveIP(IP_ID("mask"), &ini.mask);
+	SaveIP(IP_ID("gw"),   &ini.gw);
+	SaveIP(IP_ID("dns"),  &ini.dns);
+
+	SaveInt(F("lang"), &ini.lang);
+	SaveInt(F("pinout"), &ini.pinout);
+	SaveInt(F("reversed"), &ini.reversed);
+	SaveInt(F("delay"), &ini.step_delay_mks);
+	SaveInt(F("timezone"), &ini.timezone);
+	SaveInt(F("length"), &ini.full_length);
+	SaveInt(F("switch"), &ini.switch_reversed);
+	SaveInt(F("sw_at_bottom"), &ini.sw_at_bottom);
+	SaveInt(F("switch_ignore"), &ini.switch_ignore_steps);
+	SaveInt(F("btn_pin"), &ini.btn_pin);
+	SaveInt(F("aux_pin"), &ini.aux_pin);
+	SaveInt(F("up_safe_limit"), &ini.up_safe_limit);
+	for (int i=0; i<MAX_PRESETS; i++)
+		SaveInt(String("preset"+String(i)).c_str(), &ini.preset[i]);
+
+	pass[0]='*';
+	pass[1]='\0';
+	ini.mqtt_enabled=httpServer.hasArg("mqtt_enabled");
+	SaveString(F("mqtt_server"), ini.mqtt_server, sizeof(ini.mqtt_server));
+	SaveInt(F("mqtt_port"), &ini.mqtt_port);
+	SaveString(F("mqtt_login"), ini.mqtt_login, sizeof(ini.mqtt_login));
+	SaveString(F("mqtt_password"), pass, sizeof(ini.mqtt_password));
+	SaveString(F("ntp"), ini.ntpserver,sizeof(ini.ntpserver));
+	if (strcmp(pass, "*")!=0) memcpy(ini.mqtt_password, pass, sizeof(ini.mqtt_password));
+	SaveInt(F("mqtt_ping_interval"), &ini.mqtt_ping_interval);
+	SaveString(F("mqtt_topic_state"), ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
+	SaveString(F("mqtt_topic_command"), ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
+	SaveString(F("mqtt_topic_alive"), ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive));
+	SaveString(F("mqtt_topic_aux"), ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux));
+	SaveString(F("mqtt_topic_info"), ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info));
+	SaveInt(F("mqtt_state_type"), &ini.mqtt_state_type);
+	ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
+	ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
+	SaveInt(F("led_mode"), &ini.led_mode);
+	SaveInt(F("led_level"), &ini.led_level);
+	SaveInt(F("slave"), &ini.slave);
+
+	led_mode=ini.led_mode;
+	led_level=ini.led_level;
+
+	ValidateSettings();
+
+	SaveSettings(&ini, sizeof(ini));
+
+	setup_MQTT();
+	setup_Button();
+	
+	FillStepsTable();
+	AdjustTimerInterval();
+
+	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
+	{ // in soft AP mode, trying to connect to network
+		Serial.println(F("Trying to reconnect"));
+		WiFi.begin(ini.ssid, ini.password);
+		if (WiFi.waitForConnectResult() == WL_CONNECTED)
+		{
+			Serial.println(F("Reconnected to network in STA mode. Closing AP"));
+			HTTP_redirect("http://"+WiFi.localIP().toString()+"/settings");
+			delay(5000);
+			WiFi.softAPdisconnect(true);
+			WiFi.mode(WIFI_STA);
+			LED_Off();
+			CP_delete();
+		}
+	}
+
+	WiFi.hostname(ini.hostname);
+}
+
 void HTTP_handleSettings(void)
 {
 	String out;
-	char pass[sizeof(ini.password)];
 
 	HTTP_Activity();
 
 	if (httpServer.hasArg("save"))
 	{
-		pass[0]='*';
-		pass[1]='\0';
-		SaveString("hostname", ini.hostname, sizeof(ini.hostname));
-		SaveString("name",     ini.name,     sizeof(ini.name));
-		SaveString("ssid",     ini.ssid,     sizeof(ini.ssid));
-		SaveString("password", pass,         sizeof(ini.password));
-		SaveString("ntp",      ini.ntpserver,sizeof(ini.ntpserver));
-		if (strcmp(pass, "*")!=0) memcpy(ini.password, pass, sizeof(ini.password));
-
-#define IP_ID(a) F(a "1"), F(a "2"), F(a "3"), F(a "4")
-		SaveIP(IP_ID("ip"),   &ini.ip);
-		SaveIP(IP_ID("mask"), &ini.mask);
-		SaveIP(IP_ID("gw"),   &ini.gw);
-		SaveIP(IP_ID("dns"),  &ini.dns);
-
-		SaveInt("lang", &ini.lang);
-		SaveInt("pinout", &ini.pinout);
-		SaveInt("reversed", &ini.reversed);
-		SaveInt("delay", &ini.step_delay_mks);
-		SaveInt("timezone", &ini.timezone);
-		SaveInt("length", &ini.full_length);
-		SaveInt("switch", &ini.switch_reversed);
-		SaveInt("sw_at_bottom", &ini.sw_at_bottom);
-		SaveInt("switch_ignore", &ini.switch_ignore_steps);
-		SaveInt("btn_pin", &ini.btn_pin);
-		SaveInt("aux_pin", &ini.aux_pin);
-		SaveInt("up_safe_limit", &ini.up_safe_limit);
-		for (int i=0; i<MAX_PRESETS; i++)
-			SaveInt(String("preset"+String(i)), &ini.preset[i]);
-
-		pass[0]='*';
-		pass[1]='\0';
-		ini.mqtt_enabled=httpServer.hasArg("mqtt_enabled");
-		SaveString("mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server));
-		SaveInt("mqtt_port", &ini.mqtt_port);
-		SaveString("mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login));
-		SaveString("mqtt_password", pass, sizeof(ini.mqtt_password));
-		SaveString("ntp", ini.ntpserver,sizeof(ini.ntpserver));
-		if (strcmp(pass, "*")!=0) memcpy(ini.mqtt_password, pass, sizeof(ini.mqtt_password));
-		SaveInt("mqtt_ping_interval", &ini.mqtt_ping_interval);
-		SaveString("mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state));
-		SaveString("mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command));
-		SaveString("mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive));
-		SaveString("mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux));
-		SaveString("mqtt_topic_info", ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info));
-		SaveInt("mqtt_state_type", &ini.mqtt_state_type);
-		ini.mqtt_invert=httpServer.hasArg("mqtt_invert");
-		ini.mqtt_discovery=httpServer.hasArg("mqtt_discovery");
-		SaveInt("led_mode", &ini.led_mode);
-		SaveInt("led_level", &ini.led_level);
-		SaveInt("slave", &ini.slave);
-
-		led_mode=ini.led_mode;
-		led_level=ini.led_level;
-
-		ValidateSettings();
-
-		SaveSettings(&ini, sizeof(ini));
-
-		setup_MQTT();
-		setup_Button();
-		
-		FillStepsTable();
-		AdjustTimerInterval();
-
-		if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
-		{ // in soft AP mode, trying to connect to network
-			Serial.println(F("Trying to reconnect"));
-			WiFi.begin(ini.ssid, ini.password);
-			if (WiFi.waitForConnectResult() == WL_CONNECTED)
-			{
-				Serial.println(F("Reconnected to network in STA mode. Closing AP"));
-				HTTP_redirect("http://"+WiFi.localIP().toString()+"/settings");
-				delay(5000);
-				WiFi.softAPdisconnect(true);
-				WiFi.mode(WIFI_STA);
-				LED_Off();
-				CP_delete();
-			}
-		}
-
-		WiFi.hostname(ini.hostname);
-
+		HTTP_saveSettings();
 		HTTP_redirect("/settings?ok=1");
 		return;
 	}
 
-	out=HTML_header();
+	out = HTML_header();
 
 	out.reserve(16384);
 
 	out += F("<section class=\"settings\" id=\"settings\">\n");
 
 	if (httpServer.hasArg("ok"))
-		out+=SL("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
+		out += FLF("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
 			"<p>Сохранено!<br/>Настройки сети будут применены после перезагрузки.<br/><a href=\"reboot\">[Перезагрузить]</a></p>\n");
 
 	out += F("<form method=\"post\" action=\"/settings\">\n");
 
-	out+=F("<table>\n");
-	out+=HTML_save();
-	out+="<tr><td>"+SL("Language: ", "Язык: ")+"</td><td><select id=\"lang\" name=\"lang\">\n";
-	for (int i=0; i<Languages; i++)
+	out += F("<table>\n");
+	out += HTML_save();
+	out += "<tr><td>";
+	out += FLF("Language: ", "Язык: ");
+	out += F("</td><td><select id=\"lang\" name=\"lang\">\n");
+	for (int i=0; i < Languages; i++)
 	{
-		out+="<option value=\""+String(i)+"\"";
-		if (i==ini.lang) out+=" selected=\"selected\"";
-		out+=+">"+String(Language[i])+"</option>\n";
+		out += HTML_addOption(i, ini.lang, Language[i]);
 	}
-	out+=F("</select></td></tr>\n");
-	out+=HTML_editString(L("Name:", "Название:"),       "name",     ini.name,     sizeof(ini.name)-1);
-	out+=HTML_section(SL("Network", "Сеть"));
-	out+=HTML_editString(L("Hostname:", "Имя в сети:"), "hostname", ini.hostname, sizeof(ini.hostname)-1);
-	out+=HTML_editString(L("SSID:", "Wi-Fi сеть:"),     "ssid",     ini.ssid,     sizeof(ini.ssid)-1);
-	out+=HTML_editString(L("Password:", "Пароль:"),     "password", "*",          sizeof(ini.password)-1);
-	out+=HTML_hint(SL("Leave zeros for DHCP", "Оставить нули для DHCP"));
-	out+=HTML_editIP(F("IP"), F("ip"), &ini.ip);
-	out+=HTML_editIP(FL(F("Mask"), F("Маска")), F("mask"), &ini.mask);
-	out+=HTML_editIP(FL(F("Gateway"), F("Шлюз")), F("gw"), &ini.gw);
-	out+=HTML_editIP(F("DNS"), F("dns"), &ini.dns);
+	out += F("</select></td></tr>\n");
+	out += HTML_editString(FLF("Name:", "Название:"),       F("name"),     ini.name,     sizeof(ini.name)-1);
+	out += HTML_section(FLF("Network", "Сеть"));
+	out += HTML_editString(FLF("Hostname:", "Имя в сети:"), F("hostname"), ini.hostname, sizeof(ini.hostname)-1);
+	out += HTML_editString(FLF("SSID:", "Wi-Fi сеть:"),     F("ssid"),     ini.ssid,     sizeof(ini.ssid)-1);
+	out += HTML_editString(FLF("Password:", "Пароль:"),     F("password"), "*",          sizeof(ini.password)-1);
+	out += HTML_hint(FLF("Leave zeros for DHCP", "Оставить нули для DHCP"));
+	out += HTML_editIP(F("IP"), F("ip"), &ini.ip);
+	out += HTML_editIP(FLF("Mask", "Маска"), F("mask"), &ini.mask);
+	out += HTML_editIP(FLF("Gateway", "Шлюз"), F("gw"), &ini.gw);
+	out += HTML_editIP(F("DNS"), F("dns"), &ini.dns);
 
-	out+=HTML_section(SL("Time", "Время"));
-	out+=HTML_editString(L("NTP-server:", "NTP-сервер:"),"ntp",     ini.ntpserver,sizeof(ini.ntpserver)-1);
-	out+="<tr><td>"+SL("Timezone: ", "Пояс: ")+"</td><td><select id=\"timezone\" name=\"timezone\">\n";
+	out += HTML_section(FLF("Time", "Время"));
+	out += HTML_editString(FLF("NTP-server:", "NTP-сервер:"),F("ntp"),     ini.ntpserver,sizeof(ini.ntpserver)-1);
+	out += F("<tr><td>");
+	out += FLF("Timezone: ", "Пояс: ");
+	out += F("</td><td><select id=\"timezone\" name=\"timezone\">\n");
 	for (int i=-11*60; i<=14*60; i+=30) // timezones from -11:00 to +14:00 every 30 min
 	{
 		char b[7];
 		sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
 		if (i<0) b[0]='-';
-		out+="<option value=\""+String(i)+"\"";
-		if (i==ini.timezone) out+=" selected=\"selected\"";
-		out+=+">UTC"+String(b)+"</option>\n";
+		out += "<option value=\""+String(i)+"\"";
+		if (i==ini.timezone) out += " selected=\"selected\"";
+		out += +">UTC"+String(b)+"</option>\n";
 	}
-	out+=F("</select></td></tr>\n");
+	out += F("</select></td></tr>\n");
 
-	out+=HTML_section(SL("Motor", "Мотор"));
-	out+="<tr><td>"+SL("Pinout:", "Подключение:")+"</td><td><select id=\"pinout\" name=\"pinout\">\n";
-	out+=HTML_addOption(2, ini.pinout, "A-B-C-D");
-	out+=HTML_addOption(0, ini.pinout, "A-C-B-D");
-	out+=HTML_addOption(1, ini.pinout, "A-B-D-C");
-	out+=HTML_addOption(3, ini.pinout, "Step/Dir");
-	out+="</select></td></tr>\n" \
-	"<tr><td>"+SL("Direction:", "Направление:")+"</td><td><select id=\"reversed\" name=\"reversed\">\n" \
-	"<option value=\"1\""+(ini.reversed ? " selected=\"selected\"" : "")+">"+SL("Normal", "Прямое")+"</option>\n" \
-	"<option value=\"0\""+(ini.reversed ? "" : " selected=\"selected\"")+">"+SL("Reversed", "Обратное")+"</option>\n" \
-	"</select></td></tr>\n";
-	out+=HTML_editString(L("Step delay:", "Время шага:"), "delay", String(ini.step_delay_mks).c_str(), 5);
-	out+=HTML_hint(SL("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"));
-	out+=F("<tr><td colspan=\"2\">\n" \
+	out += HTML_section(FLF("Motor", "Мотор"));
+	out += F("<tr><td>");
+	out += FLF("Pinout:", "Подключение:");
+	out += F("</td><td><select id=\"pinout\" name=\"pinout\">\n");
+	out += HTML_addOption(2, ini.pinout, F("A-B-C-D"));
+	out += HTML_addOption(0, ini.pinout, F("A-C-B-D"));
+	out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
+	out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
+	out += F("</select></td></tr>\n<tr><td>");
+	out += FLF("Direction:", "Направление:");
+	out += F("</td><td><select id=\"reversed\" name=\"reversed\">\n");
+	out += HTML_addOption(1, ini.reversed, FLF("Normal", "Прямое"));
+	out += HTML_addOption(0, ini.reversed, FLF("Reversed", "Обратное"));
+	out += F("</select></td></tr>\n");
+	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(ini.step_delay_mks).c_str(), 5);
+	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"));
+	out += F("<tr><td colspan=\"2\">\n" \
 	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\"");
-	out+=SL("Test up", "Тест вверх");
-	out+=F("\" onclick=\"TestUp()\">\n" \
+	out += FLF("Test up", "Тест вверх");
+	out += F("\" onclick=\"TestUp()\">\n" \
 	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\"");
-	out+=SL("Test down", "Тест вниз");
-	out+=F("\" onclick=\"TestDown()\">\n" \
+	out += FLF("Test down", "Тест вниз");
+	out += F("\" onclick=\"TestDown()\">\n" \
 	"</td></tr>\n");
 
-	out+=HTML_section(SL("Curtain", "Штора"));
-	out+=HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
-	out+=HTML_hint(SL(F("(closed position, steps)"), F("(шагов до полного закрытия)")));
+	out += HTML_section(FLF("Curtain", "Штора"));
+	out += HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
+	out += HTML_hint(FLF("(closed position, steps)", "(шагов до полного закрытия)"));
 	for (int i=0; i<MAX_PRESETS; i++)
 	{
-		out+=HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
+		out += HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
 	}
 
-	out+=HTML_section(SL("Endstop", "Концевик"));
-	out+="<tr><td>"+SL("Type:", "Тип:")+"</td><td><select id=\"switch\" name=\"switch\">\n" \
-	"<option value=\"0\""+(ini.switch_reversed ? "" : " selected=\"selected\"")+">"+SL("Normal closed", "Нормально замкнут")+"</option>\n" \
-	"<option value=\"1\""+(ini.switch_reversed ? " selected=\"selected\"" : "")+">"+SL("Normal open", "Нормально разомкнут")+"</option>\n" \
-	"</select></td></tr>\n";
-	out+="<tr><td>"+SL("Position:", "Положение:")+"</td><td><select id=\"sw_at_bottom\" name=\"sw_at_bottom\">\n" \
-	"<option value=\"0\""+(ini.sw_at_bottom ? "" : " selected=\"selected\"")+">"+SL("At fully open", "На открыто")+"</option>\n" \
-	"<option value=\"1\""+(ini.sw_at_bottom ? " selected=\"selected\"" : "")+">"+SL("At fully closed", "На закрыто")+"</option>\n" \
-	"</select></td></tr>\n";
-	out+=HTML_editString(L("Length:", "Длина:"), "switch_ignore", String(ini.switch_ignore_steps).c_str(), 5);
-	out+=HTML_hint(SL(F("(switch ignore zone, steps, default 100)"), F("(игнорировать концевик первые шаги, обычно 100)")));
-	out+=HTML_editString(L("Extra:", "Запас:"), "up_safe_limit", String(ini.up_safe_limit).c_str(), 5);
-	out+=HTML_hint(SL(F("(Maximum steps below zero on open, default 300. Do not change if not sure)"), F("(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)")));
+	out += HTML_section(FLF("Endstop", "Концевик"));
+	out += F("<tr><td>");
+	out += FLF("Type:", "Тип:");
+	out += F("</td><td><select id=\"switch\" name=\"switch\">\n");
+	out += HTML_addOption(0, ini.switch_reversed, FLF("Normal closed", "Нормально замкнут"));
+	out += HTML_addOption(1, ini.switch_reversed, FLF("Normal open", "Нормально разомкнут"));
+	out += F("</select></td></tr>\n");
+	out += F("<tr><td>");
+	out += FLF("Position:", "Положение:");
+	out += F("</td><td><select id=\"sw_at_bottom\" name=\"sw_at_bottom\">\n");
+	out += HTML_addOption(0, ini.sw_at_bottom, FLF("At fully open", "На открыто"));
+	out += HTML_addOption(1, ini.sw_at_bottom, FLF("At fully closed", "На закрыто"));
+	out += F("</select></td></tr>\n");
+	out += HTML_editString(FLF("Length:", "Длина:"), F("switch_ignore"), String(ini.switch_ignore_steps).c_str(), 5);
+	out += HTML_hint(FLF("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)"));
+	out += HTML_editString(FLF("Extra:", "Запас:"), F("up_safe_limit"), String(ini.up_safe_limit).c_str(), 5);
+	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)"));
 
 #ifdef MQTT
-	out+=HTML_section(SL("MQTT", "MQTT"));
-	String s=SL("MQTT enabled Help:", "MQTT включен Помощь:")+" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>";
-	out+=HTML_addCheckbox(s.c_str(), "mqtt_enabled", ini.mqtt_enabled);
-	out+=HTML_editString(L("Server:", "Сервер:"), "mqtt_server", ini.mqtt_server, sizeof(ini.mqtt_server)-1);
-	out+=HTML_editString(L("Port:", "Порт:"), "mqtt_port", String(ini.mqtt_port).c_str(), 5);
-	out+=HTML_editString(L("Login:", "Логин:"), "mqtt_login", ini.mqtt_login, sizeof(ini.mqtt_login)-1);
-	out+=HTML_editString(L("Password:", "Пароль:"), "mqtt_password", "*", sizeof(ini.mqtt_password)-1);
-	out+=HTML_editString(L("Keep-alive:", "Keep-alive:"), "mqtt_ping_interval", String(ini.mqtt_ping_interval).c_str(), 5);
-	out+=HTML_editString(L("Commands:", "Команды:"), "mqtt_topic_command", ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
-	out+=HTML_hint(SL(F("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)"), F("Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)")));
-	out+=HTML_editString(L("State:", "Статус:"), "mqtt_topic_state", ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
-	out+="<tr><td>"+SL("Type:", "Формат:")+"</td><td><select id=\"mqtt_state_type\" name=\"mqtt_state_type\">\n";
-	out+=HTML_addOption(0, ini.mqtt_state_type, "0-100 (%)");
-	out+=HTML_addOption(1, ini.mqtt_state_type, "ON/OFF");
-	out+=HTML_addOption(2, ini.mqtt_state_type, "0/1");
-	out+=HTML_addOption(3, ini.mqtt_state_type, "JSON");
-	out+="</select></td></tr>\n";
-	out+=HTML_editString(L("Alive:", "Живой:"), "mqtt_topic_alive", ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive)-1);
-	out+=HTML_editString(L("Info:", "Инфо:"), "mqtt_topic_info", ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info)-1);
-	out+=HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
-	out+=HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
+	out += HTML_section(FLF("MQTT", "MQTT"));
+	String s=FLF("MQTT enabled Help:", "MQTT включен Помощь:");
+	s += F(" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>");
+	out += HTML_addCheckbox(s.c_str(), "mqtt_enabled", ini.mqtt_enabled);
+	out += HTML_editString(FLF("Server:", "Сервер:"), F("mqtt_server"), ini.mqtt_server, sizeof(ini.mqtt_server)-1);
+	out += HTML_editString(FLF("Port:", "Порт:"), F("mqtt_port"), String(ini.mqtt_port).c_str(), 5);
+	out += HTML_editString(FLF("Login:", "Логин:"), F("mqtt_login"), ini.mqtt_login, sizeof(ini.mqtt_login)-1);
+	out += HTML_editString(FLF("Password:", "Пароль:"), F("mqtt_password"), "*", sizeof(ini.mqtt_password)-1);
+	out += HTML_editString(FLF("Keep-alive:", "Keep-alive:"), F("mqtt_ping_interval"), String(ini.mqtt_ping_interval).c_str(), 5);
+	out += HTML_editString(FLF("Commands:", "Команды:"), F("mqtt_topic_command"), ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
+	out += HTML_hint(FLF("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", "Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)"));
+	out += HTML_editString(FLF("State:", "Статус:"), F("mqtt_topic_state"), ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
+	out += F("<tr><td>");
+	out += FLF("Type:", "Формат:");
+	out += F("</td><td><select id=\"mqtt_state_type\" name=\"mqtt_state_type\">\n");
+	out += HTML_addOption(0, ini.mqtt_state_type, F("0-100 (%)"));
+	out += HTML_addOption(1, ini.mqtt_state_type, F("ON/OFF"));
+	out += HTML_addOption(2, ini.mqtt_state_type, F("0/1"));
+	out += HTML_addOption(3, ini.mqtt_state_type, F("JSON"));
+	out += F("</select></td></tr>\n");
+	out += HTML_editString(FLF("Alive:", "Живой:"), F("mqtt_topic_alive"), ini.mqtt_topic_alive, sizeof(ini.mqtt_topic_alive)-1);
+	out += HTML_editString(FLF("Info:", "Инфо:"), F("mqtt_topic_info"), ini.mqtt_topic_info, sizeof(ini.mqtt_topic_info)-1);
+	out += HTML_addCheckbox(L("Invert percentage (0% = closed)", "Инвертировать проценты (0% = закрыто)"), "mqtt_invert", ini.mqtt_invert);
+	out += HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
-	out+=HTML_section(SL("Button", "Кнопка"));
-	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n";
-	out+=HTML_addOption(0, ini.btn_pin, L("None", "Нет"));
-	out+=HTML_addOption(1, ini.btn_pin, "GPIO0 (DTR)");
-	out+=HTML_addOption(2, ini.btn_pin, "GPIO2");
-	out+=HTML_addOption(3, ini.btn_pin, "GPIO3 (RX)", "pin_RX");
-	out+="</select></td></tr>\n";
-	out+=HTML_hint(SL(F("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)"),
-		F("(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.)")));
+	out += HTML_section(FLF("Button", "Кнопка"));
+	out += F("<tr><td>");
+	out += FLF("Pin:", "Пин:");
+	out += F("</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n");
+	out += HTML_addOption(0, ini.btn_pin, FLF("None", "Нет"));
+	out += HTML_addOption(1, ini.btn_pin, F("GPIO0 (DTR)"));
+	out += HTML_addOption(2, ini.btn_pin, F("GPIO2"));
+	out += HTML_addOption(3, ini.btn_pin, F("GPIO3 (RX)"), "pin_RX");
+	out += F("</select></td></tr>\n");
+	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
+		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.)"));
 
 #ifdef MQTT
-	out+=HTML_section(SL("Aux input", "Доп. вход"));
-	out+="<tr><td>"+SL("Pin:", "Пин:")+"</td><td><select id=\"aux_pin\" name=\"aux_pin\" onchange=\"PinChange()\">\n";
-	out+=HTML_addOption(0, ini.aux_pin, L("None", "Нет"));
-	out+=HTML_addOption(1, ini.aux_pin, "GPIO0 (DTR)");
-	out+=HTML_addOption(2, ini.aux_pin, "GPIO2");
-	out+=HTML_addOption(3, ini.aux_pin, "GPIO3 (RX)", "aux_RX");
-	out+="</select></td></tr>\n";
-	out+=HTML_editString(L("MQTT topic:", "MQTT топик:"), "mqtt_topic_aux", ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
-	out+=HTML_hint(SL(F("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)"),
-		F("(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)")));
+	out += HTML_section(FLF("Aux input", "Доп. вход"));
+	out += F("<tr><td>");
+	out += FLF("Pin:", "Пин:");
+	out += F("</td><td><select id=\"aux_pin\" name=\"aux_pin\" onchange=\"PinChange()\">\n");
+	out += HTML_addOption(0, ini.aux_pin, FLF("None", "Нет"));
+	out += HTML_addOption(1, ini.aux_pin, F("GPIO0 (DTR)"));
+	out += HTML_addOption(2, ini.aux_pin, F("GPIO2"));
+	out += HTML_addOption(3, ini.aux_pin, F("GPIO3 (RX)"), "aux_RX");
+	out += F("</select></td></tr>\n");
+	out += HTML_editString(FLF("MQTT topic:", "MQTT топик:"), F("mqtt_topic_aux"), ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
+	out += HTML_hint(FLF("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)",
+		"(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)"));
 #endif
 
-	out+=HTML_section(SL("Master/slave", "Главный/ведомый"));
-	out+="<tr><td>"+SL("Role:", "Роль:")+"</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange()\">\n";
-	out+=HTML_addOption(0, ini.slave, L("Standalone", "Независимый"));
-	out+=HTML_addOption(255, ini.slave, L("Master", "Главный"));
-	out+=HTML_addOption(1, ini.slave, L("Slave 1", "Ведомый 1"));
-	out+=HTML_addOption(2, ini.slave, L("Slave 2", "Ведомый 2"));
-	out+=HTML_addOption(3, ini.slave, L("Slave 3", "Ведомый 3"));
-	out+=HTML_addOption(4, ini.slave, L("Slave 4", "Ведомый 4"));
-	out+=HTML_addOption(5, ini.slave, L("Slave 5", "Ведомый 5"));
-	out+="</select></td></tr>\n";
-	out+=HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
+	out += HTML_section(FLF("Master/slave", "Главный/ведомый"));
+	out += F("<tr><td>");
+	out += FLF("Role:", "Роль:");
+	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange()\">\n");
+	out += HTML_addOption(0, ini.slave, FLF("Standalone", "Независимый"));
+	out += HTML_addOption(255, ini.slave, FLF("Master", "Главный"));
+	out += HTML_addOption(1, ini.slave, FLF("Slave 1", "Ведомый 1"));
+	out += HTML_addOption(2, ini.slave, FLF("Slave 2", "Ведомый 2"));
+	out += HTML_addOption(3, ini.slave, FLF("Slave 3", "Ведомый 3"));
+	out += HTML_addOption(4, ini.slave, FLF("Slave 4", "Ведомый 4"));
+	out += HTML_addOption(5, ini.slave, FLF("Slave 5", "Ведомый 5"));
+	out += F("</select></td></tr>\n");
+	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
-	out+=HTML_section(SL("LED", "Светодиод"));
-//	out+="<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
-	out+="<tr><td>"+SL("Mode:", "Функция:")+"</td><td><select id=\"led_mode\" name=\"led_mode\">\n";
-#define MODE_OPT(x) out+=HTML_addOption(x, ini.led_mode, LEDModeString(x).c_str());
+	out += HTML_section(FLF("LED", "Светодиод"));
+//	out += "<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
+	out += F("<tr><td>");
+	out += FLF("Mode:", "Функция:");
+	out += F("</td><td><select id=\"led_mode\" name=\"led_mode\">\n");
+#define MODE_OPT(x) out += HTML_addOption(x, ini.led_mode, LEDModeString(x));
 	MODE_OPT(LED_OFF);
 	MODE_OPT(LED_ON);
 	MODE_OPT(LED_MQTT);
@@ -2411,20 +2411,20 @@ void HTTP_handleSettings(void)
 	MODE_OPT(LED_MQTT_HTTP);
 	MODE_OPT(LED_ALIVE);
 	MODE_OPT(LED_BUTTON);
-	out+="</select></td></tr>\n";
-	out+="<tr><td>"+SL("Brightness:", "Яркость:")+"</td><td><select id=\"led_level\" name=\"led_level\">\n";
-#define LEVEL_OPT(x) out+=HTML_addOption(x, ini.led_level, LEDLevelString(x).c_str());
+	out += F("</select></td></tr>\n<tr><td>");
+	out += FLF("Brightness:", "Яркость:");
+	out += F("</td><td><select id=\"led_level\" name=\"led_level\">\n");
+#define LEVEL_OPT(x) out += HTML_addOption(x, ini.led_level, LEDLevelString(x));
 	LEVEL_OPT(LED_LOW);
 	LEVEL_OPT(LED_MED);
 	LEVEL_OPT(LED_HIGH);
-	out+="</select></td></tr>\n";
-	out+=HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/led.html\">imlazy.ru/rolls/led.html</a>");
+	out += F("</select></td></tr>\n");
+	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/led.html\">imlazy.ru/rolls/led.html</a>");
 
-	out+=HTML_save();
-	out+="<tr><td colspan=\"2\"><a href=\"/update\">"+SL("Firmware update", "Обновление прошивки")+"</a></td></tr>\n";
-	out+="</table>\n";
-	out+="</form>\n";
-	out+="</section>\n";
+	out += HTML_save();
+	out += F("<tr><td colspan=\"2\"><a href=\"/update\">");
+	out += FLF("Firmware update", "Обновление прошивки");
+	out += F("</a></td></tr>\n</table>\n</form>\n</section>\n");
 
 	out += HTML_footer();
 
@@ -2493,60 +2493,85 @@ void HTTP_handleAlarms(void)
 
 	out.reserve(20480);
 
-	out += "<section class=\"alarms\" id=\"alarms\">\n";
-	out += "<form method=\"post\" action=\"/alarms\">\n";
-	out += "<table width=\"100%\">\n";
-	out+=HTML_save(5);
-	out += "<tr><td colspan=\"5\">"+ \
-		SL("To execute command one time, remove all day of week marks. Command will be disabled after execution.", \
+	out += F("<section class=\"alarms\" id=\"alarms\">\n"
+		"<form method=\"post\" action=\"/alarms\">\n"
+		"<table width=\"100%\">\n");
+	out += HTML_save(5);
+	out += F("<tr><td colspan=\"5\">");
+	out += FLF("To execute command one time, remove all day of week marks. Command will be disabled after execution.",
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
 
 	for (int a=0; a<ALARMS; a++)
 	{
 		String n=String(a);
-		out += F("<tr><td colspan=\"5\"><hr/></td></tr>\n");
-		out += "<tr><td class=\"en\"><label for=\"en"+n+"\">\n";
-		out += "<input type=\"checkbox\" id=\"en"+n+"\" name=\"en"+n+"\"" +
-			((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "") + "/>\n";
-		out += SL("Enabled", "Включено")+"</label></td>\n";
+		out += F("<tr><td colspan=\"5\"><hr/></td></tr>\n"
+			"<tr><td class=\"en\"><label for=\"en");
+		out += n;
+		out += F("\">\n");
+		out += F("<input type=\"checkbox\" id=\"en");
+		out += n;
+		out += F("\" name=\"en");
+		out += n;
+		out += F("\"");
+		out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
+		out += F("/>\n");
+		out += FLF("Enabled", "Включено");
+		out += F("</label></td>\n");
 
-		out += "<td class=\"narrow\"><label for=\"time"+n+"\">"+
-			SL("Time:", "Время:")+"</label></td><td><input type=\"time\" id=\"time"+n+
-			"\" name=\"time"+n+"\" value=\""+TimeToStr(ini.alarms[a].time)+"\" required></td>\n";
+		out += F("<td class=\"narrow\"><label for=\"time");
+		out += n;
+		out += F("\">");
+		out += FLF("Time:", "Время:");
+		out += F("</label></td><td><input type=\"time\" id=\"time");
+		out += n;
+		out += F("\" name=\"time");
+		out += n;
+		out += F("\" value=\"");
+		out += TimeToStr(ini.alarms[a].time);
+		out += F("\" required></td>\n");
 
-		out += "<td class=\"narrow\"><label for=\"dest"+n+"\">"+
-			SL("Position:", "Положение:")+"</label></td><td><select id=\"dest"+n+"\" name=\"dest"+n+"\">\n";
+		out += F("<td class=\"narrow\"><label for=\"dest");
+		out += n;
+		out += F("\">");
+		out += FLF("Position:", "Положение:");
+		out += F("</label></td><td><select id=\"dest");
+		out += n;
+		out += F("\" name=\"dest");
+		out += n;
+		out += F("\">\n");
 		for (int p=0; p<=100; p+=20)
 		{
 			String s = String(p)+"%";
-			if (p==0)   s=SL("Open", "Открыть");
-			if (p==100) s=SL("Close", "Закрыть");
+			if (p==0)   s=FL(F("Open"), F("Открыть"));
+			if (p==100) s=FL(F("Close"), F("Закрыть"));
 			out += "<option value=\""+String(p)+"\""+
 				(ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
 		}
 		for (int p=0; p<MAX_PRESETS; p++)
 		{
 			out += "<option value=\""+String(101+p)+"\""+
-				(ini.alarms[a].percent_open==101+p ? " selected" : "")+">"+
-				SL("Preset", "Позиция")+" "+String(p+1)+"</option>\n";
+				(ini.alarms[a].percent_open==101+p ? " selected" : "")+">";
+			out += FLF("Preset", "Позиция");
+			out += " "+String(p+1)+"</option>\n";
 		}
 		out += F("</select>\n");
 		out += F("</td></tr><tr><td>");
 
-		out += SL("Repeat:", "Повтор:")+"</td><td colspan=\"5\" class=\"days\">\n";
+		out += FLF("Repeat:", "Повтор:");
+		out += F("</td><td colspan=\"5\" class=\"days\">\n");
 		for (int d=0; d<7; d++)
 		{
 			String id="\"d"+n+"_"+String(d)+"\"";
 			out += "<label for="+id+">";
 			out += "<input type=\"checkbox\" id="+id+" name="+id+
 					((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
-			out+=DoWName(d);
+			out += DoWName(d);
 			out += F("</label> \n");
 		}
 		out += F("</td></tr>\n");
 	}
 
-	out+=HTML_save(5);
+	out += HTML_save(5);
 
 	out += F("</table>\n" \
 		"</form>\n" \
@@ -2735,9 +2760,12 @@ void HTTP_handleTest(void)
 	httpServer.send(200, "text/html", String(position));
 }
 
-String MakeNode(const char *name, String val)
+String MakeNode(const __FlashStringHelper *name, String val)
 {
-	return "<" + String(name) + ">" + val + "</" + String(name) + ">";
+	char buf[128], buf2[16];
+	strcpy_P(buf2, (char*)name);
+	snprintf_P(buf, sizeof(buf),PSTR("<%s>%s</%s>"), buf2, val.c_str(), buf2);
+	return buf;
 }
 void HTTP_handleXML(void)
 {
@@ -2747,42 +2775,42 @@ void HTTP_handleXML(void)
 	FlashMode_t ideMode = ESP.getFlashChipMode();
 
 	XML.reserve(1024);
-	XML=F("<?xml version='1.0'?>");
-	XML+=F("<Curtain>");
-	XML+=F("<Info>");
-	XML+=MakeNode("Version", VERSION);
-	XML+=MakeNode("IP", WiFi.localIP().toString());
+	XML = F("<?xml version='1.0'?>");
+	XML += F("<Curtain>");
+	XML += F("<Info>");
+	XML += MakeNode(F("Version"), VERSION);
+	XML += MakeNode(F("IP"), WiFi.localIP().toString());
 	s=String(ini.name);
 	s.replace(F("<"), F("&lt;"));
 	s.replace(F(">"), F("&gt;"));
-	XML+=MakeNode("Name", s);
-	XML+=MakeNode("Hostname", String(ini.hostname));
-	XML+=MakeNode("Time", ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
-	XML+=MakeNode("UpTime", UptimeStr());
-	XML+=MakeNode("RSSI", String(WiFi.RSSI()) + SL(" dBm", " дБм"));
-	XML+=MakeNode("MQTT", MQTTstatus());
+	XML += MakeNode(F("Name"), s);
+	XML += MakeNode(F("Hostname"), String(ini.hostname));
+	XML += MakeNode(F("Time"), ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
+	XML += MakeNode(F("UpTime"), UptimeStr());
+	XML += MakeNode(F("RSSI"), String(WiFi.RSSI()) + SL(" dBm", " дБм"));
+	XML += MakeNode(F("MQTT"), MQTTstatus());
 	if (voltage_available)
-		XML+=MakeNode("Voltage", GetVoltageStr() + SL("V", "В"));
-	XML+=F("</Info>");
+		XML += MakeNode(F("Voltage"), GetVoltageStr() + SL("V", "В"));
+	XML += F("</Info>");
 
-	XML+=F("<ChipInfo>");
-	XML+=MakeNode("ID", String(ESP.getChipId(), HEX));
-	XML+=MakeNode("FlashID", String(ESP.getFlashChipId(), HEX));
-	XML+=MakeNode("RealSize", MemSize2Str(realSize));
-	XML+=MakeNode("IdeSize", MemSize2Str(ideSize));
-	XML+=MakeNode("Speed", String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц"));
-	XML+=MakeNode("IdeMode", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
-	XML+=F("</ChipInfo>");
+	XML += F("<ChipInfo>");
+	XML += MakeNode(F("ID"), String(ESP.getChipId(), HEX));
+	XML += MakeNode(F("FlashID"), String(ESP.getFlashChipId(), HEX));
+	XML += MakeNode(F("RealSize"), MemSize2Str(realSize));
+	XML += MakeNode(F("IdeSize"), MemSize2Str(ideSize));
+	XML += MakeNode(F("Speed"), String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц"));
+	XML += MakeNode(F("IdeMode"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
+	XML += F("</ChipInfo>");
 
-	XML+=F("<Position>");
-	XML+=MakeNode("Now", String(position));
-	XML+=MakeNode("Dest", String(roll_to));
-	XML+=MakeNode("Max", String(ini.full_length));
-	XML+=MakeNode("End1", onoff[ini.lang][IsSwitchPressed()]);
-	XML+=F("</Position><LED>");
-	XML+=MakeNode("Mode", LEDModeString());
-	XML+=MakeNode("Level", LEDLevelString());
-	XML+=F("</LED></Curtain>");
+	XML += F("<Position>");
+	XML += MakeNode(F("Now"), String(position));
+	XML += MakeNode(F("Dest"), String(roll_to));
+	XML += MakeNode(F("Max"), String(ini.full_length));
+	XML += MakeNode(F("End1"), onoff[ini.lang][IsSwitchPressed()]);
+	XML += F("</Position><LED>");
+	XML += MakeNode(F("Mode"), LEDModeString());
+	XML += MakeNode(F("Level"), LEDLevelString());
+	XML += F("</LED></Curtain>");
 
 	httpServer.sendHeader(F("Access-Control-Allow-Origin"), "*"); // Allowing Cross-Origin Resource Sharing
 	httpServer.send(200, "text/XML", XML);
