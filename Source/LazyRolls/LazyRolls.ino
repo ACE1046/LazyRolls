@@ -2496,16 +2496,16 @@ void HTTP_handleAlarms(void)
 	out += F("<section class=\"alarms\" id=\"alarms\">\n"
 		"<form method=\"post\" action=\"/alarms\">\n"
 		"<table width=\"100%\">\n");
-	out += HTML_save(5);
-	out += F("<tr><td colspan=\"5\">");
+	out += HTML_save(3);
+	out += F("<tr><td colspan=\"3\">");
 	out += FLF("To execute command one time, remove all day of week marks. Command will be disabled after execution.",
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
 
 	for (int a=0; a<ALARMS; a++)
 	{
 		String n=String(a);
-		out += F("<tr><td colspan=\"5\"><hr/></td></tr>\n"
-			"<tr><td class=\"en\"><label for=\"en");
+		out += F("<tr><td colspan=\"3\"><hr/></td></tr>\n"
+			"<tr class=\"en\"><td class=\"en\"><label for=\"en");
 		out += n;
 		out += F("\">\n");
 		out += F("<input type=\"checkbox\" id=\"en");
@@ -2515,14 +2515,14 @@ void HTTP_handleAlarms(void)
 		out += F("\"");
 		out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
 		out += F("/>\n");
-		out += FLF("Enabled", "Включено");
+		out += FLF("Enable", "Вкл.");
 		out += F("</label></td>\n");
 
 		out += F("<td class=\"narrow\"><label for=\"time");
 		out += n;
 		out += F("\">");
 		out += FLF("Time:", "Время:");
-		out += F("</label></td><td><input type=\"time\" id=\"time");
+		out += F("</label> <br/><input type=\"time\" id=\"time");
 		out += n;
 		out += F("\" name=\"time");
 		out += n;
@@ -2530,11 +2530,11 @@ void HTTP_handleAlarms(void)
 		out += TimeToStr(ini.alarms[a].time);
 		out += F("\" required></td>\n");
 
-		out += F("<td class=\"narrow\"><label for=\"dest");
+		out += F("<td><label for=\"dest");
 		out += n;
-		out += F("\">");
+		out += F("\"> ");
 		out += FLF("Position:", "Положение:");
-		out += F("</label></td><td><select id=\"dest");
+		out += F("</label> <br/><select id=\"dest");
 		out += n;
 		out += F("\" name=\"dest");
 		out += n;
@@ -2558,7 +2558,7 @@ void HTTP_handleAlarms(void)
 		out += F("</td></tr><tr><td>");
 
 		out += FLF("Repeat:", "Повтор:");
-		out += F("</td><td colspan=\"5\" class=\"days\">\n");
+		out += F("</td><td colspan=\"2\" class=\"days\">\n");
 		for (int d=0; d<7; d++)
 		{
 			String id="\"d"+n+"_"+String(d)+"\"";
@@ -2571,7 +2571,7 @@ void HTTP_handleAlarms(void)
 		out += F("</td></tr>\n");
 	}
 
-	out += HTML_save(5);
+	out += HTML_save(3);
 
 	out += F("</table>\n" \
 		"</form>\n" \
