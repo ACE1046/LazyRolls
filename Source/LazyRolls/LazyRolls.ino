@@ -1532,7 +1532,7 @@ void ValidateSettings()
 
 void setup_Settings(void)
 {
-	memset(&ini, sizeof(ini), 0);
+	memset(&ini, 0, sizeof(ini));
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 	if (LoadSettings(&ini, sizeof(ini)))
 	{
@@ -1566,6 +1566,10 @@ void setup_Settings(void)
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 		ini.led_mode=0;
 		ini.led_level=0;
+		IP4_ADDR(&ini.ip, 0, 0, 0, 0);
+		IP4_ADDR(&ini.mask, 255, 255, 255, 0);
+		IP4_ADDR(&ini.gw, 0, 0, 0, 0);
+		IP4_ADDR(&ini.dns, 8, 8, 8, 8);
 		Serial.println(F("Settings set to default"));
 	}
 	ValidateSettings();
@@ -2131,7 +2135,7 @@ String HTML_hint(const String &hint)
 
 void HTTP_saveSettings()
 {
-	char pass[sizeof(ini.password)];
+	char pass[max(sizeof(ini.password), sizeof(ini.mqtt_password))];
 
 	pass[0]='*';
 	pass[1]='\0';

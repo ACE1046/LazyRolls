@@ -53,7 +53,7 @@ bool LoadSettings(void *ini, int len)
 
 bool SaveSettings(void *ini, int len)
 {
-  int r, i;
+  int i;
   uint8_t crc;
   if (!Init()) return false;
   
