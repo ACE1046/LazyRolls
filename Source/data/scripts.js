@@ -53,7 +53,11 @@ function ShowMain()
 }
 
 function st(t, id, tag)
-{ f=t.responseXML.getElementsByTagName(tag)[0]; if(f) document.getElementById(id).innerHTML = f.childNodes[0].nodeValue; }
+{
+	f=t.responseXML.getElementsByTagName(tag)[0]; 
+	h = document.getElementById(id);
+	if(f && h) h.innerHTML = f.childNodes[0].nodeValue; 
+}
 function GetStatus()
 {
 	if (active) {

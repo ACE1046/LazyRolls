@@ -17,44 +17,77 @@ http://imlazy.ru/rolls/
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
-#include <ArduinoOTA.h>
 #include <FS.h>
 #include <WiFiUdp.h>
 #include <DNSServer.h>
+#include <time.h>
 #include "settings.h"
 
 #define VERSION "0.12 beta"
-#define MQTT 1
+#define MQTT 0 // MQTT & HA functionality
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define DAYLIGHT 0
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
 #include "spiff_files.h"
 #endif
 
-#ifdef MQTT
- // For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
- #include <PubSubClient.h>
+#if MQTT
+	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
+	#include <PubSubClient.h>
 #endif
 
+#if ARDUINO_OTA
+	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
+	#include <ArduinoOTA.h>
+#endif
+
+#if DAYLIGHT
+#include <ESP8266HTTPClient.h>
+String payload;
+void TestHTTP () 
+{
+
+WiFiClient client;
+HTTPClient http;
+	http.begin(client, "http://api.sunrise-sunset.org/json?lat=55.76501600&lng=37.61&formatted=0");
+      int httpResponseCode = http.GET();
+      
+      if (httpResponseCode>0) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        payload = http.getString();
+        Serial.println(payload);
+      }
+      else {
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+      }
+      // Free resources
+      http.end();
+}
+#endif
+d
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
 // Or comment next string and change defaults in this file
 //#include "wifi_settings.h"
 
 #ifndef SSID_AND_PASS
 // if "wifi_settings.h" not included
-const char* def_ssid = ""; // Empty ssid to create SoftAP at start
-const char* def_password = "";
-const char* def_ntpserver = "ru.pool.ntp.org";
-const char* def_hostname = "lazyroll-%06X";
-const char* def_mqtt_server = "mqtt.lan";
-const char* def_mqtt_login = "";
-const char* def_mqtt_password = "";
+const char def_ssid[] PROGMEM = ""; // Empty ssid to create SoftAP at start
+const char def_password[] PROGMEM = "";
+const char def_ntpserver[] PROGMEM = "ru.pool.ntp.org";
+const char def_hostname[] PROGMEM = "lazyroll-%06X";
+const char def_mqtt_server[] PROGMEM = "mqtt.lan";
+const char def_mqtt_login[] PROGMEM = "";
+const char def_mqtt_password[] PROGMEM = "";
 const uint16_t def_mqtt_port=1883;
-const char* def_mqtt_topic_state = "lazyroll/%HOSTNAME%/state";
-const char* def_mqtt_topic_command = "lazyroll/%HOSTNAME%/command";
-const char* def_mqtt_topic_alive = "lazyroll/%HOSTNAME%/alive";
-const char* def_mqtt_topic_aux = "lazyroll/%HOSTNAME%/aux";
-const char* def_mqtt_topic_info = "lazyroll/%HOSTNAME%/info";
+const char def_mqtt_topic_state[] PROGMEM = "lazyroll/%HOSTNAME%/state";
+const char def_mqtt_topic_command[] PROGMEM = "lazyroll/%HOSTNAME%/command";
+const char def_mqtt_topic_alive[] PROGMEM = "lazyroll/%HOSTNAME%/alive";
+const char def_mqtt_topic_aux[] PROGMEM = "lazyroll/%HOSTNAME%/aux";
+const char def_mqtt_topic_info[] PROGMEM = "lazyroll/%HOSTNAME%/info";
 #endif
 
 //char *temp_host;
@@ -210,6 +243,88 @@ void ButtonClick(uint8_t address);
 void ButtonLongClick(uint8_t address);
 void WiFi_On();
 void WiFi_Off();
+uint32_t getTime();
+
+//===================== Event Logger ===================================
+
+#define MAX_LOG_ENTRIES 64
+
+const char ET_Err1[] PROGMEM = "Error 01";
+const char ET_NTP_Sync[] PROGMEM = "NTP time syncronized";
+const char ET_NTP_Sync2[] PROGMEM = "NTP time 2 syncronized";
+
+enum EVENT_LEVEL { EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
+enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_NTP_Sync2 };
+const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_NTP_Sync2 };
+
+
+typedef struct {
+	uint32_t time; // timecode
+	uint32_t val; // value
+	uint8_t event; // event code
+	uint8_t level; // severity level
+	uint16_t flags; // reserved
+} LogEntry;
+
+#if MAX_LOG_ENTRIES < 255
+	typedef uint8_t idx;
+#else
+	typedef uint16_t idx;
+#endif
+
+class Log
+{
+private:
+	idx head, count;
+	LogEntry log[MAX_LOG_ENTRIES]; // 12*64 = 768 bytes of RAM
+public:
+	Log();
+	~Log();
+	void Add(uint8_t event, uint8_t level, uint32_t val);
+	const LogEntry* Get(idx offset);
+	idx Count();
+};
+
+Log::Log()
+{
+	head = count = 0;
+}
+
+Log::~Log()
+{
+}
+
+void Log::Add(uint8_t event, uint8_t level, uint32_t val)
+{
+	uint32_t time;
+	time = getTime();
+	if (!time) time = millis() / 1000;
+	log[head].event = event;
+	log[head].level = level;
+	log[head].time = time;
+	log[head].val = val;
+	head++;
+	if (head >= MAX_LOG_ENTRIES) head = 0;
+	if (count < MAX_LOG_ENTRIES) count++;
+}
+
+const LogEntry* Log::Get(idx offset)
+{ // offset from head, 0 - last entry
+	idx i;
+	if (offset >= count) return 0;
+	if (head > offset)
+		i = head - offset - 1;
+	else
+		i = MAX_LOG_ENTRIES - offset + head - 1;
+	return &log[i];
+}
+
+idx Log::Count()
+{
+	return count;
+}
+
+Log elog;
 
 //===================== LED ============================================
 
@@ -382,6 +497,10 @@ void SyncNTPTime()
 		uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
 		// Convert NTP time to a UNIX timestamp: subtract seventy years:
 		UNIXTime = NTPTime - seventyYears;
+		elog.Add(EI_NTP_Sync, EL_INFO, 1);
+		elog.Add(EI_NTP_Sync2, EL_INFO, 2);
+		elog.Add(EI_NTP_Sync, EL_INFO, UNIXTime);
+		elog.Add(EI_NTP_Sync2, EL_INFO, UNIXTime);
 		lastSync=millis();
 	}
 	UDP.flush();
@@ -720,7 +839,7 @@ const char * GetVoltageStr()
 
 //===================== MQTT ===========================================
 
-#ifdef MQTT
+#if MQTT
 
 WiFiClient espClient;
 PubSubClient *mqtt = NULL;
@@ -1036,7 +1155,7 @@ void ProcessMQTT()
 	}
 }
 
-const __FlashStringHelper *MQTTstatus()
+const __FlashStringHelper* MQTTstatus()
 {
 	if (ini.mqtt_enabled)
 	{
@@ -1059,11 +1178,17 @@ void MQTT_ReportAux(bool on)
 	}
 }
 
+void UpdateMQTTInfo()
+{
+	last_mqtt_info=0;	
+}
+
 #else
 void setup_MQTT() {}
 void ProcessMQTT() {}
-char *MQTTstatus() { return "Off"; }
+const __FlashStringHelper* MQTTstatus() { return F("Off"); }
 void MQTT_ReportAux(bool on) {}
+void UpdateMQTTInfo() {}
 #endif
 
 // ==================== timer & interrupt ===============================
@@ -1205,7 +1330,7 @@ void ICACHE_RAM_ATTR auxISR()
 	if (state) aux_state_str = "ON"; else aux_state_str = "OFF";
 
 	lastState = state;
-	last_mqtt_info=0;
+	UpdateMQTTInfo();
 }
 
 void ICACHE_RAM_ATTR btnISR()
@@ -1515,14 +1640,14 @@ void ValidateSettings()
 	if (ini.switch_ignore_steps>65000) ini.switch_ignore_steps=65000;
 	if (ini.up_safe_limit<0) ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
 	if (ini.up_safe_limit>65000) ini.up_safe_limit=65000;
-	if (!ini.mqtt_server[0]) strcpy(ini.mqtt_server, def_mqtt_server);
+	if (!ini.mqtt_server[0]) strcpy_P(ini.mqtt_server, def_mqtt_server);
 	if (ini.mqtt_port == 0) ini.mqtt_port=def_mqtt_port;
 	if (ini.mqtt_ping_interval < 5) ini.mqtt_ping_interval=60;
-	if (ini.mqtt_topic_state[0] == 0) strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
-	if (ini.mqtt_topic_command[0] == 0) strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
-	if (ini.mqtt_topic_alive[0] == 0) strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
-	if (ini.mqtt_topic_aux[0] == 0) strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
-	if (ini.mqtt_topic_info[0] == 0) strcpy(ini.mqtt_topic_info, def_mqtt_topic_info);
+	if (ini.mqtt_topic_state[0] == 0) strcpy_P(ini.mqtt_topic_state, def_mqtt_topic_state);
+	if (ini.mqtt_topic_command[0] == 0) strcpy_P(ini.mqtt_topic_command, def_mqtt_topic_command);
+	if (ini.mqtt_topic_alive[0] == 0) strcpy_P(ini.mqtt_topic_alive, def_mqtt_topic_alive);
+	if (ini.mqtt_topic_aux[0] == 0) strcpy_P(ini.mqtt_topic_aux, def_mqtt_topic_aux);
+	if (ini.mqtt_topic_info[0] == 0) strcpy_P(ini.mqtt_topic_info, def_mqtt_topic_info);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode=0;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level=0;
@@ -1539,10 +1664,10 @@ void setup_Settings(void)
 		Serial.println(F("Settings loaded"));
 	} else
 	{
-		sprintf(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
-		strcpy(ini.ssid      , def_ssid);
-		strcpy(ini.password  , def_password);
-		strcpy(ini.ntpserver , def_ntpserver);
+		sprintf_P(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
+		strcpy_P(ini.ssid      , def_ssid);
+		strcpy_P(ini.password  , def_password);
+		strcpy_P(ini.ntpserver , def_ntpserver);
 		ini.lang=0;
 		ini.pinout=2;
 		ini.reversed=false;
@@ -1551,16 +1676,16 @@ void setup_Settings(void)
 		ini.full_length=11300;
 		ini.spiffs_time=0;
 		ini.mqtt_enabled=false;
-		strcpy(ini.mqtt_server, def_mqtt_server);
-		strcpy(ini.mqtt_login, def_mqtt_login);
-		strcpy(ini.mqtt_password, def_mqtt_password);
+		strcpy_P(ini.mqtt_server, def_mqtt_server);
+		strcpy_P(ini.mqtt_login, def_mqtt_login);
+		strcpy_P(ini.mqtt_password, def_mqtt_password);
 		ini.mqtt_port=def_mqtt_port;
 		ini.mqtt_ping_interval=60;
-		strcpy(ini.mqtt_topic_state, def_mqtt_topic_state);
-		strcpy(ini.mqtt_topic_command, def_mqtt_topic_command);
-		strcpy(ini.mqtt_topic_alive, def_mqtt_topic_alive);
-		strcpy(ini.mqtt_topic_aux, def_mqtt_topic_aux);
-		strcpy(ini.mqtt_topic_info, def_mqtt_topic_info);
+		strcpy_P(ini.mqtt_topic_state, def_mqtt_topic_state);
+		strcpy_P(ini.mqtt_topic_command, def_mqtt_topic_command);
+		strcpy_P(ini.mqtt_topic_alive, def_mqtt_topic_alive);
+		strcpy_P(ini.mqtt_topic_aux, def_mqtt_topic_aux);
+		strcpy_P(ini.mqtt_topic_info, def_mqtt_topic_info);
 		ini.mqtt_state_type=0;
 		ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
@@ -1611,6 +1736,7 @@ void setup_SPIFFS()
 	}
 }
 
+#if ARDUINO_OTA
 void setup_OTA()
 {
 	ArduinoOTA.onStart([]() {
@@ -1635,6 +1761,16 @@ void setup_OTA()
 	ArduinoOTA.begin();
 }
 
+void Process_OTA()
+{
+	ArduinoOTA.handle();
+}
+
+#else
+void setup_OTA() {}
+void Process_OTA() {}
+#endif
+
 void HTTP_handleRoot(void);
 void HTTP_handleOpen(void);
 void HTTP_handleClose(void);
@@ -1646,6 +1782,8 @@ void HTTP_handleReboot(void);
 void HTTP_handleFormat(void);
 void HTTP_handleXML(void);
 void HTTP_handleSet(void);
+void HTTP_handleUpdate(void);
+void HTTP_handleLog(void);
 void HTTP_redirect(String link);
 
 void setup()
@@ -1689,6 +1827,7 @@ void setup()
 	httpServer.on("/xml",      HTTP_handleXML);
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.on("/update",   HTTP_handleUpdate);
+	httpServer.on("/log",      HTTP_handleLog);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
 	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
@@ -1916,7 +2055,7 @@ String HTML_status()
 		out += HTML_tableLine(L("Used", "Занято"), MemSize2Str(fs_info.usedBytes));
 	} else
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
-#ifdef MQTT
+#if MQTT
 	out += HTML_section(FLF("MQTT", "MQTT"));
 	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
 #endif
@@ -1977,6 +2116,12 @@ String HTML_save(int span=2)
 	return s;
 }
 
+void HTTP_Activity(void)
+{
+	if (led_mode == LED_HTTP || led_mode == LED_MQTT_HTTP) LED_Blink();
+	NetworkActivity();
+}
+
 void HTTP_handleRoot(void)
 {
 	String out;
@@ -1993,7 +2138,8 @@ void HTTP_handleRoot(void)
 		"</li></p>");
 
 	out += FL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
-		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, штобы найти нулевую точку. Это нормально.</p>"));
+		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, " \
+			"штобы найти нулевую точку. Это нормально.</p>"));
 	out += F("</section>\n");
 
 	out += HTML_footer();
@@ -2056,12 +2202,6 @@ void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, cons
 	);
 }
 
-void HTTP_Activity(void)
-{
-	if (led_mode == LED_HTTP || led_mode == LED_MQTT_HTTP) LED_Blink();
-	NetworkActivity();
-}
-
 void HTTP_handleUpdate(void)
 {
 	String out;
@@ -2077,7 +2217,8 @@ void HTTP_handleUpdate(void)
 		"<input type='submit' value='");
 	out += FL(F("Update Firmware"), F("Обновить прошивку"));
 	out += F("'></form></p><p>");
-	out += FL(F("Choose file for firmware update.<br/>New firmware can be downloaded from "), F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
+	out += FL(F("Choose file for firmware update.<br/>New firmware can be downloaded from "), 
+		F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
 	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br/>");
 	if (mem == 1024*1024)
 		out += FL(F("Choose *.1Mbyte.bin.<br/>"), F("Выбирайте *.1Mbyte.bin.<br/>"));
@@ -2332,9 +2473,10 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("Length:", "Длина:"), F("switch_ignore"), String(ini.switch_ignore_steps).c_str(), 5);
 	out += HTML_hint(FLF("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)"));
 	out += HTML_editString(FLF("Extra:", "Запас:"), F("up_safe_limit"), String(ini.up_safe_limit).c_str(), 5);
-	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)", "(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)"));
+	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)", 
+		"(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)"));
 
-#ifdef MQTT
+#if MQTT
 	out += HTML_section(FLF("MQTT", "MQTT"));
 	String s=FLF("MQTT enabled Help:", "MQTT включен Помощь:");
 	s += F(" <a href=\"http://imlazy.ru/rolls/mqtt.html\">imlazy.ru/rolls/mqtt.html</a>");
@@ -2345,7 +2487,8 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("Password:", "Пароль:"), F("mqtt_password"), "*", sizeof(ini.mqtt_password)-1);
 	out += HTML_editString(FLF("Keep-alive:", "Keep-alive:"), F("mqtt_ping_interval"), String(ini.mqtt_ping_interval).c_str(), 5);
 	out += HTML_editString(FLF("Commands:", "Команды:"), F("mqtt_topic_command"), ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
-	out += HTML_hint(FLF("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", "Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)"));
+	out += HTML_hint(FLF("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", 
+		"Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)"));
 	out += HTML_editString(FLF("State:", "Статус:"), F("mqtt_topic_state"), ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
 	out += F("<tr><td>");
 	out += FLF("Type:", "Формат:");
@@ -2370,10 +2513,12 @@ void HTTP_handleSettings(void)
 	out += HTML_addOption(2, ini.btn_pin, F("GPIO2"));
 	out += HTML_addOption(3, ini.btn_pin, F("GPIO3 (RX)"), "pin_RX");
 	out += F("</select></td></tr>\n");
-	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
-		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). Двойной клик в движении - сменить направление.)"));
+	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, " \
+		"long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
+		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). " \
+		"Двойной клик в движении - сменить направление.)"));
 
-#ifdef MQTT
+#if MQTT
 	out += HTML_section(FLF("Aux input", "Доп. вход"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
@@ -2795,6 +2940,7 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("MQTT"), MQTTstatus());
 	if (voltage_available)
 		XML += MakeNode(F("Voltage"), GetVoltageStr() + SL("V", "В"));
+//XML += MakeNode(F("Debug"), payload);
 	XML += F("</Info>");
 
 	XML += F("<ChipInfo>");
@@ -2818,6 +2964,40 @@ void HTTP_handleXML(void)
 
 	httpServer.sendHeader(F("Access-Control-Allow-Origin"), "*"); // Allowing Cross-Origin Resource Sharing
 	httpServer.send(200, "text/XML", XML);
+}
+
+void HTTP_handleLog(void)
+{
+	String out;
+	HTTP_Activity();
+
+	out = HTML_header();
+	out += F("<section class=\"main\" id=\"main\"><p>" \
+	 "<table>");
+
+	for (idx i=0; i < elog.Count(); i++)
+	{
+		const LogEntry* e;
+		tm* time;
+		time_t t;
+		e = elog.Get(i);
+		if (e)
+		{
+			t = e->val;
+			time=gmtime(&t);
+			out += F("<tr><td>");
+//			out += FPSTR((char*)pgm_read_dword(&(event_txt[e->event])));
+			out += time->tm_year;
+			out += F("</td><td>");
+			out += e->val;
+			out += F("</td></tr>\n");
+		}
+	}
+
+	out += F("</table>\n");
+
+	out += HTML_footer();
+	httpServer.send(200, "text/html", out);
 }
 
 void Scheduler()
@@ -2863,7 +3043,7 @@ void loop(void)
 	ProcessLED();
 
 	httpServer.handleClient();
-	ArduinoOTA.handle();
+	Process_OTA();
 	SyncNTPTime();
 	Scheduler();
 	if (!SLAVE) ProcessMQTT();
