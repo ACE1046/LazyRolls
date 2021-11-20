@@ -24,7 +24,7 @@ http://imlazy.ru/rolls/
 #include "settings.h"
 
 #define VERSION "0.12 beta"
-#define MQTT 0 // MQTT & HA functionality
+#define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define DAYLIGHT 0
 #define SPIFFS_AUTO_INIT
@@ -68,7 +68,7 @@ HTTPClient http;
       http.end();
 }
 #endif
-d
+
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
 // Or comment next string and change defaults in this file
 //#include "wifi_settings.h"
@@ -141,6 +141,7 @@ const uint8_t steps[3][4]={
 volatile int position; // current motor steps position. 0 - at endstop
 volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
+volatile uint8_t endstop_hit = 0; // endstop hit flag. Set at ISR, reset at user level
 bool voltage_available=0;
 uint32_t last_network_time=0; // last network activity time
 bool WiFi_active = false;
@@ -244,19 +245,50 @@ void ButtonLongClick(uint8_t address);
 void WiFi_On();
 void WiFi_Off();
 uint32_t getTime();
+uint32_t getTimeUTC();
 
 //===================== Event Logger ===================================
 
-#define MAX_LOG_ENTRIES 64
+#define MAX_LOG_ENTRIES 32
 
 const char ET_Err1[] PROGMEM = "Error 01";
 const char ET_NTP_Sync[] PROGMEM = "NTP time syncronized";
-const char ET_NTP_Sync2[] PROGMEM = "NTP time 2 syncronized";
+const char ET_Settings_Loaded[] PROGMEM = "Settings loaded";
+const char ET_Settings_Saved[] PROGMEM = "Settings saved";
+const char ET_Settings_Not_Loaded[] PROGMEM = "Settings set to default";
+const char ET_Cmd_Stop[] PROGMEM = "Stop";
+const char ET_Cmd_Open[] PROGMEM = "Open";
+const char ET_Cmd_Close[] PROGMEM = "Close";
+const char ET_Cmd_Percent[] PROGMEM = "Go to percent";
+const char ET_Cmd_Steps[] PROGMEM = "Go to steps";
+const char ET_Cmd_Preset[] PROGMEM = "Go to preset";
+const char ET_Cmd_Click[] PROGMEM = "Click";
+const char ET_Cmd_LClick[] PROGMEM = "Long click";
+const char ET_Slave_No_Ping[] PROGMEM = "No ping from master, enabling WiFi";
+const char ET_Wifi_Close_AP[] PROGMEM = "Reconnected to network in STA mode. Closing AP";
+const char ET_Wifi_Reconnect[] PROGMEM = "Trying to reconnect";
+const char ET_Wifi_Got_IP[] PROGMEM = "IP address";
+const char ET_Wifi_Start_AP[] PROGMEM = "Starting soft AP";
+const char ET_Endstop_Hit[] PROGMEM = "Stopped at endstop";
+const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
+const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
+
+const char EQ_HTTP[] PROGMEM = "Src: HTTP";
+const char EQ_MQTT[] PROGMEM = "Src: MQTT";
+const char EQ_MASTER[] PROGMEM = "Src: Master";
+const char EQ_SCHEDULE[] PROGMEM = "Src: Scheduler";
+const char EQ_BUTTON[] PROGMEM = "Src: Button";
 
 enum EVENT_LEVEL { EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
-enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_NTP_Sync2 };
-const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_NTP_Sync2 };
+enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
+	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, EI_Wifi_Got_IP, EI_Wifi_Start_AP,
+	EI_Endstop_Hit, EI_MQTT_Connect, EI_MQTT_Connecting };
+const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
+	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
+	ET_Endstop_Hit, ET_MQTT_Connect, ET_MQTT_Connecting };
 
+enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON };
+const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON };
 
 typedef struct {
 	uint32_t time; // timecode
@@ -297,7 +329,7 @@ Log::~Log()
 void Log::Add(uint8_t event, uint8_t level, uint32_t val)
 {
 	uint32_t time;
-	time = getTime();
+	time = getTimeUTC();
 	if (!time) time = millis() / 1000;
 	log[head].event = event;
 	log[head].level = level;
@@ -497,10 +529,7 @@ void SyncNTPTime()
 		uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
 		// Convert NTP time to a UNIX timestamp: subtract seventy years:
 		UNIXTime = NTPTime - seventyYears;
-		elog.Add(EI_NTP_Sync, EL_INFO, 1);
-		elog.Add(EI_NTP_Sync2, EL_INFO, 2);
 		elog.Add(EI_NTP_Sync, EL_INFO, UNIXTime);
-		elog.Add(EI_NTP_Sync2, EL_INFO, UNIXTime);
 		lastSync=millis();
 	}
 	UDP.flush();
@@ -510,6 +539,12 @@ uint32_t getTime()
 {
 	if (lastSync == 0) return 0;
 	return UNIXTime+ini.timezone*60 + (millis() - lastSync)/1000;
+}
+
+uint32_t getTimeUTC()
+{
+	if (lastSync == 0) return 0;
+	return UNIXTime + (millis() - lastSync)/1000;
 }
 
 String TimeStr()
@@ -635,6 +670,7 @@ void ProcessUART()
 	if (SLAVE && !WiFi_AP_disabled && !WiFi_active && (millis() - lastUARTping > SLAVE_MAX_NO_PING_MS))
 	{
 		Serial.println(F("No ping from master, enabling WiFi"));
+		elog.Add(EI_Slave_No_Ping, EL_ERROR, 0);
 		WiFi_On();
 	}
 
@@ -852,7 +888,7 @@ String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topi
 
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
-	int x;
+	int x, p;
 	uint8_t address;
 	char *str=(char*)payload;
 	if (len==0) return;
@@ -880,16 +916,16 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 		else
 			ToPercent(x, address);
 	}
-	else if (strcmp(str, "on") == 0) Open(address);
-	else if (strcmp(str, "off") == 0) Close(address);
-	else if (strcmp(str, "open") == 0) Open(address);
-	else if (strcmp(str, "close") == 0) Close(address);
-	else if (strcmp(str, "click") == 0) ButtonClick(address);
-	else if (strcmp(str, "longclick") == 0) ButtonLongClick(address);
-	else if (strcmp(str, "stop") == 0) { Stop(address); last_mqtt=0; } // report current position after stop command
+	else if (strcmp(str, "on") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "off") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "open") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "close") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "click") == 0) { ButtonClick(address); elog.Add(EI_Cmd_Click, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "longclick") == 0) { ButtonLongClick(address); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "stop") == 0) { Stop(address); elog.Add(EI_Cmd_Stop, EL_INFO, ES_MQTT); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
-	else if (strncmp(str, "=", 1) == 0) ToPosition(strtol(str+1, NULL, 10), address);
-	else if (strncmp(str, "@", 1) == 0) ToPreset(strtol(str+1, NULL, 10), address);
+	else if (strncmp(str, "=", 1) == 0) { p=strtol(str+1, NULL, 10); ToPosition(p, address); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MQTT + (p<<8)); }
+	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
 }
 
 String ReplaceHostname(const char *topic)
@@ -932,6 +968,7 @@ void MQTT_connect()
 	if ((last_reconnect != 0) && (millis() - last_reconnect < 10000)) return;
 
 	Serial.print(F("Connecting to MQTT... "));
+	elog.Add(EI_MQTT_Connecting, EL_INFO, 0);
 
 	bool res;
 	if (mqtt_topic_lwt != "-")
@@ -947,6 +984,7 @@ void MQTT_connect()
 	} else
 	{
 		Serial.println(F("MQTT Connected!"));
+		elog.Add(EI_MQTT_Connect, EL_INFO, 0);
 		last_reconnect=0;
 		last_mqtt=last_mqtt_info=0;
 		if (mqtt_topic_sub != "-")
@@ -1234,6 +1272,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 	{
 		if (switch_ignore_steps == 0)
 		{
+			endstop_hit = 1;
 			if (roll_to <= 0)
 			{ // full open, done
 				roll_to=0;
@@ -1434,8 +1473,8 @@ void process_Button()
 {
 	if (button == NO_PRESS) return;
 
-	if (button == SHORT_PRESS) ButtonClick();
-	if (button == LONG_PRESS) ButtonLongClick();
+	if (button == SHORT_PRESS) { ButtonClick(); elog.Add(EI_Cmd_Click, EL_INFO, ES_BUTTON); }
+	if (button == LONG_PRESS) { ButtonLongClick(); elog.Add(EI_Cmd_LClick, EL_INFO, ES_BUTTON); }
 	button=NO_PRESS;
 	if (led_mode == LED_BUTTON) LED_Blink();
 }
@@ -1465,6 +1504,7 @@ void StartSoftAP()
 { // Lets make our own Access Point with blackjack and hookers
 	Serial.print(F("Starting access point. SSID: "));
 	Serial.println(ini.hostname);
+	elog.Add(EI_Wifi_Start_AP, EL_WARN, 0);
 	WiFi.mode(WIFI_AP);
 	WiFi.softAP(ini.hostname); // ... but without password
 	LED_On();
@@ -1480,9 +1520,11 @@ void ProcessWiFi()
 		if (WiFi.status() == WL_CONNECTED)
 		{
 			Serial.println(F("Reconnected to network in STA mode. Closing AP"));
+			elog.Add(EI_Wifi_Close_AP, EL_INFO, 0);
 			WiFi.softAPdisconnect(true);
 			WiFi.mode(WIFI_STA);
 			Serial.println(WiFi.localIP());
+			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
 			LED_Off();
 			CP_delete();
 			WiFi_AP_disabled = true; // Disabling AP mode until next reboot
@@ -1492,6 +1534,7 @@ void ProcessWiFi()
 			if (millis()-last_reconnect > 60*1000) // every 60 sec
 			{
 				Serial.println(F("Trying to reconnect"));
+				elog.Add(EI_Wifi_Reconnect, EL_INFO, 0);
 				last_reconnect=millis();
 				setup_IP();
 				WiFi.begin(ini.ssid, ini.password);
@@ -1508,6 +1551,7 @@ void ProcessWiFi()
 			WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
 			Serial.println(WiFi.localIP());
+			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
 
 			if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
 			else Serial.println(F("mDNS responder started"));
@@ -1662,6 +1706,7 @@ void setup_Settings(void)
 	if (LoadSettings(&ini, sizeof(ini)))
 	{
 		Serial.println(F("Settings loaded"));
+		elog.Add(EI_Settings_Loaded, EL_INFO, 0);
 	} else
 	{
 		sprintf_P(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
@@ -1696,6 +1741,7 @@ void setup_Settings(void)
 		IP4_ADDR(&ini.gw, 0, 0, 0, 0);
 		IP4_ADDR(&ini.dns, 8, 8, 8, 8);
 		Serial.println(F("Settings set to default"));
+		elog.Add(EI_Settings_Not_Loaded, EL_ERROR, 0);
 	}
 	ValidateSettings();
 	led_mode=ini.led_mode;
@@ -1894,7 +1940,9 @@ String HTML_header()
 	"<div id=\"wrapper\">\n" \
 	"<header onclick=\"ShowMain();\">");
 	ret += name;
-	ret += F("</header>\n");
+	ret += F("</header><!--free mem: ");
+	ret += ESP.getFreeHeap();
+	ret += F("-->\n");
 
 	ret += HTML_mainmenu();
 	ret += HTML_status();
@@ -2029,6 +2077,7 @@ String HTML_status()
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
+	out += HTML_tableLine(L("<a href=\"/log\">Log</a>", "<a href=\"/log\">Лог</a>"), String((int)elog.Count()));
 
 	out += HTML_section(FLF("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
@@ -2336,6 +2385,7 @@ void HTTP_saveSettings()
 	ValidateSettings();
 
 	SaveSettings(&ini, sizeof(ini));
+	elog.Add(EI_Settings_Saved, EL_WARN, 0);
 
 	setup_MQTT();
 	setup_Button();
@@ -2346,12 +2396,14 @@ void HTTP_saveSettings()
 	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
 	{ // in soft AP mode, trying to connect to network
 		Serial.println(F("Trying to reconnect"));
+		elog.Add(EI_Wifi_Reconnect, EL_INFO, 0);
 		WiFi.begin(ini.ssid, ini.password);
 		if (WiFi.waitForConnectResult() == WL_CONNECTED)
 		{
 			Serial.println(F("Reconnected to network in STA mode. Closing AP"));
+			elog.Add(EI_Wifi_Close_AP, EL_INFO, 0);
 			HTTP_redirect("http://"+WiFi.localIP().toString()+"/settings");
-			delay(5000);
+			delay(3000);
 			WiFi.softAPdisconnect(true);
 			WiFi.mode(WIFI_STA);
 			LED_Off();
@@ -2766,6 +2818,7 @@ void Return200()
 void HTTP_handleOpen(void)
 {
 	HTTP_Activity();
+	elog.Add(EI_Cmd_Open, EL_INFO, ES_HTTP);
 	if (httpServer.hasArg("addr"))
 		Open(atoi(httpServer.arg("addr").c_str()));
 	else
@@ -2776,6 +2829,7 @@ void HTTP_handleOpen(void)
 void HTTP_handleClose(void)
 {
 	HTTP_Activity();
+	elog.Add(EI_Cmd_Close, EL_INFO, ES_HTTP);
 	if (httpServer.hasArg("addr"))
 		Close(atoi(httpServer.arg("addr").c_str()));
 	else
@@ -2786,6 +2840,7 @@ void HTTP_handleClose(void)
 void HTTP_handleStop(void)
 {
 	HTTP_Activity();
+	elog.Add(EI_Cmd_Stop, EL_INFO, ES_HTTP);
 	if (httpServer.hasArg("addr"))
 		Stop(atoi(httpServer.arg("addr").c_str()));
 	else
@@ -2801,6 +2856,7 @@ void HTTP_handleSet(void)
 	if (httpServer.hasArg("pos"))
 	{
 		int pos=atoi(httpServer.arg("pos").c_str());
+		elog.Add(EI_Cmd_Percent, EL_INFO, ES_HTTP + (pos << 8));
 		if (pos==0) Open(addr);
 		else if (pos==100) Close(addr);
 		else if (pos>0 && pos<100) ToPercent(pos, addr);
@@ -2809,6 +2865,7 @@ void HTTP_handleSet(void)
 	else if (httpServer.hasArg("steps"))
 	{
 		int pos=atoi(httpServer.arg("steps").c_str());
+		elog.Add(EI_Cmd_Steps, EL_INFO, ES_HTTP + (pos << 8));
 		ToPosition(pos, addr);
 		Return200();
 	}
@@ -2822,6 +2879,7 @@ void HTTP_handleSet(void)
 	else if (httpServer.hasArg("preset"))
 	{
 		int preset=atoi(httpServer.arg("preset").c_str());
+		elog.Add(EI_Cmd_Preset, EL_INFO, ES_HTTP + (preset << 8));
 		ToPreset(preset, addr);
 		Return200();
 	}
@@ -2841,11 +2899,13 @@ void HTTP_handleSet(void)
 	}
 	else if (httpServer.hasArg("click"))
 	{
+		elog.Add(EI_Cmd_Click, EL_INFO, ES_HTTP);
 		ButtonClick(addr);
 		Return200();
 	}
 	else if (httpServer.hasArg("longclick"))
 	{
+		elog.Add(EI_Cmd_LClick, EL_INFO, ES_HTTP);
 		ButtonLongClick(addr);
 		Return200();
 	}
@@ -2966,30 +3026,105 @@ void HTTP_handleXML(void)
 	httpServer.send(200, "text/XML", XML);
 }
 
+void date2str(char* buf, uint32_t t)
+{
+	const uint32_t day_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	int year = 1970, month = 1, hour, minute, sec;
+	uint32_t days;
+	uint8_t leap=2;
+
+	t += ini.timezone*60;
+	sec = t % 60;
+	minute = (t / 60) % 60;
+	hour = (t / (60*60)) % 24;
+	t /= 24*60*60;
+	while(1)
+	{
+		days=365;
+		if (!leap) days++;
+		if (t < days) break;
+		t -= days;
+		year++;
+		leap = (leap + 1) % 4;
+	}
+	while (1)
+	{
+		uint32_t dm = day_month[month-1];
+		if (!leap && month == 2) dm++; // Feb in leap year
+		if (t < dm) break;
+		month++;
+		t -= dm;
+	}
+	sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", year, month, t+1, hour, minute, sec);
+	//return String(year)+"."+String(month)+"."+String(t+1);
+}
+
+#define STR_(X) #X
+#define STR(X) STR_(X)
 void HTTP_handleLog(void)
 {
 	String out;
+	char buf[20]; // 2021-01-01 00:00:00
+	const LogEntry* e;
+	uint32_t t;
+	idx i;
+
 	HTTP_Activity();
 
+	out.reserve(10240);
 	out = HTML_header();
-	out += F("<section class=\"main\" id=\"main\"><p>" \
-	 "<table>");
+	out += F("<section class=\"main\" id=\"main\"><p>");
+	out += FLF("Last " STR(MAX_LOG_ENTRIES) " log entries", "Последние " STR(MAX_LOG_ENTRIES) " записи");
+	out += F("<table class=\"log\">");
 
-	for (idx i=0; i < elog.Count(); i++)
+	i = elog.Count();
+	while (i-- > 0)
 	{
-		const LogEntry* e;
-		tm* time;
-		time_t t;
 		e = elog.Get(i);
 		if (e)
 		{
-			t = e->val;
-			time=gmtime(&t);
-			out += F("<tr><td>");
-//			out += FPSTR((char*)pgm_read_dword(&(event_txt[e->event])));
-			out += time->tm_year;
-			out += F("</td><td>");
-			out += e->val;
+			out += F("<tr><td class=\"");
+			switch (e->level)
+			{
+				case EL_WARN: out += F("warn"); break;
+				case EL_ERROR: out += F("error"); break;
+				case EL_DEBUG: out += F("debug"); break;
+				default: out+= F("info"); break;
+			}
+			out += F("\">[");
+			t = e->time;
+			if (t > 100*24*60*60)
+			{ // less than 100 days -> no ntp data, time from reboot in seconds
+				date2str(buf, t);
+				out += buf; // time->tm_year;
+			} else
+			{
+				out += t;
+				out += " sec";
+			}
+			out += F("]</td><td>");
+			out += FPSTR((char*)pgm_read_dword(&(event_txt[e->event])));
+			out += F(" ");
+			switch (e->event)
+			{
+				case EI_NTP_Sync: date2str(buf, e->val); out += buf; break;
+				case EI_Cmd_Percent:
+				case EI_Cmd_Steps:
+				case EI_Cmd_Preset: // LSByte - source of command, 3*MSByte - value
+					out += F("Value: ");
+					out += (e->val >> 8);
+					out += F(" ");
+					// no break here, continue
+				case EI_Cmd_Stop:
+				case EI_Cmd_Open:
+				case EI_Cmd_Close:
+				case EI_Cmd_Click:
+				case EI_Cmd_LClick: 
+					out += FPSTR((char*)pgm_read_dword(&(event_src_txt[e->val & 0xFF]))); break;
+				case EI_Wifi_Got_IP:
+					out += IPAddress(e->val).toString(); break;
+				default: break;//out += e->val; break;
+			}
 			out += F("</td></tr>\n");
 		}
 	}
@@ -3002,7 +3137,7 @@ void HTTP_handleLog(void)
 
 void Scheduler()
 {
-	uint32_t t;
+	uint32_t t, p;
 	static uint32_t last_t;
 	int dayofweek;
 
@@ -3029,10 +3164,14 @@ void Scheduler()
 
 		if (ini.alarms[a].percent_open <= 100)
 		{ // percentage
-			ToPercent(ini.alarms[a].percent_open);
+			p = ini.alarms[a].percent_open;
+			elog.Add(EI_Cmd_Percent, EL_INFO, ES_SCHEDULE + (p << 8));
+			ToPercent(p);
 		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
 		{ // preset
-			ToPreset(ini.alarms[a].percent_open-100);
+			p = ini.alarms[a].percent_open-100;
+			elog.Add(EI_Cmd_Preset, EL_INFO, ES_SCHEDULE + (p << 8));
+			ToPreset(p);
 		}
 	}
 }
@@ -3061,6 +3200,11 @@ void loop(void)
 	{
 		Serial.println(F("Network idle. WiFi shutdown"));
 		WiFi_Off();
+	}
+	if (endstop_hit)
+	{
+		endstop_hit = 0;
+		elog.Add(EI_Endstop_Hit, EL_INFO, 0);
 	}
 
 	delay(1); // this delay enables light sleep mode
