@@ -78,6 +78,7 @@ function GetStatus()
 	st(this, "voltage", 'Voltage');
 	st(this, "led_mode", 'Mode');
 	st(this, "led_level", 'Level');
+	st(this, "log", 'Log');
 	if (document.getElementById("pos").innerHTML != document.getElementById("dest").innerHTML)
 	timeout=500;
 	else

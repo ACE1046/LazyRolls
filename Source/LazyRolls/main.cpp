@@ -142,6 +142,7 @@ volatile int position; // current motor steps position. 0 - at endstop
 volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 volatile uint8_t endstop_hit = 0; // endstop hit flag. Set at ISR, reset at user level
+volatile int endstop_hit_pos = 0; // position of endtop hit
 bool voltage_available=0;
 uint32_t last_network_time=0; // last network activity time
 bool WiFi_active = false;
@@ -270,6 +271,7 @@ const char ET_Wifi_Reconnect[] PROGMEM = "Trying to reconnect";
 const char ET_Wifi_Got_IP[] PROGMEM = "IP address";
 const char ET_Wifi_Start_AP[] PROGMEM = "Starting soft AP";
 const char ET_Endstop_Hit[] PROGMEM = "Stopped at endstop";
+const char ET_Endstop_Hit_Error[] PROGMEM = "Stopped at endstop on going down";
 const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
 const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
 
@@ -279,13 +281,13 @@ const char EQ_MASTER[] PROGMEM = "Src: Master";
 const char EQ_SCHEDULE[] PROGMEM = "Src: Scheduler";
 const char EQ_BUTTON[] PROGMEM = "Src: Button";
 
-enum EVENT_LEVEL { EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
+enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, EI_Wifi_Got_IP, EI_Wifi_Start_AP,
-	EI_Endstop_Hit, EI_MQTT_Connect, EI_MQTT_Connecting };
+	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
-	ET_Endstop_Hit, ET_MQTT_Connect, ET_MQTT_Connecting };
+	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON };
@@ -1272,7 +1274,8 @@ void ICACHE_RAM_ATTR timer1Isr()
 	{
 		if (switch_ignore_steps == 0)
 		{
-			endstop_hit = 1;
+			endstop_hit_pos = position;
+			endstop_hit = EL_INFO; // Set flag, will add event in Log, but not in ISR
 			if (roll_to <= 0)
 			{ // full open, done
 				roll_to=0;
@@ -1289,6 +1292,8 @@ void ICACHE_RAM_ATTR timer1Isr()
 				} else
 				{
 					// endswitch hit on going down. Something wrong
+					endstop_hit_pos = position;
+					endstop_hit = EL_ERROR;  // Set flag, will add event in Log, but not in ISR
 					roll_to=position;
 					MotorOff();
 					return;
@@ -2077,7 +2082,7 @@ String HTML_status()
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
-	out += HTML_tableLine(L("<a href=\"/log\">Log</a>", "<a href=\"/log\">Лог</a>"), String((int)elog.Count()));
+	out += HTML_tableLine(L("<a href=\"/log\">Log</a>", "<a href=\"/log\">Лог</a>"), String((int)elog.Count()), "log");
 
 	out += HTML_section(FLF("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
@@ -3000,6 +3005,7 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("MQTT"), MQTTstatus());
 	if (voltage_available)
 		XML += MakeNode(F("Voltage"), GetVoltageStr() + SL("V", "В"));
+	XML += MakeNode(F("Log"), String(elog.Count()));
 //XML += MakeNode(F("Debug"), payload);
 	XML += F("</Info>");
 
@@ -3123,6 +3129,11 @@ void HTTP_handleLog(void)
 					out += FPSTR((char*)pgm_read_dword(&(event_src_txt[e->val & 0xFF]))); break;
 				case EI_Wifi_Got_IP:
 					out += IPAddress(e->val).toString(); break;
+				case EI_Endstop_Hit:
+				case EI_Endstop_Hit_Error:
+					out += F("Pos: ");
+					out += e->val;
+					break;
 				default: break;//out += e->val; break;
 			}
 			out += F("</td></tr>\n");
@@ -3203,8 +3214,14 @@ void loop(void)
 	}
 	if (endstop_hit)
 	{
-		endstop_hit = 0;
-		elog.Add(EI_Endstop_Hit, EL_INFO, 0);
+		if (endstop_hit != EL_NONE)
+		{
+			if (endstop_hit == EL_ERROR)
+				elog.Add(EI_Endstop_Hit_Error, EL_ERROR, endstop_hit_pos);
+			else
+				elog.Add(EI_Endstop_Hit, EL_INFO, endstop_hit_pos);
+			endstop_hit = EL_NONE;
+		}
 	}
 
 	delay(1); // this delay enables light sleep mode
