@@ -46,7 +46,7 @@ section {
 	font-weight: bold;
 	background-color: #aec0be;
 }
-.settings td, .alarms td {
+.settings td, .alarms td, .log .sect_name td {
 	padding: 5px;
 }
 .alarms td.narrow { width:1%; }
@@ -153,11 +153,11 @@ background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.
 background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M.102 2.223A3.004 3.004 0 0 0 3.78 5.897l6.341 6.252A3.003 3.003 0 0 0 13 16a3 3 0 1 0-.851-5.878L5.897 3.781A3.004 3.004 0 0 0 2.223.1l2.141 2.142L4 4l-1.757.364L.102 2.223zm13.37 9.019l.528.026.287.445.445.287.026.529L15 13l-.242.471-.026.529-.445.287-.287.445-.529.026L13 15l-.471-.242-.529-.026-.287-.445-.445-.287-.026-.529L11 13l.242-.471.026-.529.445-.287.287-.445.529-.026L13 11l.471.242z'/%3E%3C/svg%3E");
 }
 
-.info.show, .settings.show, .alarms.show, .main.show {
+.info.show, .settings.show, .alarms.show, .main.show, .log.show {
 	display: block;
 }
 
-.info.hide, .settings.hide, .alarms.hide, .main.hide {
+.info.hide, .settings.hide, .alarms.hide, .main.hide, .log.hide {
 	display: none;
 }
 
@@ -169,7 +169,7 @@ background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.
 #wrapper {min-width: 710px;}
 .info.hide, .info.show { width: 240px; float: left; display: block; margin-top:0px;} 
 select, input { font-size: 16px; }
-section.settings, section.alarms, section.main {
+section.settings, section.alarms, section.main, section.log {
 	max-width: 560px;
 	display: block;
 	margin-left: 280px;

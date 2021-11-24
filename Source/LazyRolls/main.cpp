@@ -274,6 +274,7 @@ const char ET_Endstop_Hit[] PROGMEM = "Stopped at endstop";
 const char ET_Endstop_Hit_Error[] PROGMEM = "Stopped at endstop on going down";
 const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
 const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
+const char ET_Started[] PROGMEM = "Started";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
@@ -284,10 +285,10 @@ const char EQ_BUTTON[] PROGMEM = "Src: Button";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, EI_Wifi_Got_IP, EI_Wifi_Start_AP,
-	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting };
+	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
-	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting };
+	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON };
@@ -966,6 +967,8 @@ void MQTT_connect()
 
 	// Stop if already connected.
 	if (mqtt->connected()) return;
+
+	if (WiFi.status() != WL_CONNECTED) return;
 
 	if ((last_reconnect != 0) && (millis() - last_reconnect < 10000)) return;
 
@@ -1839,6 +1842,8 @@ void HTTP_redirect(String link);
 
 void setup()
 {
+	rst_info *resetInfo;
+
 	pinMode(PIN_LED, OUTPUT);
 	LED_On();
 
@@ -1852,6 +1857,9 @@ void setup()
 	Serial.begin(115200);
 	Serial.println();
 	Serial.println(F("Booting..."));
+
+	resetInfo = ESP.getResetInfoPtr();
+	elog.Add(EI_Started, EL_INFO, resetInfo->reason);
 
 	setup_SPIFFS();
 	setup_Settings(); // setup and load settings.
@@ -2082,7 +2090,8 @@ String HTML_status()
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
-	out += HTML_tableLine(L("<a href=\"/log\">Log</a>", "<a href=\"/log\">Лог</a>"), String((int)elog.Count()), "log");
+	out += HTML_tableLine(L("<a href=\"/log\" onclick=\"return ShowLog();\">Log</a>", 
+		"<a href=\"/log\" onclick=\"return ShowLog();\">Лог</a>"), String((int)elog.Count()), "log_count");
 
 	out += HTML_section(FLF("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
@@ -3074,14 +3083,19 @@ void HTTP_handleLog(void)
 	const LogEntry* e;
 	uint32_t t;
 	idx i;
+	bool ajax;
 
 	HTTP_Activity();
 
-	out.reserve(10240);
-	out = HTML_header();
-	out += F("<section class=\"main\" id=\"main\"><p>");
-	out += FLF("Last " STR(MAX_LOG_ENTRIES) " log entries", "Последние " STR(MAX_LOG_ENTRIES) " записи");
-	out += F("<table class=\"log\">");
+	ajax = httpServer.hasArg("table"); // request only log table
+	if (!ajax)
+	{
+		out.reserve(10240);
+		out = HTML_header();
+		out += F("<section class=\"log\" id=\"log\"><table id=\"log_table\"><tr class=\"sect_name\"><td colspan=\"2\">");
+		out += FLF("Last " STR(MAX_LOG_ENTRIES) " log entries", "Последние " STR(MAX_LOG_ENTRIES) " записи");
+		out += F("</td></tr>");
+	}
 
 	i = elog.Count();
 	while (i-- > 0)
@@ -3134,15 +3148,31 @@ void HTTP_handleLog(void)
 					out += F("Pos: ");
 					out += e->val;
 					break;
+				case EI_Started:
+					out += F("after ");
+					switch (e->val)
+					{
+						case REASON_DEFAULT_RST: out += F("power on"); break;
+						case REASON_WDT_RST: out += F("WDT reset"); break;
+						case REASON_EXCEPTION_RST: out += F("exception"); break;
+						case REASON_SOFT_WDT_RST: out += F("soft WDT reset"); break;
+						case REASON_SOFT_RESTART: out += F("soft restart"); break;
+						case REASON_DEEP_SLEEP_AWAKE: out += F("deep sleep"); break;
+						case REASON_EXT_SYS_RST: out += F("external reset"); break;
+						default: out += F("Unknown"); break;
+					}
+					break;
 				default: break;//out += e->val; break;
 			}
 			out += F("</td></tr>\n");
 		}
 	}
 
-	out += F("</table>\n");
-
-	out += HTML_footer();
+	if (!ajax)
+	{
+		out += F("</table>\n");
+		out += HTML_footer();
+	}
 	httpServer.send(200, "text/html", out);
 }
 

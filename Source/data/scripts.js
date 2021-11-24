@@ -16,6 +16,7 @@ document.getElementById("info").className="info show";
 HideS("settings");
 HideS("alarms");
 HideS("main");
+HideS("log");
 return false;
 }
 function ShowSettings()
@@ -40,6 +41,17 @@ function ShowAlarms()
 	} else
 		return true;
 }
+function ShowLog()
+{
+	e=document.getElementById("log");
+	if (e)
+	{
+		e.className="log show";
+		HideS("info");
+		return false;
+	} else
+		return true;
+}
 function ShowMain()
 {
 	e=document.getElementById("main");
@@ -50,6 +62,27 @@ function ShowMain()
 		return false;
 	} else
 		location.href='/';
+}
+function UpdateLog()
+{
+	var request = new XMLHttpRequest();
+	request.onreadystatechange = function()
+	{
+		if (this.readyState == 4 && this.status == 200)
+		{
+			var rows = document.getElementById('log_table').getElementsByTagName('tr'), index;
+
+			for (index = rows.length - 1; index >= 0; index--)
+			{
+				if (rows[index].className != 'sect_name')
+					rows[index].parentNode.removeChild(rows[index]);
+			}
+			rows[0].insertAdjacentHTML("afterend", this.responseText);
+		}
+	}
+	// send HTTP GET request
+	request.open("GET", "log?table");
+	request.send(null);
 }
 
 function st(t, id, tag)
@@ -78,7 +111,10 @@ function GetStatus()
 	st(this, "voltage", 'Voltage');
 	st(this, "led_mode", 'Mode');
 	st(this, "led_level", 'Level');
-	st(this, "log", 'Log');
+	lc=document.getElementById("log_count").innerHTML;
+	st(this, "log_count", 'Log');
+	if (document.getElementById("log_count").innerHTML != lc &&
+		document.getElementById("log")) UpdateLog();
 	if (document.getElementById("pos").innerHTML != document.getElementById("dest").innerHTML)
 	timeout=500;
 	else
