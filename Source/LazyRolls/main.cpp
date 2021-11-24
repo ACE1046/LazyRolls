@@ -270,6 +270,7 @@ const char ET_Wifi_Close_AP[] PROGMEM = "Reconnected to network in STA mode. Clo
 const char ET_Wifi_Reconnect[] PROGMEM = "Trying to reconnect";
 const char ET_Wifi_Got_IP[] PROGMEM = "IP address";
 const char ET_Wifi_Start_AP[] PROGMEM = "Starting soft AP";
+const char ET_Wifi_Disconnect[] PROGMEM = "WiFi disconnected";
 const char ET_Endstop_Hit[] PROGMEM = "Stopped at endstop";
 const char ET_Endstop_Hit_Error[] PROGMEM = "Stopped at endstop on going down";
 const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
@@ -285,10 +286,10 @@ const char EQ_BUTTON[] PROGMEM = "Src: Button";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, EI_Wifi_Got_IP, EI_Wifi_Start_AP,
-	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started };
+	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
-	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started };
+	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON };
@@ -1599,7 +1600,11 @@ void WiFi_On()
 		WiFi.begin(ini.ssid, ini.password);
 	else
 		StartSoftAP();
-	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) { Serial.println(F("Disconnected")); });
+	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) 
+	{
+		Serial.println(F("Disconnected"));
+		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
+	});
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
 	ProcessWiFi();
 }
