@@ -20,7 +20,6 @@ http://imlazy.ru/rolls/
 #include <FS.h>
 #include <WiFiUdp.h>
 #include <DNSServer.h>
-#include <time.h>
 #include "settings.h"
 
 #define VERSION "0.12 beta"
@@ -2207,7 +2206,7 @@ void HTTP_handleRoot(void)
 
 	out += FL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
 		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, " \
-			"штобы найти нулевую точку. Это нормально.</p>"));
+			"чтобы найти нулевую точку. Это нормально.</p>"));
 	out += F("</section>\n");
 
 	out += HTML_footer();
