@@ -11,6 +11,7 @@ http://imlazy.ru/rolls/
 29.01.2021 v0.09
 30.03.2021 v0.10
 05.08.2021 v0.11
+27.01.2022 v0.12
 
 */
 #include <ESP8266WiFi.h>
@@ -22,10 +23,10 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.12 beta"
+#define VERSION "0.12"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
-#define DAYLIGHT 0
+#define DAYLIGHT 0 // this is just a test, not working yet
 #define SPIFFS_AUTO_INIT
 
 #ifdef SPIFFS_AUTO_INIT
@@ -43,6 +44,7 @@ http://imlazy.ru/rolls/
 #endif
 
 #if DAYLIGHT
+// this is just a test, not working yet
 #include <ESP8266HTTPClient.h>
 String payload;
 void TestHTTP () 
@@ -531,8 +533,9 @@ void SyncNTPTime()
 		// Combine the 4 timestamp bytes into one 32-bit number
 		uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
 		// Convert NTP time to a UNIX timestamp: subtract seventy years:
-		UNIXTime = NTPTime - seventyYears;
-		elog.Add(EI_NTP_Sync, EL_INFO, UNIXTime);
+		NTPTime -= seventyYears;
+		elog.Add(EI_NTP_Sync, EL_INFO, NTPTime);
+		UNIXTime = NTPTime;
 		lastSync=millis();
 	}
 	UDP.flush();
