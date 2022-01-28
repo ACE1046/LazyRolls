@@ -12,7 +12,7 @@ Automatic motorized roller blinds project.
 ### Плагины для систем умного дома
 [Domoticz](https://github.com/ACE1046/LazyRollsDomoticz)\
 [Hubitat Elevation](https://github.com/yix/Hubitat/blob/master/drivers/LazyRolls.groovy) (Автор [yix](https://github.com/yix))\
-Home Assistant (встроенная поддержка через MQTT Discovery с версии 0.09)
+Home Assistant (встроенная поддержка через MQTT Discovery с версии 0.09)\
 [Homebridge](https://github.com/vitva/Lazyroll-settings-for-homebridge) (Автор Vitva)
 
 ### Структура директорий
