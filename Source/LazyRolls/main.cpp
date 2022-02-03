@@ -23,7 +23,7 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.12"
+#define VERSION "0.12.1"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
@@ -3153,7 +3153,7 @@ void HTTP_handleLog(void)
 				case EI_Endstop_Hit:
 				case EI_Endstop_Hit_Error:
 					out += F("Pos: ");
-					out += e->val;
+					out += (int32_t)e->val;
 					break;
 				case EI_Started:
 					out += F("after ");
