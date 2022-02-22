@@ -1912,6 +1912,9 @@ void setup()
 	pinMode(PIN_B, OUTPUT);
 	pinMode(PIN_C, OUTPUT);
 	pinMode(PIN_D, OUTPUT);
+	pinMode(PIN_EN, OUTPUT);
+	pinMode(PIN_ST, OUTPUT);
+	pinMode(PIN_DR, OUTPUT);
 	MotorOff();
 
 	setup_OTA();
