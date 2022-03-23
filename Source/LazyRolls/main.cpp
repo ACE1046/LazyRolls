@@ -1693,7 +1693,7 @@ void ValidateSettings()
 	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
-	if (ini.full_length<300 || ini.full_length>=999999) ini.full_length=10000;
+	if (ini.full_length<300 || ini.full_length>999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
 	if (ini.switch_ignore_steps<5) ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 	if (ini.switch_ignore_steps>65000) ini.switch_ignore_steps=65000;
