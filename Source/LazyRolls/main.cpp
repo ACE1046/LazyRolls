@@ -28,10 +28,9 @@ http://imlazy.ru/rolls/
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
 #define SPIFFS_AUTO_INIT
+#define RF 1
 
-#ifdef SPIFFS_AUTO_INIT
 #include "spiff_files.h"
-#endif
 
 #if MQTT
 	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
@@ -41,6 +40,11 @@ http://imlazy.ru/rolls/
 #if ARDUINO_OTA
 	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
 	#include <ArduinoOTA.h>
+#endif
+
+#if RF
+#include "RCSwitch.h"  //RC433 rc-switch by Suat Ozgur
+RCSwitch mySwitch = RCSwitch();
 #endif
 
 #if DAYLIGHT
@@ -168,7 +172,16 @@ typedef struct {
 } alarm_type;
 #define ALARM_FLAG_ENABLED 0x0001
 
+typedef struct {
+	uint32_t code;
+	uint8_t action;
+	uint8_t flags; // reserved
+	uint16_t reserved;
+} rf_cmd_type;
+#define RF_FLAG_STOP2ND 0x01
+
 #define MAX_PRESETS 5
+#define MAX_RF_CMDS 10
 struct {
 	char hostname[16+1];
 	char ssid[32+1];
@@ -209,6 +222,8 @@ struct {
 	char mqtt_topic_info[127+1]; // information topic (IP, RSSI, etc)
 	char name[64+1]; // Name
 	ip4_addr ip, mask, gw, dns; // Network config
+	rf_cmd_type rf_cmd[MAX_RF_CMDS]; // RF433 commands
+	bool rf_enabled;
 } ini;
 
 // language functions
@@ -248,6 +263,7 @@ void WiFi_On();
 void WiFi_Off();
 uint32_t getTime();
 uint32_t getTimeUTC();
+String MakeNode(const __FlashStringHelper *name, String val);
 
 //===================== Event Logger ===================================
 
@@ -1434,6 +1450,17 @@ void setup_Button()
 		auxISR();
 	} else
 		aux_state_str="";
+
+#if RF
+//  if (ini.rc_pin)
+  {
+    //pin_rc = pin2hw_pin(4);//ini.rc_pin);
+    //pinMode(pin_rc, INPUT);
+    pinMode(13, INPUT_PULLUP);
+    //digitalWrite(13, HIGH);
+    mySwitch.enableReceive(13); //запускаем RC приемник на gpio XX
+  }
+#endif
 }
 
 void ButtonClick(uint8_t address=ADDR_ALL)
@@ -1497,6 +1524,222 @@ void process_Aux()
 	on = (aux_state == AUX_ON);
 	aux_state = AUX_NONE;
 	MQTT_ReportAux(on);
+}
+
+// ===================== RF remote =============================
+
+static unsigned long last_rf_code = 0;
+static bool rf_repeat = 0;
+
+// 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3', 114, 
+// 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink'
+void RF_Action(uint8_t action, uint8_t flags)
+{
+	if (!action) return;
+	if (roll_to != position && rf_repeat && (flags & RF_FLAG_STOP2ND))
+	{ // stop on second click
+		Stop();
+		return;
+	}
+	if (action == 101) Open(ADDR_ALL); else
+	if (action == 100) Close(ADDR_ALL); else
+	if (action == 102) ButtonClick(ADDR_ALL); else
+	if (action == 103) Stop(ADDR_ALL); else
+	if (action == 104) LED_Blink(); else
+	if (action > 0 && action < 100) ToPercent(action, ADDR_ALL); else
+	if (action > 110 && action <= 110+MAX_PRESETS) ToPreset(action-100, ADDR_ALL);
+}
+
+void RF_Keypress(uint32_t code)
+{
+	for (int i=0; i < MAX_RF_CMDS; i++)
+		if (ini.rf_cmd[i].code == code)
+			RF_Action(ini.rf_cmd[i].action, ini.rf_cmd[i].flags);
+}
+
+#define RF_DELAY 250
+void ProcessRF()
+{
+#if RF
+	static unsigned long last_rf = 0;
+	
+	if (mySwitch.available())
+	{
+		unsigned long code = mySwitch.getReceivedValue();
+
+		if (code == 0)
+		{
+			Serial.printf("Unknown encoding");
+		} else {
+			if (code != last_rf_code || millis()-last_rf > RF_DELAY)
+			{
+				last_rf = millis();
+				rf_repeat = (last_rf_code == code);
+				last_rf_code = code;
+				Serial.printf("Received %ld ", code);
+				Serial.printf(" bit %d ", mySwitch.getReceivedBitlength());
+				Serial.printf(" Protocol: %d \n\r", mySwitch.getReceivedProtocol());
+				RF_Keypress(code);
+			} else {
+				last_rf = millis();
+			}
+		}
+		mySwitch.resetAvailable();
+	}
+#endif
+}
+
+#define RF_TIMEOUT 5000 // rf-command wait time, in settings page, ms
+void RF_handleXML()
+{
+	String XML;
+
+	if (httpServer.hasArg("get"))  // waiting for rf keypress up to RF_TIMEOUT ms, returning after press
+	{
+		last_rf_code = 0;
+		unsigned long start = millis();
+		while (!last_rf_code && (millis() - start < RF_TIMEOUT))
+		{
+			ProcessRF();
+			delay(10);
+			yield();
+		}
+	}
+	XML.reserve(1024);
+	XML = F("<?xml version='1.0'?>");
+	XML += F("<Curtain>");
+	XML += F("<RF>");
+	XML += MakeNode(F("LastCode"), String(last_rf_code));
+	XML += MakeNode(F("Hex"), String(last_rf_code, HEX));
+	// XML += F("<Commands>");
+	// for (int i=0; i<MAX_RF_CMDS; i++)
+	// {
+	// 	XML += F("<Command") + String(i) + F(">");
+	// 	XML += MakeNode(F("Code"), String(ini.rf_cmd[i].code));
+	// 	XML += MakeNode(F("Action"), String(ini.rf_cmd[i].action));
+	// 	XML += F("</Command") + String(i) + F(">");
+	// }
+	// XML += F("</Commands>");
+	XML += F("</RF></Curtain>");
+
+	httpServer.sendHeader(F("Access-Control-Allow-Origin"), "*"); // Allowing Cross-Origin Resource Sharing
+	httpServer.send(200, "text/XML", XML);
+}
+
+void RF_saveSettings()
+{
+	for (int c=0; c < MAX_RF_CMDS; c++)
+	{
+		String n=String(c);
+		if (httpServer.hasArg("rfs"+n))
+			ini.rf_cmd[c].flags |= RF_FLAG_STOP2ND;
+		else
+			ini.rf_cmd[c].flags &= ~RF_FLAG_STOP2ND;
+
+		if (httpServer.hasArg("rfc"+n))
+			ini.rf_cmd[c].code = atoi(httpServer.arg("rfc"+n).c_str()); // only 31 bits of code supported
+			//ini.rf_cmd[c].code = strtoul(httpServer.arg("rfc"+n).c_str(), NULL, 10); // for 32 rf codes, adding 400 bytes of code
+
+		if (httpServer.hasArg("rfa"+n))
+			ini.rf_cmd[c].action = atoi(httpServer.arg("rfa"+n).c_str());
+	}
+
+	SaveSettings(&ini, sizeof(ini));
+}
+
+String RF_save()
+{
+	String out;
+	out += F("<tr class=\"sect_name\"><td colspan=\"2\">\n<input id=\"save\" type=\"submit\" name=\"save\" value=\"");
+	out += FLF("Save", "Сохранить");
+	out += F("\">\n<input id=\"cancel\" type=\"button\" name=\"cancel\" onclick=\"RFCancel();\" value=\"");
+	out += FLF("Cancel", "Отмена");
+	out += F("\">\n</td></tr>\n");
+	return out;
+}
+
+String HTML_header();
+String HTML_footer();
+void HTTP_redirect(String link);
+void RF_handleHTTP()
+{
+	String out;
+
+	//HTTP_Activity();
+
+	if (httpServer.hasArg("save"))
+	{
+		RF_saveSettings();
+		HTTP_redirect("/");
+		return;
+	}
+
+	out = HTML_header();
+
+	out.reserve(16384);
+
+	out += F("<section class=\"settings\" id=\"settings\">\n");
+
+	out += F("<form method=\"post\" action=\"/rf\">\n");
+
+	out += F("<table class=\"rf\">\n");
+	//out += HTML_save();
+
+	out += RF_save();
+	out += F("<tr><td colspan=\"2\"><p>");
+	out += FLF("RF commands are disabled while this page is open. Press Save or Cancel to finish setup</p>\n<p>Last RF code",
+		"Управление c пульта отключено, пока открыта эта страница. Нажмите Сохранить или Отмена для выхода из режима настройки</p>\n<p>Последний код");
+	out += F(": <span id=\"lastcode\">0</span></p></td>\n</tr>\n");
+	out += F("<tr><td>");
+	out += FLF("Code</td><td>Action", "Код</td><td>Действие");
+	out += F("</td></tr>\n");
+
+	for (int i=0; i < MAX_RF_CMDS; i++)
+	{
+		out += F("<tr><td colspan=\"2\"><hr/></td></tr>\n<tr>\n<td class=\"val_p\"><input type=\"text\" name=\"rfc");
+		out += i;
+		out += F("\" id=\"rfc");
+		out += i;
+		out += F("\" value=\"");
+		out += ini.rf_cmd[i].code;
+		out += F("\" maxlength=\"10\"/>\n<input type=\"button\" value=\"Set\" id=\"btn");
+		out += i;
+		out += F("\" onclick=\"GetRFKey(");
+		out += i;
+		out += F(");\">\n</td>\n<td>\n<select id=\"rfa");
+		out += i;
+		out += F("\" name=\"rfa");
+		out += i;
+		out += F("\"></select>\n<span><label for=\"rfs");
+		out += i;
+		out += F("\"><input type=\"checkbox\" id=\"rfs");
+		out += i;
+		out += F("\"");
+		if (ini.rf_cmd[i].flags & RF_FLAG_STOP2ND) out += "checked";
+		out += F(" name=\"rfs");
+		out += i;
+		out += F("\">Stop on 2nd click</label></span>\n</td>\n</tr>");
+	}
+	out += F("<script>const opts1 = ");
+	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5',102,'Open/Close',103,'Stop',104,'Blink'];\n",
+			   "[0,'Нет',101,'Открыть',20,'20%',40,'40%',60,'60%',80,'80%',100,'Закрыть',111,'Пресет 1',112,'Пресет 2',113,'Пресет 3',114,'Пресет 4',115,'Пресет 5',102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть'];\n");
+	for (int i=0; i < MAX_RF_CMDS; i++)
+	{
+		out += F("AddOption('rfa");
+		out += i;
+		out += F("', opts1, ");
+		out += ini.rf_cmd[i].action;
+		out += F(");\n");
+	}
+
+	out += F("</script>");
+
+	out += RF_save();
+	out += F("</table>\n</form>\n</section>\n");
+
+	out += HTML_footer();
+
+	httpServer.send(200, "text/html", out);
 }
 
 // ======================= WiFi =================================
@@ -1587,7 +1830,7 @@ void ProcessWiFi()
 		}
 	}
 }
-
+extern int ints;
 WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
 void WiFi_On()
 {
@@ -1605,6 +1848,7 @@ void WiFi_On()
 	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) 
 	{
 		Serial.println(F("Disconnected"));
+		Serial.println(ints);
 		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
 	});
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
@@ -1894,6 +2138,7 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.on("/update",   HTTP_handleUpdate);
 	httpServer.on("/log",      HTTP_handleLog);
+	httpServer.on("/rf",       RF_handleHTTP);
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
 	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
@@ -3002,6 +3247,12 @@ String MakeNode(const __FlashStringHelper *name, String val)
 }
 void HTTP_handleXML(void)
 {
+	if (httpServer.hasArg("rf"))
+	{
+		RF_handleXML();
+		return;
+	}
+
 	String XML, s;
 	uint32_t realSize = ESP.getFlashChipRealSize();
 	uint32_t ideSize = ESP.getFlashChipSize();
@@ -3035,9 +3286,12 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("IdeSize"), MemSize2Str(ideSize));
 	XML += MakeNode(F("Speed"), String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц"));
 	XML += MakeNode(F("IdeMode"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
-	XML += F("</ChipInfo>");
+	XML += F("</ChipInfo><RF>");
 
-	XML += F("<Position>");
+	XML += MakeNode(F("LastCode"), String(last_rf_code));
+	XML += MakeNode(F("Hex"), String(last_rf_code, HEX));
+
+	XML += F("</RF><Position>");
 	XML += MakeNode(F("Now"), String(position));
 	XML += MakeNode(F("Dest"), String(roll_to));
 	XML += MakeNode(F("Max"), String(ini.full_length));
@@ -3186,9 +3440,11 @@ void HTTP_handleLog(void)
 	httpServer.send(200, "text/html", out);
 }
 
+int dumb;
 void Scheduler()
 {
 	uint32_t t, p;
+
 	static uint32_t last_t;
 	int dayofweek;
 
@@ -3225,12 +3481,14 @@ void Scheduler()
 			ToPreset(p);
 		}
 	}
+	dumb=0;
 }
 
 void loop(void)
 {
 	ProcessWiFi();
 	ProcessLED();
+	ProcessRF();
 
 	httpServer.handleClient();
 	Process_OTA();
@@ -3264,5 +3522,13 @@ void loop(void)
 		}
 	}
 
-	delay(1); // this delay enables light sleep mode
+	delay(10); // this delay enables light sleep mode
+	static int heap=65536;
+	int h;
+	h=ESP.getFreeHeap();
+	if (h<heap)
+	{
+		heap=h;
+		Serial.println(heap);
+	}
 }

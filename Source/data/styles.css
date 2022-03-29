@@ -187,3 +187,7 @@ section, .status {	margin: 10px; }
 .status ul li {	width: 20%; }
 
 }
+
+.rf span { white-space: nowrap; }
+.rf td { vertical-align: top; }
+.rf hr { margin-top: 0px;  margin-bottom: 0px; }

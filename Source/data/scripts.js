@@ -7,18 +7,20 @@ window.onblur = function() { active = false; clearTimeout(timerId); };
 
 function HideS(s)
 {
-var t=document.getElementById(s);
-if (t) t.className=s+" hide";
+	var t=document.getElementById(s);
+	if (t) t.className=s+" hide";
 }
+
 function ShowInfo()
 {
-document.getElementById("info").className="info show";
-HideS("settings");
-HideS("alarms");
-HideS("main");
-HideS("log");
-return false;
+	document.getElementById("info").className="info show";
+	HideS("settings");
+	HideS("alarms");
+	HideS("main");
+	HideS("log");
+	return false;
 }
+
 function ShowSettings()
 {
 	e=document.getElementById("settings");
@@ -30,6 +32,7 @@ function ShowSettings()
 	} else
 		return true;
 }
+
 function ShowAlarms()
 {
 	e=document.getElementById("alarms");
@@ -41,6 +44,7 @@ function ShowAlarms()
 	} else
 		return true;
 }
+
 function ShowLog()
 {
 	e=document.getElementById("log");
@@ -52,6 +56,7 @@ function ShowLog()
 	} else
 		return true;
 }
+
 function ShowMain()
 {
 	e=document.getElementById("main");
@@ -63,6 +68,7 @@ function ShowMain()
 	} else
 		location.href='/';
 }
+
 function UpdateLog()
 {
 	var request = new XMLHttpRequest();
@@ -91,52 +97,61 @@ function st(t, id, tag)
 	h = document.getElementById(id);
 	if(f && h) h.innerHTML = f.childNodes[0].nodeValue; 
 }
+
 function GetStatus()
 {
-	if (active) {
-	nocache = "&nocache=" + Math.random() * 1000000;
-	var request = new XMLHttpRequest();
-	request.onreadystatechange = function()
+	if (active)
 	{
-	if (this.readyState == 4) {
-	if (this.status == 200) {
-	if (this.responseXML != null) {
-	st(this, "time", 'Time');
-	st(this, "uptime", 'UpTime');
-	st(this, "RSSI", 'RSSI');
-	st(this, "pos", 'Now');
-	st(this, "dest", 'Dest');
-	st(this, "switch", 'End1');
-	st(this, "mqtt", 'MQTT');
-	st(this, "voltage", 'Voltage');
-	st(this, "led_mode", 'Mode');
-	st(this, "led_level", 'Level');
-	lc=document.getElementById("log_count").innerHTML;
-	st(this, "log_count", 'Log');
-	if (document.getElementById("log_count").innerHTML != lc &&
-		document.getElementById("log")) UpdateLog();
-	if (document.getElementById("pos").innerHTML != document.getElementById("dest").innerHTML)
-	timeout=500;
-	else
-	timeout=5000;
-	}
-	}
-	}
+		nocache = "&nocache=" + Math.random() * 1000000;
+		var request = new XMLHttpRequest();
+		request.onreadystatechange = function()
+		{
+			if (this.readyState == 4)
+			{
+				if (this.status == 200)
+				{
+					if (this.responseXML != null)
+					{
+						st(this, "time", 'Time');
+						st(this, "uptime", 'UpTime');
+						st(this, "RSSI", 'RSSI');
+						st(this, "pos", 'Now');
+						st(this, "dest", 'Dest');
+						st(this, "switch", 'End1');
+						st(this, "mqtt", 'MQTT');
+						st(this, "voltage", 'Voltage');
+						st(this, "led_mode", 'Mode');
+						st(this, "led_level", 'Level');
+						st(this, "lastcode", 'LastCode');
+						lc=document.getElementById("log_count").innerHTML;
+						st(this, "log_count", 'Log');
+						if (document.getElementById("log_count").innerHTML != lc &&
+							document.getElementById("log")) UpdateLog();
+						if (document.getElementById("pos").innerHTML != document.getElementById("dest").innerHTML)
+						timeout=500;
+						else
+						timeout=5000;
+					}
+				}
+				timerId = setTimeout('GetStatus()', timeout);
+			}
+		}
+		// send HTTP GET request
+		request.open("GET", "xml");
+		request.send(null);
+	} 
 }
-// send HTTP GET request
-request.open("GET", "xml");
-request.send(null);
-	} timerId = setTimeout('GetStatus()', timeout);
-}
+
 function Call(url)
 {
-clearTimeout(timerId);
-var xhttp = new XMLHttpRequest();
-xhttp.open("GET", url);
-xhttp.send();
-timeout=500;
-GetStatus();
+	clearTimeout(timerId);
+	var xhttp = new XMLHttpRequest();
+	xhttp.open("GET", url);
+	xhttp.send();
+	timeout=500;
+	GetStatus();
 }
+
 function Open() { Call("set?pos=0"); return false; }
 function Close() { Call("set?pos=100"); return false; }
 function Steps(s) { Call("set?steps="+s); return false; }
@@ -147,48 +162,113 @@ function SetPreset(p) { document.getElementById(p).value = document.getElementBy
 
 function Test(dir)
 {
-document.getElementById("btn_up").disabled=true;
-document.getElementById("btn_dn").disabled=true;
-pinout=document.getElementById("pinout").value;
-reversed=document.getElementById("reversed").value;
-delay=document.getElementById("delay").value;
-var xhttp = new XMLHttpRequest();
-xhttp.onreadystatechange = function() {
-if (this.readyState == 4 && this.status == 200) {
-document.getElementById("btn_up").disabled=false;
-document.getElementById("btn_dn").disabled=false;
-document.getElementById("pos").innerHTML=this.responseText;
-document.getElementById("dest").innerHTML=this.responseText;
-	}};
-url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay;
-if (dir==1) url=url+"&up=1"; else url=url+"&down=1";
-xhttp.open("GET", url, true);
-xhttp.send();
+	document.getElementById("btn_up").disabled=true;
+	document.getElementById("btn_dn").disabled=true;
+	pinout=document.getElementById("pinout").value;
+	reversed=document.getElementById("reversed").value;
+	delay=document.getElementById("delay").value;
+	var xhttp = new XMLHttpRequest();
+	xhttp.onreadystatechange = function() 
+	{
+		if (this.readyState == 4 && this.status == 200) 
+		{
+			document.getElementById("btn_up").disabled=false;
+			document.getElementById("btn_dn").disabled=false;
+			document.getElementById("pos").innerHTML=this.responseText;
+			document.getElementById("dest").innerHTML=this.responseText;
+		}
+	};
+	url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay;
+	if (dir==1) url=url+"&up=1"; else url=url+"&down=1";
+	xhttp.open("GET", url, true);
+	xhttp.send();
 }
+
 function TestUp() { Test(1); }
 function TestDown() { Test(0); }
 
 
 function PinChange() {
-var slave=document.getElementById('slave');
-var btn_pin=document.getElementById('btn_pin');
-var aux_pin=document.getElementById('aux_pin');
-if (!slave || !btn_pin || !aux_pin) return;
-if (aux_pin.selectedIndex == btn_pin.selectedIndex) aux_pin.selectedIndex=0;
-var op = btn_pin.getElementsByTagName("option");
-for (var i = 1; i < op.length; i++) op[i].disabled = (i == aux_pin.selectedIndex);
-op = aux_pin.getElementsByTagName("option");
-for (var i = 1; i < op.length; i++) op[i].disabled = (i == btn_pin.selectedIndex);
+	var slave=document.getElementById('slave');
+	var btn_pin=document.getElementById('btn_pin');
+	var aux_pin=document.getElementById('aux_pin');
+	if (!slave || !btn_pin || !aux_pin) return;
+	if (aux_pin.selectedIndex == btn_pin.selectedIndex) aux_pin.selectedIndex=0;
+	var op = btn_pin.getElementsByTagName("option");
+	for (var i = 1; i < op.length; i++) op[i].disabled = (i == aux_pin.selectedIndex);
+	op = aux_pin.getElementsByTagName("option");
+	for (var i = 1; i < op.length; i++) op[i].disabled = (i == btn_pin.selectedIndex);
 
-if (slave.selectedIndex > 1) 
-{
-document.getElementById('pin_RX').disabled = true;
-document.getElementById('aux_RX').disabled = true;
+	if (slave.selectedIndex > 1) 
+	{
+		document.getElementById('pin_RX').disabled = true;
+		document.getElementById('aux_RX').disabled = true;
+	}
+
+	var dis = false;
+	if (btn_pin.options[btn_pin.selectedIndex].id == 'pin_RX') dis = true;
+	if (aux_pin.options[aux_pin.selectedIndex].id == 'aux_RX') dis = true;
+	var op = document.getElementById('slave').getElementsByTagName("option");
+	for (var i = 2; i < op.length; i++) op[i].disabled = dis;
 }
 
-var dis = false;
-if (btn_pin.options[btn_pin.selectedIndex].id == 'pin_RX') dis = true;
-if (aux_pin.options[aux_pin.selectedIndex].id == 'aux_RX') dis = true;
-var op = document.getElementById('slave').getElementsByTagName("option");
-for (var i = 2; i < op.length; i++) op[i].disabled = dis;
+function AddOption(sel_id, opts, selected)
+{
+    select = document.getElementById(sel_id);
+	for (var i = 0; i<opts.length/2; i++)
+	{
+		var opt = document.createElement('option');
+		opt.value = opts[i*2];
+		opt.innerHTML = opts[i*2+1];
+			opt.selected = opt.value == selected;
+		select.appendChild(opt);
+	};
+}
+
+function EnableEl(id)
+{
+	h = document.getElementById(id);
+	if(h) h.disabled = false; 
+}
+
+function DisableEl(id)
+{
+	h = document.getElementById(id);
+	if(h) h.disabled = true; 
+}
+
+function stt(t, id, tag)
+{
+	f=t.responseXML.getElementsByTagName(tag)[0];
+	h = document.getElementById(id);
+	if(f && h) h.value = f.childNodes[0].nodeValue; 
+}
+
+function SetVal(id, val)
+{
+	h = document.getElementById(id);
+	if(h) h.value = val; 
+}
+
+function GetRFKey(cmd)
+{
+	var request = new XMLHttpRequest(); DisableEl('btn'+cmd); SetVal('rfc'+cmd, '<click!>');
+	request.onreadystatechange = function()
+	{
+		if (this.readyState == 4)
+		{
+			SetVal('rfc'+cmd, 0);
+			if (this.responseXML != null && this.status == 200)
+			{
+				stt(this, 'rfc'+cmd, 'LastCode');
+			} EnableEl('btn'+cmd);
+		}
+	}
+	request.open("GET", "xml?rf&get");
+	request.send(null);
+}
+
+function RFCancel()
+{
+	location.href='/';
 }
