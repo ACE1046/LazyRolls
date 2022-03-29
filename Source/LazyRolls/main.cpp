@@ -24,9 +24,9 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.12.1"
+#define VERSION "0.12.1 +rf test"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
 #define SPIFFS_AUTO_INIT
 #define RF 1
@@ -160,8 +160,7 @@ int WiFi_attempts = 0;
 unsigned long last_reconnect = 0;
 uint32_t uart_crc_errors = 0;
 #define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
-String aux_state_str; // current aux input state string
-
+bool rf_page_open = 0; // true while RF settings open
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -226,7 +225,7 @@ struct {
 	char name[64+1]; // Name
 	ip4_addr ip, mask, gw, dns; // Network config
 	rf_cmd_type rf_cmd[MAX_RF_CMDS]; // RF433 commands
-	bool rf_enabled;
+	uint8_t rf_pin; // RF remote input pin
 } ini;
 
 // language functions
@@ -903,14 +902,40 @@ const char * GetVoltageStr()
 
 #if MQTT
 
+uint8_t pin_aux, aux_state;
+uint32_t last_mqtt=0, last_mqtt_info=0;
+String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf;
+
 WiFiClient espClient;
 PubSubClient *mqtt = NULL;
+enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
+
+void UpdateMQTTInfo()
+{
+	last_mqtt_info=0;	
+}
+
+void ICACHE_RAM_ATTR auxISR()
+{
+	static uint8_t lastState=255;
+
+	uint8_t state = !digitalRead(pin_aux); // active low
+	if (state == lastState) return; // ignore duplicate readings
+
+	if (state) aux_state = AUX_ON; else aux_state = AUX_OFF;
+
+	lastState = state;
+	UpdateMQTTInfo();
+}
+
+const char *aux_state_str()
+{
+	if (aux_state == AUX_ON) return "ON";
+	if (aux_state == AUX_OFF) return "OFF";
+	return "";
+}
 
 void MQTT_discover();
-
-uint32_t last_mqtt=0, last_mqtt_info=0;
-
-String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf;
 
 void mqtt_callback(char* topic, byte* payload, unsigned int len)
 {
@@ -1215,7 +1240,7 @@ void ProcessMQTT()
 			IPAddress ip=WiFi.localIP();
 			last_mqtt_info=millis();
 			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\"}"),
-				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str.c_str());
+				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str());
 			mqtt->publish(mqtt_topic_inf.c_str(), buf);
 		}
 	}
@@ -1242,11 +1267,6 @@ void MQTT_ReportAux(bool on)
 		if (on) strcpy(buf, "ON"); else strcpy(buf, "OFF");
 		mqtt->publish(mqtt_topic_aux.c_str(), buf);
 	}
-}
-
-void UpdateMQTTInfo()
-{
-	last_mqtt_info=0;	
 }
 
 #else
@@ -1385,24 +1405,8 @@ void StopTimer()
 #define DOUBLE_CLICK_MS 3000
 #define AUX_DEBOUNCE_MS 50
 
-uint8_t pin_btn, pin_aux, button, aux_state;
+uint8_t pin_btn, button;
 enum BTN_STATES { NO_PRESS, SHORT_PRESS, LONG_PRESS };
-enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
-
-void ICACHE_RAM_ATTR auxISR()
-{
-	static uint8_t lastState=255;
-
-	uint8_t state = !digitalRead(pin_aux); // active low
-	if (state == lastState) return; // ignore duplicate readings
-
-	if (state) aux_state = AUX_ON; else aux_state = AUX_OFF;
-	if (state) aux_state_str = "ON"; else aux_state_str = "OFF";
-
-	lastState = state;
-	UpdateMQTTInfo();
-}
-
 void ICACHE_RAM_ATTR btnISR()
 {
 	static uint32_t lastChange=0;
@@ -1429,6 +1433,7 @@ int pin2hw_pin(int pin)
 		case 1: return 0; break;
 		case 2: return 2; break;
 		case 3: return 3; break;
+		case 4: return 15; break;
 		default: return 0;
 	}
 }
@@ -1438,6 +1443,7 @@ void setup_Button()
 	detachInterrupt(0);
 	detachInterrupt(2);
 	detachInterrupt(3);
+	detachInterrupt(15);
 
 	if (ini.btn_pin)
 	{
@@ -1446,6 +1452,8 @@ void setup_Button()
 		attachInterrupt(digitalPinToInterrupt(pin_btn), btnISR, CHANGE);
 	}
 
+	aux_state = AUX_NONE;
+#if MQTT
 	if (ini.aux_pin)
 	{
 		pin_aux = pin2hw_pin(ini.aux_pin);
@@ -1453,16 +1461,15 @@ void setup_Button()
 		attachInterrupt(digitalPinToInterrupt(pin_aux), auxISR, CHANGE);
 		auxISR();
 	} else
-		aux_state_str="";
+#endif
+		//aux_state_str="";
 
 #if RF
-//  if (ini.rc_pin)
+  if (ini.rf_pin)
   {
-    //pin_rc = pin2hw_pin(4);//ini.rc_pin);
-    //pinMode(pin_rc, INPUT);
-    pinMode(13, INPUT_PULLUP);
-    //digitalWrite(13, HIGH);
-    mySwitch.enableReceive(13); //запускаем RC приемник на gpio XX
+    int pin_rf = pin2hw_pin(ini.rf_pin);
+    pinMode(pin_rf, INPUT_PULLUP);
+    mySwitch.enableReceive(pin_rf); //запускаем RC приемник на gpio XX
   }
 #endif
 }
@@ -1533,8 +1540,8 @@ void process_Aux()
 // ===================== RF remote =============================
 
 #if RF
-static unsigned long last_rf_code = 0;
-static bool rf_repeat = 0;
+unsigned long last_rf_code = 0;
+bool rf_repeat = 0;
 
 // 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3', 114, 
 // 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink'
@@ -1553,11 +1560,12 @@ void RF_Action(uint8_t action, uint8_t flags)
 	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
 	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
-	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-100, ADDR_ALL); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
+	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-110, ADDR_ALL); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
 }
 
 void RF_Keypress(uint32_t code)
 {
+	if (rf_page_open) return; // RF command disabled, while RF settings open
 	for (int i=0; i < MAX_RF_CMDS; i++)
 		if (ini.rf_cmd[i].code == code)
 			RF_Action(ini.rf_cmd[i].action, ini.rf_cmd[i].flags);
@@ -1665,11 +1673,13 @@ String RF_save()
 String HTML_header();
 String HTML_footer();
 void HTTP_redirect(String link);
+void HTTP_Activity();
+
 void RF_handleHTTP()
 {
 	String out;
 
-	//HTTP_Activity();
+	HTTP_Activity();
 
 	if (httpServer.hasArg("save"))
 	{
@@ -1677,6 +1687,7 @@ void RF_handleHTTP()
 		HTTP_redirect("/");
 		return;
 	}
+	rf_page_open = true;
 
 	out = HTML_header();
 
@@ -2443,10 +2454,11 @@ String HTML_save(int span=2)
 	return s;
 }
 
-void HTTP_Activity(void)
+void HTTP_Activity()
 {
 	if (led_mode == LED_HTTP || led_mode == LED_MQTT_HTTP) LED_Blink();
 	NetworkActivity();
+	rf_page_open = false;
 }
 
 void HTTP_handleRoot(void)
@@ -2631,6 +2643,7 @@ void HTTP_saveSettings()
 	SaveInt(F("switch_ignore"), &ini.switch_ignore_steps);
 	SaveInt(F("btn_pin"), &ini.btn_pin);
 	SaveInt(F("aux_pin"), &ini.aux_pin);
+	SaveInt(F("rf_pin"), &ini.rf_pin);
 	SaveInt(F("up_safe_limit"), &ini.up_safe_limit);
 	for (int i=0; i<MAX_PRESETS; i++)
 		SaveInt(String("preset"+String(i)).c_str(), &ini.preset[i]);
@@ -2701,7 +2714,20 @@ String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var,
 	out += arr;
 	out += F("];AddOption('");
 	out += id;
-	out += "', ";
+	out += F("', ");
+	out += var;
+	out += F(", ");
+	out += val;
+	out += F(");</script>\n");
+	return out;
+}
+
+String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var, int val)
+{
+	String out;
+	out = F("<script>AddOption('");
+	out += id;
+	out += F("', ");
 	out += var;
 	out += F(", ");
 	out += val;
@@ -2856,30 +2882,36 @@ void HTTP_handleSettings(void)
 	out += HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
+#define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR)\",2,\"GPIO2 (D4)\",3,\"GPIO3 (RX)\",4,\"GPIO15 (D8)\"")
 	out += HTML_section(FLF("Button", "Кнопка"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
 	out += F("</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n");
-	out += HTML_addOption(0, ini.btn_pin, FLF("None", "Нет"));
-	out += HTML_addOption(1, ini.btn_pin, F("GPIO0 (DTR)"));
-	out += HTML_addOption(2, ini.btn_pin, F("GPIO2"));
-	out += HTML_addOption(3, ini.btn_pin, F("GPIO3 (RX)"), "pin_RX");
+	out += AddOptions(F("btn_pin"), F("pins"), PIN_LIST, ini.btn_pin);
 	out += F("</select></td></tr>\n");
 	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, " \
 		"long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
 		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). " \
 		"Двойной клик в движении - сменить направление.)"));
 
+#if RF
+	out += HTML_section(FLF("RF remote", "Радио пульт"));
+	out += F("<tr><td>");
+	out += FLF("Pin:", "Пин:");
+	out += F("</td><td><select id=\"rf_pin\" name=\"rf_pin\" onchange=\"PinChange()\">\n");
+	out += F("</select></td></tr>\n");
+	out += AddOptions(F("rf_pin"), F("pins"), /*PIN_LIST,*/ ini.rf_pin);
+	out += HTML_hint(FLF("(Radio remote control. <a href=\"/rf\">Settings</a>)",
+		"(Радио пульт. <a href=\"/rf\">Настройки</a>)"));
+#endif
+
 #if MQTT
 	out += HTML_section(FLF("Aux input", "Доп. вход"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
 	out += F("</td><td><select id=\"aux_pin\" name=\"aux_pin\" onchange=\"PinChange()\">\n");
-	out += HTML_addOption(0, ini.aux_pin, FLF("None", "Нет"));
-	out += HTML_addOption(1, ini.aux_pin, F("GPIO0 (DTR)"));
-	out += HTML_addOption(2, ini.aux_pin, F("GPIO2"));
-	out += HTML_addOption(3, ini.aux_pin, F("GPIO3 (RX)"), "aux_RX");
 	out += F("</select></td></tr>\n");
+	out += AddOptions(F("aux_pin"), F("pins"), /*PIN_LIST,*/ ini.aux_pin);
 	out += HTML_editString(FLF("MQTT topic:", "MQTT топик:"), F("mqtt_topic_aux"), ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
 	out += HTML_hint(FLF("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)",
 		"(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)"));

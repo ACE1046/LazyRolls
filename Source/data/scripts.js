@@ -193,29 +193,43 @@ function Test(dir)
 function TestUp() { Test(1); }
 function TestDown() { Test(0); }
 
+function CheckPin(p, id)
+{
+	var pin = document.getElementById(id);
+	if (!pin) return;
+	if (p[pin.selectedIndex]) pin.selectedIndex = 0; // current pin busy, disable
+	p[pin.selectedIndex] = 1; // mark busy
+}
 
-function PinChange() {
-	var slave=document.getElementById('slave');
-	var btn_pin=document.getElementById('btn_pin');
-	var aux_pin=document.getElementById('aux_pin');
-	if (!slave || !btn_pin || !aux_pin) return;
-	if (aux_pin.selectedIndex == btn_pin.selectedIndex) aux_pin.selectedIndex=0;
-	var op = btn_pin.getElementsByTagName("option");
-	for (var i = 1; i < op.length; i++) op[i].disabled = (i == aux_pin.selectedIndex);
-	op = aux_pin.getElementsByTagName("option");
-	for (var i = 1; i < op.length; i++) op[i].disabled = (i == btn_pin.selectedIndex);
+function SetDisabled(p, id)
+{
+	var pin = document.getElementById(id);
+	if (!pin) return;
+	var op = pin.getElementsByTagName("option");
+	for (var i = 1; i < op.length; i++) op[i].disabled = p[i] && (pin.selectedIndex != i);
+}
 
-	if (slave.selectedIndex > 1) 
+function PinChange()
+{
+	var p = [0, 0, 0, 0, 0]; // all available pin options: none, 0, 2, 3, 15. 0 - free to use, 1 - busy
+	const RX = 3; // index of RX pin in p array
+
+	var slave = document.getElementById('slave');
+	if (slave && slave.selectedIndex > 1) p[RX] = 1; // slave mode takes GPIO3 (RX)
+
+	CheckPin(p, 'btn_pin');
+	CheckPin(p, 'aux_pin');
+	CheckPin(p, 'rf_pin');
+	SetDisabled(p, 'btn_pin');
+	SetDisabled(p, 'aux_pin');
+	SetDisabled(p, 'rf_pin');
+	var dis = p[RX];
+	if (slave)
 	{
-		document.getElementById('pin_RX').disabled = true;
-		document.getElementById('aux_RX').disabled = true;
+		if (slave.selectedIndex > 1) dis = false;
+		var op = document.getElementById('slave').getElementsByTagName("option");
+		for (var i = 2; i < op.length; i++) op[i].disabled = dis;
 	}
-
-	var dis = false;
-	if (btn_pin.options[btn_pin.selectedIndex].id == 'pin_RX') dis = true;
-	if (aux_pin.options[aux_pin.selectedIndex].id == 'aux_RX') dis = true;
-	var op = document.getElementById('slave').getElementsByTagName("option");
-	for (var i = 2; i < op.length; i++) op[i].disabled = dis;
 }
 
 function AddOption(sel_id, opts, selected)
