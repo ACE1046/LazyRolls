@@ -1,5 +1,5 @@
-7z a -tgzip scripts.js.gz scripts.js
-7z a -tgzip styles.css.gz styles.css
+7z a -tgzip -mx9 scripts.js.gz scripts.js
+7z a -tgzip -mx9 styles.css.gz styles.css
 
 php -n make_c.php > spiff_files.h
 echo Move generated "spiff_files.h" to source dir
