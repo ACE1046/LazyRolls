@@ -18,6 +18,7 @@ http://imlazy.ru/rolls/
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
+#define FS_NO_GLOBALS 1
 #include <FS.h>
 #include <WiFiUdp.h>
 #include <DNSServer.h>
@@ -38,20 +39,20 @@ http://imlazy.ru/rolls/
 #endif
 
 #if ARDUINO_OTA
-	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
 	#include <ArduinoOTA.h>
 #endif
 
 #if RF
-#include "RCSwitch.h"  //RC433 rc-switch by Suat Ozgur
-RCSwitch mySwitch = RCSwitch();
+	// For MQTT support: Sketch - Include Library - Manage Libraries - rc-switch by Suat Ozgur - Install
+	#include "RCSwitch.h"
+	RCSwitch mySwitch = RCSwitch();
 #endif
 
 #if DAYLIGHT
 // this is just a test, not working yet
 #include <ESP8266HTTPClient.h>
 String payload;
-void TestHTTP () 
+void TestDaylight() 
 {
 
 WiFiClient client;
@@ -72,6 +73,8 @@ HTTPClient http;
       // Free resources
       http.end();
 }
+#else
+void TestDaylight() {}
 #endif
 
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
@@ -299,6 +302,7 @@ const char EQ_MQTT[] PROGMEM = "Src: MQTT";
 const char EQ_MASTER[] PROGMEM = "Src: Master";
 const char EQ_SCHEDULE[] PROGMEM = "Src: Scheduler";
 const char EQ_BUTTON[] PROGMEM = "Src: Button";
+const char EQ_RF[] PROGMEM = "Src: RF";
 
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
@@ -308,8 +312,8 @@ const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Load
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
 	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect };
 
-enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON };
-const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON };
+enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
+const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
 
 typedef struct {
 	uint32_t time; // timecode
@@ -1528,6 +1532,7 @@ void process_Aux()
 
 // ===================== RF remote =============================
 
+#if RF
 static unsigned long last_rf_code = 0;
 static bool rf_repeat = 0;
 
@@ -1539,15 +1544,16 @@ void RF_Action(uint8_t action, uint8_t flags)
 	if (roll_to != position && rf_repeat && (flags & RF_FLAG_STOP2ND))
 	{ // stop on second click
 		Stop();
+		elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF);
 		return;
 	}
-	if (action == 101) Open(ADDR_ALL); else
-	if (action == 100) Close(ADDR_ALL); else
-	if (action == 102) ButtonClick(ADDR_ALL); else
-	if (action == 103) Stop(ADDR_ALL); else
+	if (action == 101) { Open(ADDR_ALL); elog.Add(EI_Cmd_Open, EL_INFO, ES_RF); } else
+	if (action == 100) { Close(ADDR_ALL); elog.Add(EI_Cmd_Close, EL_INFO, ES_RF); } else
+	if (action == 102) { ButtonClick(ADDR_ALL); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
+	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
-	if (action > 0 && action < 100) ToPercent(action, ADDR_ALL); else
-	if (action > 110 && action <= 110+MAX_PRESETS) ToPreset(action-100, ADDR_ALL);
+	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
+	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-100, ADDR_ALL); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
 }
 
 void RF_Keypress(uint32_t code)
@@ -1560,7 +1566,6 @@ void RF_Keypress(uint32_t code)
 #define RF_DELAY 250
 void ProcessRF()
 {
-#if RF
 	static unsigned long last_rf = 0;
 	
 	if (mySwitch.available())
@@ -1586,7 +1591,6 @@ void ProcessRF()
 		}
 		mySwitch.resetAvailable();
 	}
-#endif
 }
 
 #define RF_TIMEOUT 5000 // rf-command wait time, in settings page, ms
@@ -1742,6 +1746,10 @@ void RF_handleHTTP()
 	httpServer.send(200, "text/html", out);
 }
 
+#else
+void ProcessRF() {}
+#endif
+
 // ======================= WiFi =================================
 
 #define SSID_NOT_EMPTY (ini.ssid[0] != 0)
@@ -1810,6 +1818,7 @@ void ProcessWiFi()
 			if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
 			else Serial.println(F("mDNS responder started"));
 			MDNS.addService("http", "tcp", 80);
+TestDaylight();
 		} else return;
 	}
 
@@ -1830,7 +1839,6 @@ void ProcessWiFi()
 		}
 	}
 }
-extern int ints;
 WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
 void WiFi_On()
 {
@@ -1848,7 +1856,6 @@ void WiFi_On()
 	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) 
 	{
 		Serial.println(F("Disconnected"));
-		Serial.println(ints);
 		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
 	});
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
@@ -2138,7 +2145,9 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.on("/update",   HTTP_handleUpdate);
 	httpServer.on("/log",      HTTP_handleLog);
+#if RF
 	httpServer.on("/rf",       RF_handleHTTP);
+#endif
 	httpServer.serveStatic(FAV_FILE, SPIFFS, FAV_FILE, "max-age=86400");
 	httpServer.serveStatic(CLASS_URL, SPIFFS, CLASS_FILE, "max-age=86400");
 	httpServer.serveStatic(JS_URL, SPIFFS, JS_FILE, "max-age=86400");
@@ -2683,6 +2692,23 @@ void HTTP_saveSettings()
 	WiFi.hostname(ini.hostname);
 }
 
+String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
+{
+	String out;
+	out = F("<script>const ");
+	out += var;
+	out += F("=[");
+	out += arr;
+	out += F("];AddOption('");
+	out += id;
+	out += "', ";
+	out += var;
+	out += F(", ");
+	out += val;
+	out += F(");</script>\n");
+	return out;
+}
+
 void HTTP_handleSettings(void)
 {
 	String out;
@@ -2734,26 +2760,31 @@ void HTTP_handleSettings(void)
 	out += F("<tr><td>");
 	out += FLF("Timezone: ", "Пояс: ");
 	out += F("</td><td><select id=\"timezone\" name=\"timezone\">\n");
-	for (int i=-11*60; i<=14*60; i+=30) // timezones from -11:00 to +14:00 every 30 min
-	{
-		char b[7];
-		sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
-		if (i<0) b[0]='-';
-		out += "<option value=\""+String(i)+"\"";
-		if (i==ini.timezone) out += " selected=\"selected\"";
-		out += +">UTC"+String(b)+"</option>\n";
-	}
+	// for (int i=-11*60; i<=14*60; i+=30) // timezones from -11:00 to +14:00 every 30 min
+	// {
+	// 	char b[7];
+	// 	sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
+	// 	if (i<0) b[0]='-';
+	// 	out += "<option value=\""+String(i)+"\"";
+	// 	if (i==ini.timezone) out += " selected=\"selected\"";
+	// 	out += +">UTC"+String(b)+"</option>\n";
+	// }
 	out += F("</select></td></tr>\n");
+	out += F("<script>AddOption('timezone', tzs, ");
+	out += ini.timezone;
+	out += F(");</script>\n");
 
 	out += HTML_section(FLF("Motor", "Мотор"));
 	out += F("<tr><td>");
 	out += FLF("Pinout:", "Подключение:");
 	out += F("</td><td><select id=\"pinout\" name=\"pinout\">\n");
-	out += HTML_addOption(2, ini.pinout, F("A-B-C-D"));
-	out += HTML_addOption(0, ini.pinout, F("A-C-B-D"));
-	out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
-	out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
-	out += F("</select></td></tr>\n<tr><td>");
+	// out += HTML_addOption(2, ini.pinout, F("A-B-C-D"));
+	// out += HTML_addOption(0, ini.pinout, F("A-C-B-D"));
+	// out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
+	// out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
+	out += F("</select></td></tr>\n");
+	out += AddOptions(F("pinout"), F("po"), F("2,\"A-B-C-D\",0,\"A-C-B-D\",1,\"A-B-D-C\",3,\"Step/Dir\""), ini.pinout);
+	out += F("<tr><td>");
 	out += FLF("Direction:", "Направление:");
 	out += F("</td><td><select id=\"reversed\" name=\"reversed\">\n");
 	out += HTML_addOption(1, ini.reversed, FLF("Normal", "Прямое"));
@@ -2858,14 +2889,18 @@ void HTTP_handleSettings(void)
 	out += F("<tr><td>");
 	out += FLF("Role:", "Роль:");
 	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange()\">\n");
-	out += HTML_addOption(0, ini.slave, FLF("Standalone", "Независимый"));
-	out += HTML_addOption(255, ini.slave, FLF("Master", "Главный"));
-	out += HTML_addOption(1, ini.slave, FLF("Slave 1", "Ведомый 1"));
-	out += HTML_addOption(2, ini.slave, FLF("Slave 2", "Ведомый 2"));
-	out += HTML_addOption(3, ini.slave, FLF("Slave 3", "Ведомый 3"));
-	out += HTML_addOption(4, ini.slave, FLF("Slave 4", "Ведомый 4"));
-	out += HTML_addOption(5, ini.slave, FLF("Slave 5", "Ведомый 5"));
+	// out += HTML_addOption(0, ini.slave, FLF("Standalone", "Независимый"));
+	// out += HTML_addOption(255, ini.slave, FLF("Master", "Главный"));
+	// out += HTML_addOption(1, ini.slave, FLF("Slave 1", "Ведомый 1"));
+	// out += HTML_addOption(2, ini.slave, FLF("Slave 2", "Ведомый 2"));
+	// out += HTML_addOption(3, ini.slave, FLF("Slave 3", "Ведомый 3"));
+	// out += HTML_addOption(4, ini.slave, FLF("Slave 4", "Ведомый 4"));
+	// out += HTML_addOption(5, ini.slave, FLF("Slave 5", "Ведомый 5"));
 	out += F("</select></td></tr>\n");
+	out += AddOptions(F("slave"), F("mss"),
+		FLF("0,\"Standalone\",255,\"Master\",1,\"Slave 1\",2,\"Slave 2\",3,\"Slave 3\",4,\"Slave 4\",5,\"Slave 5\"",
+			"0,\"Независимый\",255,\"Главный\",1,\"Ведомый 1\",2,\"Ведомый 2\",3,\"Ведомый 3\",4,\"Ведомый 4\",5,\"Ведомый 5\""),
+		ini.slave);
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
 	out += HTML_section(FLF("LED", "Светодиод"));
@@ -3247,11 +3282,13 @@ String MakeNode(const __FlashStringHelper *name, String val)
 }
 void HTTP_handleXML(void)
 {
+#if RF
 	if (httpServer.hasArg("rf"))
 	{
 		RF_handleXML();
 		return;
 	}
+#endif
 
 	String XML, s;
 	uint32_t realSize = ESP.getFlashChipRealSize();
@@ -3288,8 +3325,10 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("IdeMode"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 	XML += F("</ChipInfo><RF>");
 
+#if RF
 	XML += MakeNode(F("LastCode"), String(last_rf_code));
 	XML += MakeNode(F("Hex"), String(last_rf_code, HEX));
+#endif
 
 	XML += F("</RF><Position>");
 	XML += MakeNode(F("Now"), String(position));

@@ -4,6 +4,12 @@ var active;
 window.onfocus = function() { active = true; clearTimeout(timerId); timeout=500; GetStatus(); };
 window.onblur = function() { active = false; clearTimeout(timerId); };
 
+const tzs=[-660,"UTC-11:00",-630,"UTC-10:30",-600,"UTC-10:00",-570,"UTC-9:30",-540,"UTC-9:00",-510,"UTC-8:30",-480,"UTC-8:00",-450,"UTC-7:30",
+	-420,"UTC-7:00",-390,"UTC-6:30",-360,"UTC-6:00",-330,"UTC-5:30",-300,"UTC-5:00",-270,"UTC-4:30",-240,"UTC-4:00",-210,"UTC-3:30",-180,"UTC-3:00",
+	-150,"UTC-2:30",-120,"UTC-2:00",-90,"UTC-1:30",-60,"UTC-1:00",-30,"UTC-0:30",0,"UTC+0:00",30,"UTC+0:30",60,"UTC+1:00",90,"UTC+1:30",120,"UTC+2:00",
+	150,"UTC+2:30",180,"UTC+3:00",210,"UTC+3:30",240,"UTC+4:00",270,"UTC+4:30",300,"UTC+5:00",330,"UTC+5:30",360,"UTC+6:00",390,"UTC+6:30",
+	420,"UTC+7:00",450,"UTC+7:30",480,"UTC+8:00",510,"UTC+8:30",540,"UTC+9:00",570,"UTC+9:30",600,"UTC+10:00",630,"UTC+10:30",660,"UTC+11:00",
+	690,"UTC+11:30",720,"UTC+12:00",750,"UTC+12:30",780,"UTC+13:00",810,"UTC+13:30",840,"UTC+14:00"];
 
 function HideS(s)
 {
