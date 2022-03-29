@@ -1460,9 +1460,8 @@ void setup_Button()
 		pinMode(pin_aux, INPUT_PULLUP);
 		attachInterrupt(digitalPinToInterrupt(pin_aux), auxISR, CHANGE);
 		auxISR();
-	} else
+	}
 #endif
-		//aux_state_str="";
 
 #if RF
   if (ini.rf_pin)
