@@ -16,7 +16,6 @@ http://imlazy.ru/rolls/
 */
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
 #define FS_NO_GLOBALS 1
 #include <FS.h>
@@ -28,10 +27,15 @@ http://imlazy.ru/rolls/
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
-#define SPIFFS_AUTO_INIT
 #define RF 1
+#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
+#define SPIFFS_AUTO_INIT
 
 #include "spiff_files.h"
+
+#if MDNSC
+	#include <ESP8266mDNS.h>
+#endif
 
 #if MQTT
 	// For MQTT support: Sketch - Include Library - Manage Libraries - PubSubClient - Install
@@ -58,6 +62,12 @@ void TestDaylight()
 WiFiClient client;
 HTTPClient http;
 	http.begin(client, "http://api.sunrise-sunset.org/json?lat=55.76501600&lng=37.61&formatted=0");
+
+/*
+GET /json?lat=55.76501600&lng=37.61&formatted=0 HTTP/1.1
+Host: api.sunrise-sunset.org
+
+*/
       int httpResponseCode = http.GET();
       
       if (httpResponseCode>0) {
@@ -1683,7 +1693,7 @@ void RF_handleHTTP()
 	if (httpServer.hasArg("save"))
 	{
 		RF_saveSettings();
-		HTTP_redirect("/");
+		HTTP_redirect("/settings?ok=1");
 		return;
 	}
 	rf_page_open = true;
@@ -1692,7 +1702,7 @@ void RF_handleHTTP()
 
 	out.reserve(16384);
 
-	out += F("<section class=\"settings\" id=\"settings\">\n");
+	out += F("<section class=\"settings\" id=\"settings_rf\">\n");
 
 	out += F("<form method=\"post\" action=\"/rf\">\n");
 
@@ -1716,10 +1726,13 @@ void RF_handleHTTP()
 		out += i;
 		out += F("\" value=\"");
 		out += ini.rf_cmd[i].code;
-		out += F("\" maxlength=\"10\"/>\n<input type=\"button\" value=\"Set\" id=\"btn");
+		out += F("\" maxlength=\"10\"/>\n<input type=\"button\" value=\"");
+		out += FLF("Set", "Уст");
+		out += F("\" id=\"btn");
 		out += i;
 		out += F("\" onclick=\"GetRFKey(");
 		out += i;
+		out += FLF(", '<click!>'", ", '<жми!>'");
 		out += F(");\">\n</td>\n<td>\n<select id=\"rfa");
 		out += i;
 		out += F("\" name=\"rfa");
@@ -1732,7 +1745,8 @@ void RF_handleHTTP()
 		if (ini.rf_cmd[i].flags & RF_FLAG_STOP2ND) out += "checked";
 		out += F(" name=\"rfs");
 		out += i;
-		out += F("\">Stop on 2nd click</label></span>\n</td>\n</tr>");
+		out += FLF("\">Stop on 2nd click", "\">Стоп по 2му клику");
+		out += F("</label></span>\n</td>\n</tr>");
 	}
 	out += F("<script>const opts1 = ");
 	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5',102,'Open/Close',103,'Stop',104,'Blink'];\n",
@@ -1825,9 +1839,11 @@ void ProcessWiFi()
 			Serial.println(WiFi.localIP());
 			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
 
+#if MDNSC
 			if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
 			else Serial.println(F("mDNS responder started"));
 			MDNS.addService("http", "tcp", 80);
+#endif
 TestDaylight();
 		} else return;
 	}

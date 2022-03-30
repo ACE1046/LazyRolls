@@ -270,9 +270,9 @@ function SetVal(id, val)
 	if(h) h.value = val; 
 }
 
-function GetRFKey(cmd)
+function GetRFKey(cmd, msg)
 {
-	var request = new XMLHttpRequest(); DisableEl('btn'+cmd); SetVal('rfc'+cmd, '<click!>');
+	var request = new XMLHttpRequest(); DisableEl('btn'+cmd); SetVal('rfc'+cmd, msg);
 	request.onreadystatechange = function()
 	{
 		if (this.readyState == 4)
@@ -290,5 +290,5 @@ function GetRFKey(cmd)
 
 function RFCancel()
 {
-	location.href='/';
+	location.href='/settings';
 }
