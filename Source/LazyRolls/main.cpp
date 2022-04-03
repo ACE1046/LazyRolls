@@ -3654,7 +3654,7 @@ void HTTP_handleLog(void)
 			}
 			out += F("\">[");
 			t = e->time;
-			if (t > 100*DAYS)
+			if (t > 100 * DAY)
 			{ // less than 100 days -> no ntp data, time from reboot in seconds
 				date2str(buf, t);
 				out += buf; // time->tm_year;
@@ -3703,8 +3703,7 @@ void HTTP_handleLog(void)
 						default: out += F("Unknown"); break;
 					}
 					break;
-			default:
-				break; // out += e->val; break;
+				default: break;//out += e->val; break;
 			}
 			out += F("</td></tr>\n");
 		}
