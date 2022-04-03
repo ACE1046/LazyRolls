@@ -49,19 +49,22 @@ section {
 .settings td, .alarms td, .log .sect_name td {
 	padding: 5px;
 }
-.alarms td.narrow { width:1%; }
+.alarms td.narrow { width:30%; white-space:nowrap; }
 .alarms td.en { white-space:nowrap; width:1%;}
 .alarms .days label { white-space:nowrap; width:1%;}
 .alarms tr { vertical-align: top; }
-.alarms tr.en { line-height: 1.5; white-space:nowrap;}
 .alarms hr { margin-top: 0px;  margin-bottom: 0px; }
 .alarms .en td { padding-top: 0px; padding-bottom: 3px; }
-.alarms .en label input[type='checkbox'] { margin-left: 0px; }
 
 @media (min-width: 750px), (min-width: 460px) and (max-width: 640px) { 
 	.alarms input[type='time'] { margin-top: -5px; border-top: -5px; }
 	.alarms br { display: none; }
 }
+.alarms input[type='radio'] { margin-left: 0px; }
+.alarms input[type='checkbox'] { margin-left: 0px; }
+.alarms .a_radio label { margin-left: 0px; margin-right: 22px; }
+.alarms .en label { margin-left: 0px; margin-right: 0px;}
+.alarms .days label { margin-left: 0px; margin-right: 5px; }
 
 header { max-width: 830px;}
 

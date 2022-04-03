@@ -146,7 +146,7 @@ uint16_t def_step_delay_mks = 1500;
 #define ADDR_ALL 255
 #define MQTT_INFO_SECONDS 5*60 // Send mqtt info (rssi, uptime, etc) every N seconds
 
-const int Languages=2;
+const int Languages = 2;
 const char ru_ru[] PROGMEM = "Русский";
 const char en_en[] PROGMEM = "English";
 const __FlashStringHelper *Language[Languages]={ (__FlashStringHelper*)en_en, (__FlashStringHelper*)ru_ru };
@@ -162,8 +162,8 @@ volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 volatile uint8_t endstop_hit = 0; // endstop hit flag. Set at ISR, reset at user level
 volatile int endstop_hit_pos = 0; // position of endtop hit
-bool voltage_available=0;
-uint32_t last_network_time=0; // last network activity time
+bool voltage_available = 0;
+uint32_t last_network_time = 0; // last network activity time
 bool WiFi_active = false;
 bool WiFi_connected = false;
 bool WiFi_AP_disabled = false; // AP mode disabled after successfull connection to home network or after first ping msg from master
@@ -184,6 +184,8 @@ typedef struct {
 	uint32_t reserved;
 } alarm_type;
 #define ALARM_FLAG_ENABLED 0x0001
+#define ALARM_FLAG_SUNRISE 0x0002
+#define ALARM_FLAG_SUNSET  0x0004
 
 typedef struct {
 	uint32_t code;
@@ -244,26 +246,26 @@ struct {
 // language functions
 const char * L(const char *s1, const char *s2)
 {
-	return (ini.lang==0) ? s1 : s2;
+	return (ini.lang == 0) ? s1 : s2;
 }
-const __FlashStringHelper * FL(const __FlashStringHelper *s1, const __FlashStringHelper *s2)
+const __FlashStringHelper *FL(const __FlashStringHelper *s1, const __FlashStringHelper *s2)
 {
-	return (ini.lang==0) ? s1 : s2;
+	return (ini.lang == 0) ? s1 : s2;
 }
 #define FLF(a, b) FL(F(a), F(b))
 String SL(const char *s1, const char *s2)
 {
-	return (ini.lang==0) ? String(s1) : String(s2);
+	return (ini.lang == 0) ? String(s1) : String(s2);
 }
 String SL(String s1, String s2)
 {
-	return (ini.lang==0) ? s1 : s2;
+	return (ini.lang == 0) ? s1 : s2;
 }
 
 void NetworkActivity(void)
 {
 	WiFi.setSleepMode(WIFI_NONE_SLEEP);
-	last_network_time=millis();
+	last_network_time = millis();
 }
 
 void ToPercent(uint8_t pos, uint8_t address);
@@ -471,7 +473,7 @@ bool LED_Command(const char *cmd)
 
 void ProcessLED()
 {
-	static uint32_t last_blink=0;
+	static uint32_t last_blink = 0;
 
 	if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP) return;
 
@@ -494,19 +496,19 @@ void ProcessLED()
 
 //===================== Captive Portal =================================
 DNSServer dnsServer;
-bool cp_active=false;
+bool cp_active = false;
 const uint16_t DNS_PORT = 53;
 
 void CP_create()
 {
 	dnsServer.setErrorReplyCode(DNSReplyCode::ServerFailure);
 	dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
-	cp_active=true;
+	cp_active = true;
 }
 
 void CP_delete()
 {
-	cp_active=false;
+	cp_active = false;
 	dnsServer.stop();
 }
 
@@ -568,7 +570,7 @@ void SyncNTPTime()
 		NTPTime -= seventyYears;
 		elog.Add(EI_NTP_Sync, EL_INFO, NTPTime);
 		UNIXTime = NTPTime;
-		lastSync=millis();
+		lastSync = millis();
 	}
 	UDP.flush();
 }
@@ -596,15 +598,15 @@ String TimeStr()
 void Time2YMD(uint32_t t, int &year, int &month, int &day)
 {
 	uint32_t days;
-	uint8_t leap=2;
+	uint8_t leap = 2;
 	const uint32_t day_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-	t /= 24*60*60;
+	t /= DAY;
 	year = 1970;
 	month = 1;
 	while(1)
 	{
-		days=365;
+		days = 365;
 		if (!leap) days++;
 		if (t < days) break;
 		t -= days;
@@ -619,13 +621,13 @@ void Time2YMD(uint32_t t, int &year, int &month, int &day)
 		month++;
 		t -= dm;
 	}
-	day = t+1;
+	day = t + 1;
 }
 
 String UptimeStr()
 {
 	char buf[9];
-	uint32_t t=millis()/1000;
+	uint32_t t = millis() / 1000;
 	sprintf_P(buf, PSTR("%dd %02d:%02d"), t/60/60/24, t/60/60%24, t/60%60);
 	return String(buf);
 }
@@ -665,7 +667,7 @@ void TestDaylight2()
     localT = calculateSunriseSunset(d, 116947714, 78873886, 180, 0, 0);
     Serial.print(localT/60);
     Serial.print(':');
-    Serial.println(localT%60);
+	Serial.println(localT % 60);
 }
 
 String TimeToStr(int32_t t)
@@ -689,7 +691,7 @@ String PrintSunriseTable()
 	out += F("</th><th colspan=\"2\">");
 	out += FLF("Tomorrow", "Завтра");
 	out += F("</th></tr>\n<tr><th>");
-	out += FLF("Sun height", "Уровень солнца");
+	out += FLF("Sun height", "Высота солнца");
 	out += F("</th><th>");
 	out += FLF("Sunrise", "Восход");
 	out += F("</th><th>");
@@ -699,9 +701,9 @@ String PrintSunriseTable()
 	out += F("</th><th>");
 	out += FLF("Sunset", "Закат");
 	out += F("</th></tr>\n");
-	for (int i=-5; i<=5;i++)
+	for (int i = 5; i >= -5; i--)
 	{
-	ZENITH = FROMFLOAT(-.83f + i);
+		ZENITH = FROMFLOAT(-.83f + i);
 		out += ("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
 		if (i > 0) out += "+";
@@ -1102,7 +1104,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 String ReplaceHostname(const char *topic)
 {
 	String s;
-	s=String(topic);
+	s = String(topic);
 	s.replace("%HOSTNAME%", String(ini.hostname));
 	return s;
 }
@@ -1618,7 +1620,7 @@ void ButtonClick(uint8_t address=ADDR_ALL)
 	if (open) Open(address); else Close(address);
 
 	lastCommand = open;
-	lastClick=millis();
+	lastClick = millis();
 }
 
 void ButtonLongClick(uint8_t address=ADDR_ALL)
@@ -2485,7 +2487,7 @@ String HTML_status()
 	if (lastSync==0)
 		out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"), "time");
 	else
-		out += HTML_tableLine(L("Time", "Время"), TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]", "time");
+		out += HTML_tableLine(L("Time", "Время"), TimeStr() + " [" + DoWName(DayOfWeek(getTime())) +"]", "time");
 
 	out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr(), "uptime");
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
@@ -2503,7 +2505,7 @@ String HTML_status()
 	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
 	out += HTML_tableLine(L("Real size", "Реально"), MemSize2Str(realSize));
 	out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
-	if(ideSize != realSize) {
+	if (ideSize != realSize) {
 		out += HTML_tableLine(L("Config", "Конфиг"), L("error!", "ошибка!"));
 	} else {
 		out += HTML_tableLine(L("Config", "Конфиг"), "OK!");
@@ -2808,7 +2810,7 @@ void HTTP_saveSettings()
 
 	setup_MQTT();
 	setup_Button();
-	
+
 	FillStepsTable();
 	AdjustTimerInterval();
 
@@ -3122,6 +3124,7 @@ uint32_t StrToTime(String s)
 void HTTP_handleAlarms(void)
 {
 	String out;
+	int s;
 
 	HTTP_Activity();
 
@@ -3135,24 +3138,39 @@ void HTTP_handleAlarms(void)
 			else
 				ini.alarms[a].flags &= ~ALARM_FLAG_ENABLED;
 
-			if (httpServer.hasArg("time"+n))
+			ini.alarms[a].flags &= ~(ALARM_FLAG_SUNRISE | ALARM_FLAG_SUNSET);
+			s = 0;
+			if (httpServer.hasArg("a_src" + n))
 			{
-				ini.alarms[a].time=StrToTime(httpServer.arg("time"+n));
+				s = atoi(httpServer.arg("a_src" + n).c_str());
+				if (s == 1) ini.alarms[a].flags |= ALARM_FLAG_SUNRISE;
+				if (s == 2) ini.alarms[a].flags |= ALARM_FLAG_SUNSET;
 			}
 
-			if (httpServer.hasArg("dest"+n))
-			{
-				ini.alarms[a].percent_open=atoi(httpServer.arg("dest"+n).c_str());
-				if (ini.alarms[a].percent_open>100+MAX_PRESETS) ini.alarms[a].percent_open=100;
+			if (s > 0)
+			{ // sun time
+				if (httpServer.hasArg("sunh" + n))
+					ini.alarms[a].time = 10 + atoi(httpServer.arg("sunh" + n).c_str());
+			} else
+			{ // clock time
+				if (httpServer.hasArg("time" + n))
+					ini.alarms[a].time = StrToTime(httpServer.arg("time" + n));
 			}
 
-			uint8_t b=0;
-			for (int d=6; d>=0; d--)
+			if (httpServer.hasArg("dest" + n))
+			{
+				ini.alarms[a].percent_open = atoi(httpServer.arg("dest" + n).c_str());
+				if (ini.alarms[a].percent_open > 100 + MAX_PRESETS)
+					ini.alarms[a].percent_open = 100;
+			}
+
+			uint8_t b = 0;
+			for (int d = 6; d >= 0; d--)
 			{
 				b=b<<1;
 				if (httpServer.hasArg("d"+n+"_"+String(d))) b|=1;
 			}
-			ini.alarms[a].day_of_week=b;
+			ini.alarms[a].day_of_week = b;
 		}
 
 		SaveSettings(&ini, sizeof(ini));
@@ -3208,7 +3226,7 @@ void HTTP_handleAlarms(void)
 	for (int p=0; p<MAX_PRESETS; p++)
 	{
 		actions += 101+p;
-		actions += FLF(",\"Preset ,", ",\"Позиция ");
+		actions += FLF(",\"Preset ", ",\"Позиция ");
 		actions += 1+p;
 		actions += "\",";
 	}
@@ -3228,9 +3246,13 @@ void HTTP_handleAlarms(void)
 		out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
 		out += F("/>\n");
 		out += FLF("Enable", "Вкл.");
-		out += F("</label></td>\n");
+		out += F("</label></td>\n<td colspan=\"2\" id=\"a_sel");
+		out += n;
+		out += F("\" class=\"a_radio\"></td></tr>\n<tr><td></td>");
 
-		out += F("<td class=\"narrow\"><label for=\"time");
+		out += F("<td class=\"narrow\">\n<span id=\"a_st");
+		out += n;
+		out += F("\"><label for=\"time");
 		out += n;
 		out += F("\">");
 		out += FLF("Time:", "Время:");
@@ -3239,13 +3261,27 @@ void HTTP_handleAlarms(void)
 		out += F("\" name=\"time");
 		out += n;
 		out += F("\" value=\"");
-		out += TimeToStr(ini.alarms[a].time);
-		out += F("\" required></td>\n");
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET)
+			out += TimeToStr(0);
+		else
+			out += TimeToStr(ini.alarms[a].time);
+		out += F("\" required></span>\n");
+		out += F("<span id=\"a_ss");
+		out += n;
+		out += F("\"><label for=\"sunh");
+		out += n;
+		out += F("\">");
+		out += FLF("Height:", "Высота:");
+		out += F("</label> <br/><select id=\"sunh");
+		out += n;
+		out += F("\" name=\"sunh");
+		out += n;
+		out += F("\"></select></span>\n</td>\n");
 
 		out += F("<td><label for=\"dest");
 		out += n;
 		out += F("\"> ");
-		out += FLF("Position:", "Положение:");
+		out += FLF("Action:", "Действие:");
 		out += F("</label> <br/><select id=\"dest");
 		out += n;
 		out += F("\" name=\"dest");
@@ -3274,33 +3310,35 @@ void HTTP_handleAlarms(void)
 	out += F("<script>\n");
 	out += F("const sh_a=[");
 	out += actions;
-	out += F("];\n");
-	out += F("const dow=[");
+	out += F("];\na_shs=[5,\"+5&deg;\",4,\"+4&deg;\",3,\"+3&deg;\",2,\"+2&deg;\",1,\"+1&deg;\",0,\"&nbsp;&nbsp;0&deg;\",-1,\"-1&deg;\",-2,\"-2&deg;\",-3,\"-3&deg;\",-4,\"-4&deg;\",-5, \"-5&deg;\"];\na_srs=[");
+	out += FLF("\"clock\", \"sunrise\", \"sunset\"", "\"часы\", \"восход\", \"закат\"");
+	out += F("];\nconst dow=[");
 	out += FLF("'Mo','Tu','We','Th','Fr','Sa','Su'", "'Пн','Вт','Ср','Чт','Пт','Сб','Вс'");
 	out += F("];\n");
 	for (int a=0; a<ALARMS; a++)
 	{
-		out += F("AddOption('dest");
+		out += F("SetAlarm(");
 		out += a;
-		out += F("',sh_a,");
+		out += F(",");
 		out += ini.alarms[a].percent_open;
-		out += F(");\n");
-	}
-	for (int a=0; a<ALARMS; a++)
-	{
-		out += F("AddWeek('d");
-		out += a;
-		out += F("',dow,");
+		out += F(",");
 		out += ini.alarms[a].day_of_week;
+		out += F(",");
+		int r=0;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) r=1;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET) r=2;
+		out += r;
+		out += F(",");
+		r=0;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET) r = ini.alarms[a].time - 10;
+		out += r;
 		out += F(");\n");
 	}
 	out += F("</script>\n");
 
 	out += HTML_save(3);
 
-	out += F("</table>\n" \
-		"</form>\n" \
-		"</section>\n");
+	out += F("</table>\n</form>\n</section>\n");
 	out += HTML_footer();
 
 	httpServer.send(200, "text/html", out);
@@ -3402,7 +3440,7 @@ void HTTP_handleSet(void)
 	}
 	else if (httpServer.hasArg("preset"))
 	{
-		int preset=atoi(httpServer.arg("preset").c_str());
+		int preset = atoi(httpServer.arg("preset").c_str());
 		elog.Add(EI_Cmd_Preset, EL_INFO, ES_HTTP + (preset << 8));
 		ToPreset(preset, addr);
 		Return200();
@@ -3444,17 +3482,17 @@ void HTTP_handleSet(void)
 
 void HTTP_handleTest(void)
 {
-	bool dir=false;
+	bool dir = false;
 	uint8_t bak_pinout;
 	bool bak_reversed;
 	uint16_t bak_step_delay_mks;
-	int steps=300;
+	int steps = 300;
 
 	HTTP_Activity();
 
-	bak_pinout=ini.pinout;
-	bak_reversed=ini.reversed;
-	bak_step_delay_mks=ini.step_delay_mks;
+	bak_pinout = ini.pinout;
+	bak_reversed = ini.reversed;
+	bak_step_delay_mks = ini.step_delay_mks;
 
 	if (httpServer.hasArg("up")) dir=true;
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
@@ -3481,11 +3519,11 @@ void HTTP_handleTest(void)
 		delay(10);
 		yield();
 	}
-	roll_to=position;
+	roll_to = position;
 
-	ini.pinout=bak_pinout;
-	ini.reversed=bak_reversed;
-	ini.step_delay_mks=bak_step_delay_mks;
+	ini.pinout = bak_pinout;
+	ini.reversed = bak_reversed;
+	ini.step_delay_mks = bak_step_delay_mks;
 
 	FillStepsTable();
 	AdjustTimerInterval();
@@ -3521,7 +3559,7 @@ void HTTP_handleXML(void)
 	XML += F("<Info>");
 	XML += MakeNode(F("Version"), VERSION);
 	XML += MakeNode(F("IP"), WiFi.localIP().toString());
-	s=String(ini.name);
+	s = String(ini.name);
 	s.replace(F("<"), F("&lt;"));
 	s.replace(F(">"), F("&gt;"));
 	XML += MakeNode(F("Name"), s);
@@ -3616,7 +3654,7 @@ void HTTP_handleLog(void)
 			}
 			out += F("\">[");
 			t = e->time;
-			if (t > 100*24*60*60)
+			if (t > 100*DAYS)
 			{ // less than 100 days -> no ntp data, time from reboot in seconds
 				date2str(buf, t);
 				out += buf; // time->tm_year;
@@ -3665,7 +3703,8 @@ void HTTP_handleLog(void)
 						default: out += F("Unknown"); break;
 					}
 					break;
-				default: break;//out += e->val; break;
+			default:
+				break; // out += e->val; break;
 			}
 			out += F("</td></tr>\n");
 		}
@@ -3762,12 +3801,12 @@ void loop(void)
 	}
 
 	delay(10); // this delay enables light sleep mode
-	static int heap=65536;
-	int h;
-	h=ESP.getFreeHeap();
-	if (h<heap)
-	{
-		heap=h;
-		Serial.println(heap);
-	}
+	// static int heap = 65536;
+	// int h;
+	// h = ESP.getFreeHeap();
+	// if (h < heap)
+	// {
+	// 	heap = h;
+	// 	Serial.println(heap);
+	// }
 }

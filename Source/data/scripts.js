@@ -327,6 +327,50 @@ function AddWeek(sel_id, opts, selected)
 		lbl.innerHTML += opts[i];
 
 		td.appendChild(lbl);
-		td.append(" ");
+		td.innerHTML += " ";
 	};
+}
+
+function a_ch(n)
+{
+	r=document.getElementById('a_time'+n);
+	if (!r) return;
+	f=document.getElementById('a_st'+n);
+	if (f) f.hidden = !r.checked;
+	f=document.getElementById('a_ss'+n);
+	if (f) f.hidden = r.checked;
+}
+
+function AddRadio(id, val, label, n, ch)
+{
+	td=document.getElementById('a_sel'+n);
+	if (!td) return;
+		var inp = document.createElement('input');
+		inp.type = 'radio';
+		inp.id = id+n;
+		inp.name = 'a_src'+n;
+		inp.value = val;
+		inp.defaultChecked = ch;
+		inp.setAttribute( "onchange", "a_ch("+n+");");
+		td.appendChild(inp);
+		var lbl = document.createElement('label');
+		lbl.htmlFor = inp.id;
+		lbl.innerHTML = label;
+		td.appendChild(lbl);
+}
+
+function AlarmRadio(n, l, v)
+{
+	AddRadio('a_time', '0', l[0], n, v==0)
+	AddRadio('a_sunrise', '1', l[1], n, v==1)
+	AddRadio('a_sunset', '2', l[2], n, v==2)
+	a_ch(n);
+}
+
+function SetAlarm(n, v1, v2, v3, v4)
+{
+	AddOption('dest'+n, sh_a, v1);
+	AddWeek('d'+n, dow, v2);
+	AlarmRadio(n, a_srs, v3);
+	AddOption('sunh'+n, a_shs, v4);
 }
