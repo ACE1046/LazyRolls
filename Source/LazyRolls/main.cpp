@@ -27,8 +27,9 @@ http://imlazy.ru/rolls/
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
+#define DAYLIGHT2 1 // this is just a test, not working yet
 #define RF 1
-#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
+#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define SPIFFS_AUTO_INIT
 
 #include "spiff_files.h"
@@ -236,6 +237,8 @@ struct {
 	ip4_addr ip, mask, gw, dns; // Network config
 	rf_cmd_type rf_cmd[MAX_RF_CMDS]; // RF433 commands
 	uint8_t rf_pin; // RF remote input pin
+	int32_t lat; // latitude
+	int32_t lng; // longitude
 } ini;
 
 // language functions
@@ -590,6 +593,35 @@ String TimeStr()
 	return String(buf);
 }
 
+void Time2YMD(uint32_t t, int &year, int &month, int &day)
+{
+	uint32_t days;
+	uint8_t leap=2;
+	const uint32_t day_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+	t /= 24*60*60;
+	year = 1970;
+	month = 1;
+	while(1)
+	{
+		days=365;
+		if (!leap) days++;
+		if (t < days) break;
+		t -= days;
+		year++;
+		leap = (leap + 1) % 4;
+	}
+	while (1)
+	{
+		uint32_t dm = day_month[month-1];
+		if (!leap && month == 2) dm++; // Feb in leap year
+		if (t < dm) break;
+		month++;
+		t -= dm;
+	}
+	day = t+1;
+}
+
 String UptimeStr()
 {
 	char buf[9];
@@ -617,6 +649,84 @@ int DayOfWeek(uint32_t time)
 {
 	return ((time / DAY) + 3) % 7;
 }
+
+// ===================== Daylight =============================
+
+#if DAYLIGHT2
+#include "daylight.h"
+void TestDaylight2()  
+{
+	int d = computeDayOfYear(2022, 1, 6);
+    int localT = calculateSunriseSunset(d, 116947714, 78873886, 180, 0, 1);
+//    int localT = calculateSunriseSunset(d, 176947714, 78873886, 180, 0, 1);
+    Serial.print(localT/60);
+    Serial.print(':');
+    Serial.println(localT%60);
+    localT = calculateSunriseSunset(d, 116947714, 78873886, 180, 0, 0);
+    Serial.print(localT/60);
+    Serial.print(':');
+    Serial.println(localT%60);
+}
+
+String TimeToStr(int32_t t)
+{
+	char buf[6];
+	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
+	return String(buf);
+}
+
+String PrintSunriseTable()
+{
+	String out = "";
+	out.reserve(800);
+	int y, m, d;
+	Time2YMD(getTime(), y, m, d);
+	d = computeDayOfYear(y, m, d);
+	//out += FLF("<p>Today:</p>", "<p>Сегодня:</p>");
+	out += F("<table class=\"sun\"><tr><th>");
+	out += F("</th><th colspan=\"2\">");
+	out += FLF("Today", "Сегодня");
+	out += F("</th><th colspan=\"2\">");
+	out += FLF("Tomorrow", "Завтра");
+	out += F("</th></tr>\n<tr><th>");
+	out += FLF("Sun height", "Уровень солнца");
+	out += F("</th><th>");
+	out += FLF("Sunrise", "Восход");
+	out += F("</th><th>");
+	out += FLF("Sunset", "Закат");
+	out += F("</th><th>");
+	out += FLF("Sunrise", "Восход");
+	out += F("</th><th>");
+	out += FLF("Sunset", "Закат");
+	out += F("</th></tr>\n");
+	for (int i=-5; i<=5;i++)
+	{
+	ZENITH = FROMFLOAT(-.83f + i);
+		out += ("<tr><td>");
+		out += FLF("Horizon ", "Горизонт ");
+		if (i > 0) out += "+";
+		if (i != 0) 
+		{
+			out += i;
+			out += ("&deg;");
+		}
+		out += F("</td><td>");
+		out += TimeToStr(calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, 1));
+		out += ("</td><td>");
+		out += TimeToStr(calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, 0));
+		out += ("</td><td>");
+		out += TimeToStr(calculateSunriseSunset(d+1, ini.lat, ini.lng, ini.timezone, 0, 1));
+		out += ("</td><td>");
+		out += TimeToStr(calculateSunriseSunset(d+1, ini.lat, ini.lng, ini.timezone, 0, 0));
+		out += ("</td></tr>\n");
+	}
+	out += ("</table>\n");
+	return out;
+}
+#else
+void TestDaylight2() {}
+String PrintSunriseTable() { return ""; }
+#endif
 
 // ===================== UART master/slave =============================
 
@@ -1845,6 +1955,7 @@ void ProcessWiFi()
 			MDNS.addService("http", "tcp", 80);
 #endif
 TestDaylight();
+TestDaylight2();
 		} else return;
 	}
 
@@ -2684,6 +2795,8 @@ void HTTP_saveSettings()
 	SaveInt(F("led_mode"), &ini.led_mode);
 	SaveInt(F("led_level"), &ini.led_level);
 	SaveInt(F("slave"), &ini.slave);
+	SaveInt(F("lat"), &ini.lat);
+	SaveInt(F("lng"), &ini.lng);
 
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
@@ -2773,7 +2886,7 @@ void HTTP_handleSettings(void)
 		out += FLF("<p>Saved!<br/>Network settings will be applied after reboot.<br/><a href=\"reboot\">[Reboot]</a></p>\n",
 			"<p>Сохранено!<br/>Настройки сети будут применены после перезагрузки.<br/><a href=\"reboot\">[Перезагрузить]</a></p>\n");
 
-	out += F("<form method=\"post\" action=\"/settings\">\n");
+	out += F("<form method=\"post\" action=\"/settings\" onsubmit=\"return Save();\">\n");
 
 	out += F("<table>\n");
 	out += HTML_save();
@@ -2950,6 +3063,17 @@ void HTTP_handleSettings(void)
 		ini.slave);
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
+#if DAYLIGHT2
+	out += HTML_section(FLF("Coordinates", "Координаты"));
+	out += HTML_editString(FLF("Latitude:", "Широта:"), F("lat"), "", 11);
+	out += HTML_editString(FLF("Longitude:", "Долгота:"), F("lng"), "", 11);
+	out += F("<script>SetCoord(");
+	out += ini.lat;
+	out += F(",");
+	out += ini.lng;
+	out += F(");</script>\n");
+#endif
+
 	out += HTML_section(FLF("LED", "Светодиод"));
 //	out += "<tr><td colspan=\"2\"><a href=\"http://imlazy.ru/rolls/cmd.html\">imlazy.ru/rolls/cmd.html</a></label></td></tr>\n";
 	out += F("<tr><td>");
@@ -2995,13 +3119,6 @@ uint32_t StrToTime(String s)
 	return t;
 }
 
-String TimeToStr(uint32_t t)
-{
-	char buf[6];
-	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
-	return String(buf);
-}
-
 void HTTP_handleAlarms(void)
 {
 	String out;
@@ -3043,15 +3160,58 @@ void HTTP_handleAlarms(void)
 
 	out=HTML_header();
 
-	out.reserve(20480);
+	out.reserve(16384);
 
 	out += F("<section class=\"alarms\" id=\"alarms\">\n"
 		"<form method=\"post\" action=\"/alarms\">\n"
 		"<table width=\"100%\">\n");
 	out += HTML_save(3);
-	out += F("<tr><td colspan=\"3\">");
-	out += FLF("To execute command one time, remove all day of week marks. Command will be disabled after execution.",
-		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.");
+	out += F("<tr><td colspan=\"3\"><p>");
+	out += FLF("To execute command one time, remove all day of week marks. Command will be disabled after execution.</p>",
+		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.</p>");
+
+#if DAYLIGHT2
+	if (lastSync != 0) out += PrintSunriseTable();
+// 	for (int i=0; i<365; i++)
+// 	{
+// 		Serial.print(i);
+// ZENITH = FROMFLOAT(-.83f -5);
+// 		Serial.print(F("   "));
+// 		Serial.print(TimeToStr(calculateSunriseSunset(i, ini.lat, ini.lng, ini.timezone, 0, 1)));
+// 		Serial.print(F(" "));
+// 		Serial.print(TimeToStr(calculateSunriseSunset(i, ini.lat, ini.lng, ini.timezone, 0, 0)));
+// ZENITH = FROMFLOAT(-.83f + 5);
+// 		Serial.print(F("   "));
+// 		Serial.print(TimeToStr(calculateSunriseSunset(i, ini.lat, ini.lng, ini.timezone, 0, 1)));
+// 		Serial.print(F("         "));
+// 		Serial.print(TimeToStr(calculateSunriseSunset(i, ini.lat, ini.lng, ini.timezone, 0, 0)));
+// //		Serial.print(calculateSunriseSunset(i, ini.lat, ini.lng, ini.timezone, 0, 0));
+// 		Serial.print(F(" "));
+// 		Serial.print(ifcos(RADIANS(FROMINT(i))));
+// 		Serial.println();
+// 	}
+#endif
+
+	String actions = "";
+	for (int p=0; p<=100; p+=20)
+	{
+		actions += p;
+		actions += ",\"";
+		if (p==0)   actions += FL(F("Open"), F("Открыть")); else
+		if (p==100) actions += FL(F("Close"), F("Закрыть")); else
+		{
+			actions += p;
+			actions += "%";
+		}
+		actions += "\",";
+	}
+	for (int p=0; p<MAX_PRESETS; p++)
+	{
+		actions += 101+p;
+		actions += FLF(",\"Preset ,", ",\"Позиция ");
+		actions += 1+p;
+		actions += "\",";
+	}
 
 	for (int a=0; a<ALARMS; a++)
 	{
@@ -3091,37 +3251,50 @@ void HTTP_handleAlarms(void)
 		out += F("\" name=\"dest");
 		out += n;
 		out += F("\">\n");
-		for (int p=0; p<=100; p+=20)
-		{
-			String s = String(p)+"%";
-			if (p==0)   s=FL(F("Open"), F("Открыть"));
-			if (p==100) s=FL(F("Close"), F("Закрыть"));
-			out += "<option value=\""+String(p)+"\""+
-				(ini.alarms[a].percent_open==p ? " selected" : "")+">"+s+"</option>\n";
-		}
-		for (int p=0; p<MAX_PRESETS; p++)
-		{
-			out += "<option value=\""+String(101+p)+"\""+
-				(ini.alarms[a].percent_open==101+p ? " selected" : "")+">";
-			out += FLF("Preset", "Позиция");
-			out += " "+String(p+1)+"</option>\n";
-		}
 		out += F("</select>\n");
+
 		out += F("</td></tr><tr><td>");
 
 		out += FLF("Repeat:", "Повтор:");
-		out += F("</td><td colspan=\"2\" class=\"days\">\n");
-		for (int d=0; d<7; d++)
-		{
-			String id="\"d"+n+"_"+String(d)+"\"";
-			out += "<label for="+id+">";
-			out += "<input type=\"checkbox\" id="+id+" name="+id+
-					((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
-			out += DoWName(d);
-			out += F("</label> \n");
-		}
+		out += F("</td><td colspan=\"2\" class=\"days\" id=\"d");
+		out += n;
+		out += F("\">\n");
+		// for (int d=0; d<7; d++)
+		// {
+		// 	String id="\"d"+n+"_"+String(d)+"\"";
+		// 	out += "<label for="+id+">";
+		// 	out += "<input type=\"checkbox\" id="+id+" name="+id+
+		// 			((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
+		// 	out += DoWName(d);
+		// 	out += F("</label> \n");
+		// }
 		out += F("</td></tr>\n");
 	}
+
+	out += F("<script>\n");
+	out += F("const sh_a=[");
+	out += actions;
+	out += F("];\n");
+	out += F("const dow=[");
+	out += FLF("'Mo','Tu','We','Th','Fr','Sa','Su'", "'Пн','Вт','Ср','Чт','Пт','Сб','Вс'");
+	out += F("];\n");
+	for (int a=0; a<ALARMS; a++)
+	{
+		out += F("AddOption('dest");
+		out += a;
+		out += F("',sh_a,");
+		out += ini.alarms[a].percent_open;
+		out += F(");\n");
+	}
+	for (int a=0; a<ALARMS; a++)
+	{
+		out += F("AddWeek('d");
+		out += a;
+		out += F("',dow,");
+		out += ini.alarms[a].day_of_week;
+		out += F(");\n");
+	}
+	out += F("</script>\n");
 
 	out += HTML_save(3);
 
@@ -3393,34 +3566,14 @@ void HTTP_handleXML(void)
 
 void date2str(char* buf, uint32_t t)
 {
-	const uint32_t day_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-	int year = 1970, month = 1, hour, minute, sec;
-	uint32_t days;
-	uint8_t leap=2;
+	int year, month, day, hour, minute, sec;
 
 	t += ini.timezone*60;
 	sec = t % 60;
 	minute = (t / 60) % 60;
 	hour = (t / (60*60)) % 24;
-	t /= 24*60*60;
-	while(1)
-	{
-		days=365;
-		if (!leap) days++;
-		if (t < days) break;
-		t -= days;
-		year++;
-		leap = (leap + 1) % 4;
-	}
-	while (1)
-	{
-		uint32_t dm = day_month[month-1];
-		if (!leap && month == 2) dm++; // Feb in leap year
-		if (t < dm) break;
-		month++;
-		t -= dm;
-	}
-	sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", year, month, t+1, hour, minute, sec);
+	Time2YMD(t, year, month, day);
+	sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, sec);
 	//return String(year)+"."+String(month)+"."+String(t+1);
 }
 

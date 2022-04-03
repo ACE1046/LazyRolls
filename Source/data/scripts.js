@@ -292,3 +292,41 @@ function RFCancel()
 {
 	location.href='/settings';
 }
+
+function Save()
+{
+	f=document.getElementById('lat');
+	if (f) f.value = Math.round(f.value * 2048 * 1024);
+	f=document.getElementById('lng');
+	if (f) f.value = Math.round(f.value * 2048 * 1024);
+	return true;
+}
+
+function SetCoord(lat, lng)
+{
+	f=document.getElementById('lat');
+	if (f) f.value = Math.round(lat / 2048 / 1024 * 1000000) / 1000000;
+	f=document.getElementById('lng');
+	if (f) f.value = Math.round(lng / 2048 / 1024 * 1000000) / 1000000;
+}
+
+function AddWeek(sel_id, opts, selected)
+{
+    td = document.getElementById(sel_id);
+	if (!td) return;
+	for (var i = 0; i<7; i++)
+	{
+		var chb = document.createElement('input');
+		chb.type = 'checkbox';
+		chb.id = sel_id+'_'+i;
+		chb.name = chb.id;
+		chb.defaultChecked = selected & (1 << i);
+		var lbl = document.createElement('label');
+		lbl.appendChild(chb);
+		lbl.htmlFor = chb.id;
+		lbl.innerHTML += opts[i];
+
+		td.appendChild(lbl);
+		td.append(" ");
+	};
+}

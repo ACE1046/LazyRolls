@@ -191,3 +191,11 @@ section, .status {	margin: 10px; }
 .rf span { white-space: nowrap; }
 .rf td { vertical-align: top; }
 .rf hr { margin-top: 0px;  margin-bottom: 0px; }
+
+.sun tr:nth-child(1),
+.sun tr:nth-child(2n) {background: #e6f0ee; }
+.sun tr:nth-child(2n+3) {background: #FFF; }
+.sun td { padding: 0 5px 0 5px; }
+.sun th { padding: 0 5px 0 5px; }
+.sun td:nth-child(n+2) { text-align: right; }
+.sun tr:nth-child(8) { font-weight: 600; }
