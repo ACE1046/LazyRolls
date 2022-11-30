@@ -23,7 +23,7 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.12.1 +rf test"
+#define VERSION "0.12.1 + sun "
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define DAYLIGHT 0 // this is just a test, not working yet
@@ -53,39 +53,8 @@ http://imlazy.ru/rolls/
 	RCSwitch mySwitch = RCSwitch();
 #endif
 
-#if DAYLIGHT
-// this is just a test, not working yet
-#include <ESP8266HTTPClient.h>
-String payload;
-void TestDaylight() 
-{
-
-WiFiClient client;
-HTTPClient http;
-	http.begin(client, "http://api.sunrise-sunset.org/json?lat=55.76501600&lng=37.61&formatted=0");
-
-/*
-GET /json?lat=55.76501600&lng=37.61&formatted=0 HTTP/1.1
-Host: api.sunrise-sunset.org
-
-*/
-      int httpResponseCode = http.GET();
-      
-      if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
-        payload = http.getString();
-        Serial.println(payload);
-      }
-      else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
-      }
-      // Free resources
-      http.end();
-}
-#else
-void TestDaylight() {}
+#if DAYLIGHT2
+	#include "daylight.h"
 #endif
 
 // copy "wifi_settings.example.h" to "wifi_settings.h" and modify it, if you wish
@@ -172,6 +141,7 @@ unsigned long last_reconnect = 0;
 uint32_t uart_crc_errors = 0;
 #define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
 bool rf_page_open = 0; // true while RF settings open
+bool mem_problem = 0; // memory error flag, incorrect compile settings
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -281,6 +251,7 @@ void WiFi_Off();
 uint32_t getTime();
 uint32_t getTimeUTC();
 String MakeNode(const __FlashStringHelper *name, String val);
+void CalcAlarmTimes();
 
 //===================== Event Logger ===================================
 
@@ -595,6 +566,13 @@ String TimeStr()
 	return String(buf);
 }
 
+String TimeToStr(int32_t t)
+{
+	char buf[6];
+	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
+	return String(buf);
+}
+
 void Time2YMD(uint32_t t, int &year, int &month, int &day)
 {
 	uint32_t days;
@@ -655,36 +633,22 @@ int DayOfWeek(uint32_t time)
 // ===================== Daylight =============================
 
 #if DAYLIGHT2
-#include "daylight.h"
-void TestDaylight2()  
-{
-	int d = computeDayOfYear(2022, 1, 6);
-    int localT = calculateSunriseSunset(d, 116947714, 78873886, 180, 0, 1);
-//    int localT = calculateSunriseSunset(d, 176947714, 78873886, 180, 0, 1);
-    Serial.print(localT/60);
-    Serial.print(':');
-    Serial.println(localT%60);
-    localT = calculateSunriseSunset(d, 116947714, 78873886, 180, 0, 0);
-    Serial.print(localT/60);
-    Serial.print(':');
-	Serial.println(localT % 60);
-}
 
-String TimeToStr(int32_t t)
+uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 {
-	char buf[6];
-	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
-	return String(buf);
+	int y, m, d;
+	if (sun_height < -5 || sun_height > 5) return (uint32_t)-1;
+	Time2YMD(getTime(), y, m, d);
+	d = computeDayOfYear(y, m, d);
+	ZENITH = FROMFLOAT(-.83f + sun_height);
+	if (tomorrow) d++;
+	return calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, sunrise);
 }
 
 String PrintSunriseTable()
 {
 	String out = "";
 	out.reserve(800);
-	int y, m, d;
-	Time2YMD(getTime(), y, m, d);
-	d = computeDayOfYear(y, m, d);
-	//out += FLF("<p>Today:</p>", "<p>Сегодня:</p>");
 	out += F("<table class=\"sun\"><tr><th>");
 	out += F("</th><th colspan=\"2\">");
 	out += FLF("Today", "Сегодня");
@@ -703,7 +667,6 @@ String PrintSunriseTable()
 	out += F("</th></tr>\n");
 	for (int i = 5; i >= -5; i--)
 	{
-		ZENITH = FROMFLOAT(-.83f + i);
 		out += ("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
 		if (i > 0) out += "+";
@@ -713,21 +676,20 @@ String PrintSunriseTable()
 			out += ("&deg;");
 		}
 		out += F("</td><td>");
-		out += TimeToStr(calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, 1));
+		out += TimeToStr(GetSunTime(i, 1));
 		out += ("</td><td>");
-		out += TimeToStr(calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, 0));
+		out += TimeToStr(GetSunTime(i, 0));
 		out += ("</td><td>");
-		out += TimeToStr(calculateSunriseSunset(d+1, ini.lat, ini.lng, ini.timezone, 0, 1));
+		out += TimeToStr(GetSunTime(i, 1, true));
 		out += ("</td><td>");
-		out += TimeToStr(calculateSunriseSunset(d+1, ini.lat, ini.lng, ini.timezone, 0, 0));
+		out += TimeToStr(GetSunTime(i, 0, true));
 		out += ("</td></tr>\n");
 	}
 	out += ("</table>\n");
 	return out;
 }
 #else
-void TestDaylight2() {}
-String PrintSunriseTable() { return ""; }
+String PrintSunriseTable() { return FLF("<p>Suntime functions disabled in this build</p>", "<p>Солнечное расписание отключено в этой рошивке</p>"); }
 #endif
 
 // ===================== UART master/slave =============================
@@ -1610,6 +1572,7 @@ void ButtonClick(uint8_t address=ADDR_ALL)
 	if (roll_to != position)
 	{ // in motion
 		Stop(address);
+		lastClick = millis();
 		return;
 	}
 	if (millis() - lastClick < DOUBLE_CLICK_MS)
@@ -1956,8 +1919,6 @@ void ProcessWiFi()
 			else Serial.println(F("mDNS responder started"));
 			MDNS.addService("http", "tcp", 80);
 #endif
-TestDaylight();
-TestDaylight2();
 		} else return;
 	}
 
@@ -2107,7 +2068,9 @@ void ValidateSettings()
 void setup_Settings(void)
 {
 	memset(&ini, 0, sizeof(ini));
-		ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
+	ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
+	ini.lat = 116924612; // 55.754 Moscow
+	ini.lng = 78896955; // 37.621
 	if (LoadSettings(&ini, sizeof(ini)))
 	{
 		Serial.println(F("Settings loaded"));
@@ -2507,6 +2470,7 @@ String HTML_status()
 	out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
 	if (ideSize != realSize) {
 		out += HTML_tableLine(L("Config", "Конфиг"), L("error!", "ошибка!"));
+		mem_problem = 1;
 	} else {
 		out += HTML_tableLine(L("Config", "Конфиг"), "OK!");
 	}
@@ -2517,10 +2481,14 @@ String HTML_status()
 	out += HTML_section(FLF("SPIFFS", "SPIFFS"));
 	if (SPIFFS.info(fs_info))
 	{
+		if (fs_info.totalBytes < 10240) mem_problem = 1;
 		out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(fs_info.totalBytes));
 		out += HTML_tableLine(L("Used", "Занято"), MemSize2Str(fs_info.usedBytes));
 	} else
+	{
+		mem_problem = 1;
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
+	}
 #if MQTT
 	out += HTML_section(FLF("MQTT", "MQTT"));
 	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
@@ -2597,8 +2565,11 @@ void HTTP_handleRoot(void)
 
 	out = HTML_header();
 
-	out += F("<section class=\"main\" id=\"main\"><p>" \
-		"<ul>\n" \
+	out += F("<section class=\"main\" id=\"main\">");
+	if (mem_problem)
+		out += FLF("<p style=\"color:red;\">Incorrect memory size selected. Please use correct firmware or build with at least 16K FS</p>\n", 
+			"<p style=\"color:red;\">Неверный размер памяти. Используйте подходящую прошивку или откомпилируйте с минимумом 16K FS</p>\n");
+	out += F("<p><ul>\n" \
 		"<li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[Open]</a>\n" \
 		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>[Stop]</a>\n" \
 		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[Close]</a>\n" \
@@ -2813,6 +2784,7 @@ void HTTP_saveSettings()
 
 	FillStepsTable();
 	AdjustTimerInterval();
+	CalcAlarmTimes();
 
 	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
 	{ // in soft AP mode, trying to connect to network
@@ -3174,6 +3146,7 @@ void HTTP_handleAlarms(void)
 		}
 
 		SaveSettings(&ini, sizeof(ini));
+		CalcAlarmTimes();
 	}
 
 	out=HTML_header();
@@ -3235,7 +3208,7 @@ void HTTP_handleAlarms(void)
 	{
 		String n=String(a);
 		out += F("<tr><td colspan=\"3\"><hr/></td></tr>\n"
-			"<tr class=\"en\"><td class=\"en\"><label for=\"en");
+			"<tr><td class=\"en\"><label for=\"en");
 		out += n;
 		out += F("\">\n");
 		out += F("<input type=\"checkbox\" id=\"en");
@@ -3718,14 +3691,26 @@ void HTTP_handleLog(void)
 }
 
 int dumb;
+uint32_t alarm_time[ALARMS];
+void CalcAlarmTimes()
+{
+	for (int a=0; a<ALARMS; a++)
+	{
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) alarm_time[a] = GetSunTime(ini.alarms[a].time - 10, 1); else
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET)  alarm_time[a] = GetSunTime(ini.alarms[a].time - 10, 0); else
+		alarm_time[a] = ini.alarms[a].time;
+	}
+}
+
 void Scheduler()
 {
 	uint32_t t, p;
 
 	static uint32_t last_t;
+	static int last_dow = -1;
 	int dayofweek;
 
-	t=getTime();
+	t = getTime();
 	if (t == 0) return;
 	dayofweek = DayOfWeek(t); // 0 - monday
 	t=t % DAY; // time from day start
@@ -3733,11 +3718,16 @@ void Scheduler()
 
 	if (t == last_t) return; // this minute already handled
 	last_t=t;
+	if (last_dow != dayofweek)
+	{
+		CalcAlarmTimes(); // new day, calculate suntimes for today
+		last_dow = dayofweek;
+	}
 
 	for (int a=0; a<ALARMS; a++)
 	{
 		if (!(ini.alarms[a].flags & ALARM_FLAG_ENABLED)) continue;
-		if ( (ini.alarms[a].time != t)) continue;
+		if ( (alarm_time[a] != t)) continue;
 		if (!(ini.alarms[a].day_of_week & (1<<dayofweek)) && (ini.alarms[a].day_of_week != 0)) continue;
 
 		if (ini.alarms[a].day_of_week == 0) // if no repeat

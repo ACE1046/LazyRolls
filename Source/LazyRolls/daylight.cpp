@@ -264,7 +264,6 @@ fixedfloat_t arccos_cordic (fixedfloat_t t, fixedfloat_t n )
   int j;
   int shiftamount;
   int sigma;
-  int sign_z2;
   fixedfloat_t theta;
   fixedfloat_t x1;
   fixedfloat_t x2;
