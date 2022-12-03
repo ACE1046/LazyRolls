@@ -24,12 +24,11 @@ http://imlazy.ru/rolls/
 #include "settings.h"
 
 #define VERSION "0.12.1 + sun "
-#define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
-#define DAYLIGHT 0 // this is just a test, not working yet
-#define DAYLIGHT2 1 // this is just a test, not working yet
-#define RF 1
-#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
+#define MQTT 0 // MQTT & HA functionality
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
+#define DAYLIGHT 0 // Sunrise functions
+#define RF 0 // RF receiver support
 #define SPIFFS_AUTO_INIT
 
 #include "spiff_files.h"
@@ -53,7 +52,7 @@ http://imlazy.ru/rolls/
 	RCSwitch mySwitch = RCSwitch();
 #endif
 
-#if DAYLIGHT2
+#if DAYLIGHT
 	#include "daylight.h"
 #endif
 
@@ -632,7 +631,7 @@ int DayOfWeek(uint32_t time)
 
 // ===================== Daylight =============================
 
-#if DAYLIGHT2
+#if DAYLIGHT
 
 uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 {
@@ -689,7 +688,11 @@ String PrintSunriseTable()
 	return out;
 }
 #else
-String PrintSunriseTable() { return FLF("<p>Suntime functions disabled in this build</p>", "<p>Солнечное расписание отключено в этой рошивке</p>"); }
+String PrintSunriseTable() { return FLF("<p>Sun time functions are disabled in this build</p>", "<p>Солнечное расписание отключено в этой прошивке</p>"); }
+uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
+{
+	return (uint32_t)-1;
+}
 #endif
 
 // ===================== UART master/slave =============================
@@ -1536,8 +1539,8 @@ void setup_Button()
 		attachInterrupt(digitalPinToInterrupt(pin_btn), btnISR, CHANGE);
 	}
 
-	aux_state = AUX_NONE;
 #if MQTT
+	aux_state = AUX_NONE;
 	if (ini.aux_pin)
 	{
 		pin_aux = pin2hw_pin(ini.aux_pin);
@@ -1614,11 +1617,13 @@ void process_Button()
 
 void process_Aux()
 {
+#if MQTT
 	bool on;
 	if (aux_state == AUX_NONE) return;
 	on = (aux_state == AUX_ON);
 	aux_state = AUX_NONE;
 	MQTT_ReportAux(on);
+#endif
 }
 
 // ===================== RF remote =============================
@@ -3037,7 +3042,7 @@ void HTTP_handleSettings(void)
 		ini.slave);
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
-#if DAYLIGHT2
+#if DAYLIGHT
 	out += HTML_section(FLF("Coordinates", "Координаты"));
 	out += HTML_editString(FLF("Latitude:", "Широта:"), F("lat"), "", 11);
 	out += HTML_editString(FLF("Longitude:", "Долгота:"), F("lng"), "", 11);
@@ -3161,7 +3166,6 @@ void HTTP_handleAlarms(void)
 	out += FLF("To execute command one time, remove all day of week marks. Command will be disabled after execution.</p>",
 		"Для выполнения пункта расписания один раз, в ближайшие сутки, снимите все галочки дней недели. После выполнения пункт отключится.</p>");
 
-#if DAYLIGHT2
 	if (lastSync != 0) out += PrintSunriseTable();
 // 	for (int i=0; i<365; i++)
 // 	{
@@ -3181,7 +3185,6 @@ void HTTP_handleAlarms(void)
 // 		Serial.print(ifcos(RADIANS(FROMINT(i))));
 // 		Serial.println();
 // 	}
-#endif
 
 	String actions = "";
 	for (int p=0; p<=100; p+=20)
