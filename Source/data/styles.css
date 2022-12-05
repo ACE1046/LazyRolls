@@ -66,6 +66,10 @@ section {
 .alarms .en label { margin-left: 0px; margin-right: 0px;}
 .alarms .days label { margin-left: 0px; margin-right: 5px; }
 
+.m_s input[type='checkbox'] { margin-left: 0px; }
+.m_s label { margin-left: 0px; margin-right: 5px; }
+.m_s.disabled { color:#505050; }
+
 header { max-width: 830px;}
 
 .svg

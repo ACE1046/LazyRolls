@@ -199,7 +199,7 @@ struct {
 	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
 	int up_safe_limit; // make extra rotations up if not hit switch
 	uint8_t btn_pin; // hardware button pin selection
-	uint8_t btn_mode; // auto/mqtt report
+	uint8_t btn_mode; // auto/mqtt report (reserved)
 	uint8_t slave; // master/slave mode
 	uint8_t aux_pin; // auxiliary pin selection
 	char mqtt_topic_aux[127+1]; // auxiliary input topic
@@ -210,6 +210,12 @@ struct {
 	uint8_t rf_pin; // RF remote input pin
 	int32_t lat; // latitude
 	int32_t lng; // longitude
+
+	uint8_t btn2_pin; // hardware button pin selection
+	uint8_t btn1_click, btn2_click; // Action on button click
+	uint8_t btn1_long, btn2_long; // Action on button long click
+	uint8_t btn1_c_addr, btn2_c_addr; // Button click, master and slaves selection, bitmask
+	uint8_t btn1_l_addr, btn2_l_addr; // Long click, master and slaves selection, bitmask
 } ini;
 
 // language functions
@@ -2068,6 +2074,10 @@ void ValidateSettings()
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level=0;
 	for (int i=0; i<MAX_PRESETS; i++)
 		if (ini.preset[i] > ini.full_length) ini.preset[i] = ini.full_length;
+	if (!ini.btn1_c_addr) ini.btn1_c_addr = 1;
+	if (!ini.btn1_l_addr) ini.btn1_l_addr = 1;
+	if (!ini.btn2_c_addr) ini.btn2_c_addr = 1;
+	if (!ini.btn2_l_addr) ini.btn2_l_addr = 1;
 }
 
 void setup_Settings(void)
@@ -2320,7 +2330,7 @@ String HTML_header()
 	"<link rel=\"stylesheet\" href=\"" CLASS_URL "\" type=\"text/css\">\n" \
 	"<script src=\"" JS_URL "\"></script>\n" \
 	"</head>\n" \
-	"<body onload=\"{ active=true; GetStatus(); PinChange(); };\">\n" \
+	"<body onload=\"{ active=true;GetStatus();PinChange();MSChange();};\">\n" \
 	"<div id=\"wrapper\">\n" \
 	"<header onclick=\"ShowMain();\">");
 	ret += name;
@@ -2645,6 +2655,17 @@ void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, cons
 	);
 }
 
+void SaveMasterSlave(const __FlashStringHelper *id, uint8_t *ini_btn_addr)
+{
+	uint8_t b = 0;
+	for (int d = MAX_PRESETS; d >= 0; d--)
+	{
+		b=b<<1;
+		if (httpServer.hasArg(id+String(d))) b|=1;
+	}
+	*ini_btn_addr = b;
+}
+
 void HTTP_handleUpdate(void)
 {
 	String out;
@@ -2775,6 +2796,13 @@ void HTTP_saveSettings()
 	SaveInt(F("slave"), &ini.slave);
 	SaveInt(F("lat"), &ini.lat);
 	SaveInt(F("lng"), &ini.lng);
+	if (MASTER)
+	{
+		SaveMasterSlave(F("b1c_"), &ini.btn1_c_addr);
+		SaveMasterSlave(F("b1l_"), &ini.btn1_l_addr);
+		SaveMasterSlave(F("b2c_"), &ini.btn2_c_addr);
+		SaveMasterSlave(F("b2l_"), &ini.btn2_l_addr);
+	}
 
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
@@ -2833,6 +2861,36 @@ String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var,
 {
 	String out;
 	out = F("<script>AddOption('");
+	out += id;
+	out += F("', ");
+	out += var;
+	out += F(", ");
+	out += val;
+	out += F(");</script>\n");
+	return out;
+}
+
+String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
+{
+	String out;
+	out = F("<script>const ");
+	out += var;
+	out += F("=[");
+	out += arr;
+	out += F("];AddMasterSlave('");
+	out += id;
+	out += F("', ");
+	out += var;
+	out += F(", ");
+	out += val;
+	out += F(");</script>\n");
+	return out;
+}
+
+String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, int val)
+{
+	String out;
+	out = F("<script>AddMasterSlave('");
 	out += id;
 	out += F("', ");
 	out += var;
@@ -2990,15 +3048,66 @@ void HTTP_handleSettings(void)
 #endif
 
 #define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR)\",2,\"GPIO2 (D4)\",3,\"GPIO3 (RX)\",4,\"GPIO15 (D8)\"")
-	out += HTML_section(FLF("Button", "Кнопка"));
+#define BTN_ACTIONS F("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Ch/st/reverse', \
+	9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'")
+#define MASTER_AND_SLAVES FLF("'Master','S1','S2','S3','S4','S5'", "'Главный','В1','В2','В3','В4','В5'")
+	out += HTML_section(FLF("Button 1", "Кнопка 1"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
 	out += F("</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n");
 	out += AddOptions(F("btn_pin"), F("pins"), PIN_LIST, ini.btn_pin);
 	out += F("</select></td></tr>\n");
-	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, " \
+
+	out += F("<tr><td>");
+	out += FLF("Click:", "Клик:");
+	out += F("</td><td><select id=\"btn1_click\" name=\"btn1_click\">\n");
+	out += AddOptions(F("btn1_click"), F("act"), BTN_ACTIONS, ini.btn1_click);
+	out += F("</select></td></tr>\n");
+
+	out += F("<tr><td></td><td id=\"b1c\" class=\"m_s\">\n");
+	out += AddMasterSlave(F("b1c"), F("m_s"), MASTER_AND_SLAVES, ini.btn1_c_addr);
+	out += F("</td></tr>\n");
+
+	out += F("<tr><td>");
+	out += FLF("Long:", "Долгий:");
+	out += F("</td><td><select id=\"btn1_long\" name=\"btn1_long\">\n");
+	out += AddOptions(F("btn1_long"), F("act"), /*BTN_ACTIONS,*/ ini.btn1_long);
+	out += F("</select></td></tr>\n");
+
+	out += F("<tr><td></td><td id=\"b1l\" class=\"m_s\">\n");
+	out += AddMasterSlave(F("b1l"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn1_l_addr);
+	out += F("</td></tr>\n");
+
+	out += HTML_section(FLF("Button 2", "Кнопка 2"));
+	out += F("<tr><td>");
+	out += FLF("Pin:", "Пин:");
+	out += F("</td><td><select id=\"btn2_pin\" name=\"btn2_pin\" onchange=\"PinChange()\">\n");
+	out += AddOptions(F("btn2_pin"), F("pins"), /*PIN_LIST,*/ ini.btn2_pin);
+	out += F("</select></td></tr>\n");
+
+	out += F("<tr><td>");
+	out += FLF("Click:", "Клик:");
+	out += F("</td><td><select id=\"btn2_click\" name=\"btn2_click\">\n");
+	out += AddOptions(F("btn2_click"), F("act"), /*BTN_ACTIONS,*/ ini.btn2_click);
+	out += F("</select></td></tr>\n");
+
+	out += F("<tr><td></td><td id=\"b2c\" class=\"m_s\">\n");
+	out += AddMasterSlave(F("b2c"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn2_c_addr);
+	out += F("</td></tr>\n");
+
+	out += F("<tr><td>");
+	out += FLF("Long:", "Долгий:");
+	out += F("</td><td><select id=\"btn2_long\" name=\"btn2_long\">\n");
+	out += AddOptions(F("btn2_long"), F("act"), /*BTN_ACTIONS,*/ ini.btn2_long);
+	out += F("</select></td></tr>\n");
+
+	out += F("<tr><td></td><td id=\"b2l\" class=\"m_s\">\n");
+	out += AddMasterSlave(F("b2l"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn2_l_addr);
+	out += F("</td></tr>\n");
+
+//	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, " \
 		"long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
-		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). " \
+//		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). " \
 		"Двойной клик в движении - сменить направление.)"));
 
 #if RF
@@ -3027,7 +3136,7 @@ void HTTP_handleSettings(void)
 	out += HTML_section(FLF("Master/slave", "Главный/ведомый"));
 	out += F("<tr><td>");
 	out += FLF("Role:", "Роль:");
-	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange()\">\n");
+	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange();MSChange();\">\n");
 	// out += HTML_addOption(0, ini.slave, FLF("Standalone", "Независимый"));
 	// out += HTML_addOption(255, ini.slave, FLF("Master", "Главный"));
 	// out += HTML_addOption(1, ini.slave, FLF("Slave 1", "Ведомый 1"));
