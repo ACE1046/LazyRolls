@@ -232,6 +232,29 @@ function PinChange()
 	}
 }
 
+function SetMSEnabled(td_id, enabled)
+{
+	var td = document.getElementById(td_id);
+	if (td)
+	{
+		if (enabled) td.classList.remove("disabled"); else td.classList.add("disabled");
+		var op = td.getElementsByTagName("input");
+		for (var i = 0; i < op.length; i++) op[i].disabled = !enabled;
+	}
+}
+
+function MSChange()
+{
+	var master = false;
+	var slave = document.getElementById('slave');
+	if (slave && slave.selectedIndex == 1) master = true;
+
+	SetMSEnabled('b1c', master);
+	SetMSEnabled('b1l', master);
+	SetMSEnabled('b2c', master);
+	SetMSEnabled('b2l', master);
+}
+
 function AddOption(sel_id, opts, selected)
 {
     select = document.getElementById(sel_id);
@@ -315,6 +338,27 @@ function AddWeek(sel_id, opts, selected)
     td = document.getElementById(sel_id);
 	if (!td) return;
 	for (var i = 0; i<7; i++)
+	{
+		var chb = document.createElement('input');
+		chb.type = 'checkbox';
+		chb.id = sel_id+'_'+i;
+		chb.name = chb.id;
+		chb.defaultChecked = selected & (1 << i);
+		var lbl = document.createElement('label');
+		lbl.appendChild(chb);
+		lbl.htmlFor = chb.id;
+		lbl.innerHTML += opts[i];
+
+		td.appendChild(lbl);
+		td.innerHTML += " ";
+	};
+}
+
+function AddMasterSlave(sel_id, opts, selected)
+{
+    td = document.getElementById(sel_id);
+	if (!td) return;
+	for (var i = 0; i<=5; i++)
 	{
 		var chb = document.createElement('input');
 		chb.type = 'checkbox';

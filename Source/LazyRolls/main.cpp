@@ -130,6 +130,7 @@ volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 volatile uint8_t endstop_hit = 0; // endstop hit flag. Set at ISR, reset at user level
 volatile int endstop_hit_pos = 0; // position of endtop hit
+volatile bool TestMode = 0; // Ignoring endstop in test mode
 bool voltage_available = 0;
 uint32_t last_network_time = 0; // last network activity time
 bool WiFi_active = false;
@@ -141,6 +142,7 @@ uint32_t uart_crc_errors = 0;
 #define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
 bool rf_page_open = 0; // true while RF settings open
 bool mem_problem = 0; // memory error flag, incorrect compile settings
+
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -1409,7 +1411,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 	if (position==0 && !dir_up) switch_ignore_steps=ini.switch_ignore_steps;
 	if (dir_up) switch_ignore_steps=0;
 
-	if (IsSwitchPressed())
+	if (IsSwitchPressed() && !TestMode)
 	{
 		if (switch_ignore_steps == 0)
 		{
@@ -3592,7 +3594,7 @@ void HTTP_handleTest(void)
 	FillStepsTable();
 	AdjustTimerInterval();
 
-	switch_ignore_steps=ini.switch_ignore_steps;
+	TestMode = 1;
 	if (dir ^ ini.sw_at_bottom)
 		roll_to=position-steps;
 	else
@@ -3605,6 +3607,7 @@ void HTTP_handleTest(void)
 		yield();
 	}
 	roll_to = position;
+	TestMode = 0;
 
 	ini.pinout = bak_pinout;
 	ini.reversed = bak_reversed;
