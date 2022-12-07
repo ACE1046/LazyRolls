@@ -112,6 +112,7 @@ uint16_t def_step_delay_mks = 1500;
 #define ADDR_MASTER 0
 #define ADDR_SELF_ONLY 0
 #define ADDR_ALL 255
+#define ADDR_DEFAULT 254
 #define MQTT_INFO_SECONDS 5*60 // Send mqtt info (rssi, uptime, etc) every N seconds
 
 const int Languages = 2;
@@ -166,6 +167,7 @@ typedef struct {
 } rf_cmd_type;
 #define RF_FLAG_STOP2ND 0x01
 
+#define MAX_SLAVE 5
 #define MAX_PRESETS 5
 #define MAX_RF_CMDS 10
 struct {
@@ -200,7 +202,7 @@ struct {
 	uint8_t mqtt_invert; // mqtt percents inverted, 0% = closed
 	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
 	int up_safe_limit; // make extra rotations up if not hit switch
-	uint8_t btn_pin; // hardware button pin selection
+	uint8_t btn1_pin; // hardware button pin selection
 	uint8_t btn_mode; // auto/mqtt report (reserved)
 	uint8_t slave; // master/slave mode
 	uint8_t aux_pin; // auxiliary pin selection
@@ -251,8 +253,8 @@ void ToPreset(uint8_t preset, uint8_t address);
 void Open(uint8_t address);
 void Close(uint8_t address);
 void Stop(uint8_t address);
-void ButtonClick(uint8_t address);
-void ButtonLongClick(uint8_t address);
+void ButtonClick(uint8_t btnnumber, uint8_t address);
+void ButtonLongClick(uint8_t btnnumber, uint8_t address);
 void WiFi_On();
 void WiFi_Off();
 uint32_t getTime();
@@ -275,8 +277,10 @@ const char ET_Cmd_Close[] PROGMEM = "Close";
 const char ET_Cmd_Percent[] PROGMEM = "Go to percent";
 const char ET_Cmd_Steps[] PROGMEM = "Go to steps";
 const char ET_Cmd_Preset[] PROGMEM = "Go to preset";
-const char ET_Cmd_Click[] PROGMEM = "Click";
-const char ET_Cmd_LClick[] PROGMEM = "Long click";
+const char ET_Cmd_Click[] PROGMEM = "Click btn 1";
+const char ET_Cmd_LClick[] PROGMEM = "Long click btn 1";
+const char ET_Cmd_Click2[] PROGMEM = "Click btn 2";
+const char ET_Cmd_LClick2[] PROGMEM = "Long click btn 2";
 const char ET_Slave_No_Ping[] PROGMEM = "No ping from master, enabling WiFi";
 const char ET_Wifi_Close_AP[] PROGMEM = "Reconnected to network in STA mode. Closing AP";
 const char ET_Wifi_Reconnect[] PROGMEM = "Trying to reconnect";
@@ -298,11 +302,11 @@ const char EQ_RF[] PROGMEM = "Src: RF";
 
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
-	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, EI_Wifi_Got_IP, EI_Wifi_Start_AP,
-	EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect };
+	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, 
+	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
-	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect, ET_Wifi_Got_IP, ET_Wifi_Start_AP,
-	ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect };
+	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
+	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
@@ -821,8 +825,8 @@ void ProcessUART()
 						case UART_CMD_WAKE: WiFi_On(); break;
 						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
 						case UART_CMD_PING: UARTPingReceived(val); break;
-						case UART_CMD_CLICK: ButtonClick(ADDR_SELF_ONLY); break;
-						case UART_CMD_LONGCLICK: ButtonLongClick(ADDR_SELF_ONLY); break;
+						case UART_CMD_CLICK: ButtonClick(1, ADDR_SELF_ONLY); break;
+						case UART_CMD_LONGCLICK: ButtonLongClick(1, ADDR_SELF_ONLY); break;
 					}
 				}
 				inbuf=0;
@@ -1066,8 +1070,10 @@ void mqtt_callback(char* topic, byte* payload, unsigned int len)
 	else if (strcmp(str, "off") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "open") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "close") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
-	else if (strcmp(str, "click") == 0) { ButtonClick(address); elog.Add(EI_Cmd_Click, EL_INFO, ES_MQTT); }
-	else if (strcmp(str, "longclick") == 0) { ButtonLongClick(address); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "click") == 0) { ButtonClick(1, address); elog.Add(EI_Cmd_Click, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "longclick") == 0) { ButtonLongClick(1, address); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "click2") == 0) { ButtonClick(2, address); elog.Add(EI_Cmd_Click2, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "longclick2") == 0) { ButtonLongClick(2, address); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "stop") == 0) { Stop(address); elog.Add(EI_Cmd_Stop, EL_INFO, ES_MQTT); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
 	else if (strncmp(str, "=", 1) == 0) { p=strtol(str+1, NULL, 10); ToPosition(p, address); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MQTT + (p<<8)); }
@@ -1495,27 +1501,48 @@ void StopTimer()
 
 // ==================== button =======================================
 
-#define LONG_PRESS_MS 1000
+#define LONG_PRESS_MS 500
 #define SHORT_PRESS_MS 50
 #define DOUBLE_CLICK_MS 3000
 #define AUX_DEBOUNCE_MS 50
 
-uint8_t pin_btn, button;
+uint8_t pin_btn1, button1, pin_btn2, button2;
 enum BTN_STATES { NO_PRESS, SHORT_PRESS, LONG_PRESS };
-void ICACHE_RAM_ATTR btnISR()
+void ICACHE_RAM_ATTR btn1ISR()
 {
 	static uint32_t lastChange=0;
 	static uint8_t lastState=0;
 
 	uint32_t now;
-	uint8_t state = !digitalRead(pin_btn); // active low
+	uint8_t state = digitalRead(pin_btn1);
+	if (pin_btn1 != 15) state = !state; // active low for all pins, except GPIO15
 	if (state == lastState) return; // ignore duplicate readings
 
 	now=millis();
 	if (!state)
 	{
-		if (now - lastChange >= LONG_PRESS_MS) button=LONG_PRESS;
-		else if (now - lastChange >= SHORT_PRESS_MS) button=SHORT_PRESS;
+		if (now - lastChange >= LONG_PRESS_MS) button1=LONG_PRESS;
+		else if (now - lastChange >= SHORT_PRESS_MS) button1=SHORT_PRESS;
+	}
+	lastChange = now;
+	lastState = state;
+}
+
+void ICACHE_RAM_ATTR btn2ISR()
+{
+	static uint32_t lastChange=0;
+	static uint8_t lastState=0;
+
+	uint32_t now;
+	uint8_t state = digitalRead(pin_btn2);
+	if (pin_btn2 != 15) state = !state; // active low for all pins, except GPIO15
+	if (state == lastState) return; // ignore duplicate readings
+
+	now=millis();
+	if (!state)
+	{
+		if (now - lastChange >= LONG_PRESS_MS) button2=LONG_PRESS;
+		else if (now - lastChange >= SHORT_PRESS_MS) button2=SHORT_PRESS;
 	}
 	lastChange = now;
 	lastState = state;
@@ -1540,11 +1567,17 @@ void setup_Button()
 	detachInterrupt(3);
 	detachInterrupt(15);
 
-	if (ini.btn_pin)
+	if (ini.btn1_pin)
 	{
-		pin_btn = pin2hw_pin(ini.btn_pin);
-		pinMode(pin_btn, INPUT_PULLUP);
-		attachInterrupt(digitalPinToInterrupt(pin_btn), btnISR, CHANGE);
+		pin_btn1 = pin2hw_pin(ini.btn1_pin);
+		if (pin_btn1 != 15) pinMode(pin_btn1, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
+		attachInterrupt(digitalPinToInterrupt(pin_btn1), btn1ISR, CHANGE);
+	}
+	if (ini.btn2_pin)
+	{
+		pin_btn2 = pin2hw_pin(ini.btn2_pin);
+		if (pin_btn2 != 15) pinMode(pin_btn2, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
+		attachInterrupt(digitalPinToInterrupt(pin_btn2), btn2ISR, CHANGE);
 	}
 
 #if MQTT
@@ -1552,7 +1585,7 @@ void setup_Button()
 	if (ini.aux_pin)
 	{
 		pin_aux = pin2hw_pin(ini.aux_pin);
-		pinMode(pin_aux, INPUT_PULLUP);
+		if (pin_aux != 15) pinMode(pin_aux, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
 		attachInterrupt(digitalPinToInterrupt(pin_aux), auxISR, CHANGE);
 		auxISR();
 	}
@@ -1562,65 +1595,132 @@ void setup_Button()
   if (ini.rf_pin)
   {
     int pin_rf = pin2hw_pin(ini.rf_pin);
-    pinMode(pin_rf, INPUT_PULLUP);
+	if (pin_rf != 15) pinMode(pin_rf, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
     mySwitch.enableReceive(pin_rf); //запускаем RC приемник на gpio XX
   }
 #endif
 }
 
-void ButtonClick(uint8_t address=ADDR_ALL)
+#define BTN_ACTIONS FLF("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Change/stop/reverse', \
+	9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'", \
+	"1,'Открыть',2,'Открыть/стоп',3,'Закрыть',4,'Закрыть/стоп',5,'Наоборот',6,'Наоборот/стоп',7,'Стоп',8,'Наоборот/стоп/обратно', \
+	9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
+enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2 };
+
+void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool longclick)
 {
-	static uint32_t lastClick;
-	static uint8_t lastCommand;
+	static uint32_t lastClick = 0;
+	static uint8_t lastCommand = 0;
 	uint8_t open;
+	bool slave[1 + MAX_SLAVE] = { 0, 0, 0, 0, 0, 0 }; // master([0]) and slaves([1 - MAX_SLAVE])
 
-	if (MASTER && (address != ADDR_MASTER) && (address != ADDR_ALL))
+	if (MASTER)
 	{
-		SendUART(UART_CMD_CLICK, address);
-		return;
+		if (address == ADDR_DEFAULT) // from settings
+		{
+			uint8_t mask;
+			mask = 0x01;
+			for (uint8_t i=0; i<=MAX_SLAVE; i++)
+			{
+				slave[i] = addr_bitmap & mask;
+				mask = mask << 1;
+			}
+		}
+		if ((address != ADDR_MASTER) && (address <= MAX_SLAVE)) slave[address] = 1;
+		if ((address == ADDR_MASTER) || (address == ADDR_ALL)) slave[0] = 1;
+	} else slave[0] = 1;
+
+	if (!slave[0])
+	{ // if master is not selected, we cannot dublicate action to slaves. We will send click/dblclick
+		for (address=1; address <= MAX_SLAVE; address++) 
+			if (slave[address])
+			{
+				if (longclick)
+					SendUART(UART_CMD_LONGCLICK, address);
+				else
+					SendUART(UART_CMD_CLICK, address);
+			}
+	} else
+	{
+		bool in_motion = roll_to != position;
+		if (action == BA_OPEN_STOP) action = (in_motion ? BA_STOP : BA_OPEN);
+		if (action == BA_CLOSE_STOP) action = (in_motion ? BA_STOP : BA_CLOSE);
+		if (action == BA_CHANGE_STOP) action = (in_motion ? BA_STOP : BA_CHANGE);
+		if (in_motion)
+		{
+			if (action == BA_P1 ||
+				action == BA_P2 ||
+				action == BA_P3 ||
+				action == BA_P4 ||
+				action == BA_P5 ||
+				action == BA_P1_P2) action = BA_STOP;
+		}
+		if (action == BA_AUTO)
+		{
+			if (in_motion)
+			{
+				action = BA_STOP;
+				lastClick = millis();
+			} else
+			{
+				if (millis() - lastClick < DOUBLE_CLICK_MS)
+					open = !lastCommand; // invert direction on double click
+				else
+					open = position > ini.full_length/2;
+				action = (open ? BA_OPEN : BA_CLOSE);
+				lastCommand = open;
+			}
+		}
+		if (action == BA_CHANGE) action = (position > ini.full_length/2 ? BA_OPEN : BA_CLOSE);
+		if (action == BA_P1_P2) action = (position == ini.preset[0] ? BA_P2 : BA_P1);
+
+		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
+		{
+
+			if (action == BA_OPEN) { Open(address); } else
+			if (action == BA_CLOSE) { Close(address); } else
+			if (action == BA_STOP) { Stop(address); } else
+			if (action == BA_P1) { ToPreset(1, address); } else
+			if (action == BA_P2) { ToPreset(2, address); } else
+			if (action == BA_P3) { ToPreset(3, address); } else
+			if (action == BA_P4) { ToPreset(4, address); } else
+			if (action == BA_P5) { ToPreset(5, address); }
+		}
 	}
-
-	if (roll_to != position)
-	{ // in motion
-		Stop(address);
-		lastClick = millis();
-		return;
-	}
-	if (millis() - lastClick < DOUBLE_CLICK_MS)
-		open = !lastCommand; // invert direction on double click
-	else
-		open = position > ini.full_length/2;
-
-	if (open) Open(address); else Close(address);
-
-	lastCommand = open;
-	lastClick = millis();
 }
 
-void ButtonLongClick(uint8_t address=ADDR_ALL)
+void ButtonClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
 {
-	if (MASTER && (address != ADDR_MASTER) && (address != ADDR_ALL))
-	{
-		SendUART(UART_CMD_LONGCLICK, address);
-		return;
-	}
+	if (btnnumber == 1)
+		ButtonAction(ini.btn1_click, ini.btn1_c_addr, address, 0);
+	else
+		ButtonAction(ini.btn2_click, ini.btn2_c_addr, address, 0);
+}
 
-	if (roll_to != position)
-	{ // in motion
-		Stop(address);
-		return;
-	}
-	if (position == ini.preset[0]) ToPreset(2, address); else ToPreset(1, address);
+void ButtonLongClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
+{
+	if (btnnumber == 1)
+		ButtonAction(ini.btn1_long, ini.btn1_l_addr, address, 1);
+	else
+		ButtonAction(ini.btn2_long, ini.btn2_l_addr, address, 1);
 }
 
 void process_Button()
 {
-	if (button == NO_PRESS) return;
-
-	if (button == SHORT_PRESS) { ButtonClick(); elog.Add(EI_Cmd_Click, EL_INFO, ES_BUTTON); }
-	if (button == LONG_PRESS) { ButtonLongClick(); elog.Add(EI_Cmd_LClick, EL_INFO, ES_BUTTON); }
-	button=NO_PRESS;
-	if (led_mode == LED_BUTTON) LED_Blink();
+	if (button1 != NO_PRESS)
+	{
+		if (button1 == SHORT_PRESS) { ButtonClick(1); elog.Add(EI_Cmd_Click, EL_INFO, ES_BUTTON); }
+		if (button1 == LONG_PRESS) { ButtonLongClick(1); elog.Add(EI_Cmd_LClick, EL_INFO, ES_BUTTON); }
+		button1=NO_PRESS;
+		if (led_mode == LED_BUTTON) LED_Blink();
+	}
+	if (button2 != NO_PRESS)
+	{
+		if (button2 == SHORT_PRESS) { ButtonClick(2); elog.Add(EI_Cmd_Click2, EL_INFO, ES_BUTTON); }
+		if (button2 == LONG_PRESS) { ButtonLongClick(2); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_BUTTON); }
+		button2=NO_PRESS;
+		if (led_mode == LED_BUTTON) LED_Blink();
+	}
 }
 
 void process_Aux()
@@ -2080,6 +2180,10 @@ void ValidateSettings()
 	if (!ini.btn1_l_addr) ini.btn1_l_addr = 1;
 	if (!ini.btn2_c_addr) ini.btn2_c_addr = 1;
 	if (!ini.btn2_l_addr) ini.btn2_l_addr = 1;
+	if (!ini.btn1_click) ini.btn1_click = BA_AUTO;
+	if (!ini.btn1_long) ini.btn1_long = BA_P1_P2;
+	if (!ini.btn2_click) ini.btn2_click = BA_AUTO;
+	if (!ini.btn2_long) ini.btn2_long = BA_P1_P2;
 }
 
 void setup_Settings(void)
@@ -2768,7 +2872,8 @@ void HTTP_saveSettings()
 	SaveInt(F("switch"), &ini.switch_reversed);
 	SaveInt(F("sw_at_bottom"), &ini.sw_at_bottom);
 	SaveInt(F("switch_ignore"), &ini.switch_ignore_steps);
-	SaveInt(F("btn_pin"), &ini.btn_pin);
+	SaveInt(F("btn1_pin"), &ini.btn1_pin);
+	SaveInt(F("btn2_pin"), &ini.btn2_pin);
 	SaveInt(F("aux_pin"), &ini.aux_pin);
 	SaveInt(F("rf_pin"), &ini.rf_pin);
 	SaveInt(F("up_safe_limit"), &ini.up_safe_limit);
@@ -2798,6 +2903,10 @@ void HTTP_saveSettings()
 	SaveInt(F("slave"), &ini.slave);
 	SaveInt(F("lat"), &ini.lat);
 	SaveInt(F("lng"), &ini.lng);
+	SaveInt(F("btn1_click"), &ini.btn1_click);
+	SaveInt(F("btn1_long"), &ini.btn1_long);
+	SaveInt(F("btn2_click"), &ini.btn2_click);
+	SaveInt(F("btn2_long"), &ini.btn2_long);
 	if (MASTER)
 	{
 		SaveMasterSlave(F("b1c_"), &ini.btn1_c_addr);
@@ -3049,15 +3158,13 @@ void HTTP_handleSettings(void)
 	out += HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
-#define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR)\",2,\"GPIO2 (D4)\",3,\"GPIO3 (RX)\",4,\"GPIO15 (D8)\"")
-#define BTN_ACTIONS F("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Ch/st/reverse', \
-	9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'")
+#define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR) - Gnd\",2,\"GPIO2 (D4) - Gnd\",3,\"GPIO3 (RX) - Gnd\",4,\"GPIO15 (D8) - 3.3V\"")
 #define MASTER_AND_SLAVES FLF("'Master','S1','S2','S3','S4','S5'", "'Главный','В1','В2','В3','В4','В5'")
 	out += HTML_section(FLF("Button 1", "Кнопка 1"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
-	out += F("</td><td><select id=\"btn_pin\" name=\"btn_pin\" onchange=\"PinChange()\">\n");
-	out += AddOptions(F("btn_pin"), F("pins"), PIN_LIST, ini.btn_pin);
+	out += F("</td><td><select id=\"btn1_pin\" name=\"btn1_pin\" onchange=\"PinChange()\">\n");
+	out += AddOptions(F("btn1_pin"), F("pins"), PIN_LIST, ini.btn1_pin);
 	out += F("</select></td></tr>\n");
 
 	out += F("<tr><td>");
@@ -3106,11 +3213,6 @@ void HTTP_handleSettings(void)
 	out += F("<tr><td></td><td id=\"b2l\" class=\"m_s\">\n");
 	out += AddMasterSlave(F("b2l"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn2_l_addr);
 	out += F("</td></tr>\n");
-
-//	out += HTML_hint(FLF("(Hardware button. Connect to Gnd and selected pin. Click to open/close/stop, " \
-		"long click to go to preset 1 (or 2, if already in 1). Double click - change direction in motion.)",
-//		"(Кнопка. Подключать к Gnd и выбраному пину. Клик - открыть/закрыть/стоп, долгий клик - пресет 1 (или 2, если уже в 1). " \
-		"Двойной клик в движении - сменить направление.)"));
 
 #if RF
 	out += HTML_section(FLF("RF remote", "Радио пульт"));
@@ -3552,10 +3654,22 @@ void HTTP_handleSet(void)
 		ButtonClick(addr);
 		Return200();
 	}
+	else if (httpServer.hasArg("click2"))
+	{
+		elog.Add(EI_Cmd_Click2, EL_INFO, ES_HTTP);
+		ButtonClick(addr);
+		Return200();
+	}
 	else if (httpServer.hasArg("longclick"))
 	{
 		elog.Add(EI_Cmd_LClick, EL_INFO, ES_HTTP);
-		ButtonLongClick(addr);
+		ButtonLongClick(1, addr);
+		Return200();
+	}
+	else if (httpServer.hasArg("longclick2"))
+	{
+		elog.Add(EI_Cmd_LClick2, EL_INFO, ES_HTTP);
+		ButtonLongClick(2, addr);
 		Return200();
 	}
 	else if (httpServer.hasArg("blink"))

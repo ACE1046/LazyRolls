@@ -217,10 +217,12 @@ function PinChange()
 	var slave = document.getElementById('slave');
 	if (slave && slave.selectedIndex > 1) p[RX] = 1; // slave mode takes GPIO3 (RX)
 
-	CheckPin(p, 'btn_pin');
+	CheckPin(p, 'btn1_pin');
+	CheckPin(p, 'btn2_pin');
 	CheckPin(p, 'aux_pin');
 	CheckPin(p, 'rf_pin');
-	SetDisabled(p, 'btn_pin');
+	SetDisabled(p, 'btn1_pin');
+	SetDisabled(p, 'btn2_pin');
 	SetDisabled(p, 'aux_pin');
 	SetDisabled(p, 'rf_pin');
 	var dis = p[RX];
@@ -243,6 +245,22 @@ function SetMSEnabled(td_id, enabled)
 	}
 }
 
+function SetActionsEnabled(sel_id, chb_id, master)
+{
+	var sel = document.getElementById(sel_id);
+	var chb = document.getElementById(chb_id);
+	if (sel && chb)
+	{
+		sel.disabled = !chb.checked && master;
+	}
+}
+
+function AddEventHandler(id)
+{
+	var chb = document.getElementById(id);
+	if (chb && !chb.onchange) chb.onchange = MSChange;
+}
+
 function MSChange()
 {
 	var master = false;
@@ -253,6 +271,14 @@ function MSChange()
 	SetMSEnabled('b1l', master);
 	SetMSEnabled('b2c', master);
 	SetMSEnabled('b2l', master);
+	SetActionsEnabled('btn1_click', 'b1c_0', master);
+	SetActionsEnabled('btn1_long', 'b1l_0', master);
+	SetActionsEnabled('btn2_click', 'b2c_0', master);
+	SetActionsEnabled('btn2_long', 'b2l_0', master);
+	AddEventHandler('b1c_0');
+	AddEventHandler('b1l_0');
+	AddEventHandler('b2c_0');
+	AddEventHandler('b2l_0');
 }
 
 function AddOption(sel_id, opts, selected)
