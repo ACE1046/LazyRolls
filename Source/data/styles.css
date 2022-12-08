@@ -183,6 +183,7 @@ td.ctrl, td.presets {
 	border-radius: 5px;
 	border: 1px solid #aec0be;
 	display: inline-block;
+	cursor: pointer;
 }
 @media (min-width: 640px) {
 .main .addr li, .main .presets li

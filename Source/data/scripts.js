@@ -166,7 +166,7 @@ function CloseA() { Call("set?pos=100" + addr_str()); return false; }
 function Steps(s) { Call("set?steps="+s); return false; }
 function StepsOvr(s) { Call("set?stepsovr="+s); return false; }
 function Stop() { Call("stop"); return false; }
-function StopA() { Call("stop" + addr_str()); return false; }
+function StopA() { Call("stop?d" + addr_str()); return false; }
 function TestPreset(p) { var s=document.getElementById(p).value;var m=document.getElementById("length").value;if (Number(s)>Number(m)) { s=m; document.getElementById(p).value=s; } StepsOvr(s); return false; }
 function SetPreset(p) { document.getElementById(p).value = document.getElementById("pos").innerHTML; }
 
