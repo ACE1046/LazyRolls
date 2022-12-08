@@ -441,12 +441,13 @@ function AlarmRadio(n, l, v)
 	a_ch(n);
 }
 
-function SetAlarm(n, v1, v2, v3, v4)
+function SetAlarm(n, v1, v2, v3, v4, ms)
 {
 	AddOption('dest'+n, sh_a, v1);
 	AddWeek('d'+n, dow, v2);
 	AlarmRadio(n, a_srs, v3);
 	AddOption('sunh'+n, a_shs, v4);
+	AddMasterSlave("ms"+n, m_s, ms);
 }
 
 function EnableClass(id, classname, enabled)

@@ -1,6 +1,6 @@
 /*
 LazyRolls
-(C) 2019-2021 ACE, a_c_e@mail.ru
+(C) 2019-2022 ACE, a_c_e@mail.ru
 http://imlazy.ru/rolls/
 
 21.12.2018 v0.04 beta
@@ -12,6 +12,7 @@ http://imlazy.ru/rolls/
 30.03.2021 v0.10
 05.08.2021 v0.11
 27.01.2022 v0.12
+08.12.2022 v0.13
 
 */
 #include <ESP8266WiFi.h>
@@ -23,7 +24,7 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.12.1 + sun "
+#define VERSION "0.13 beta 1"
 #define MQTT 0 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -152,7 +153,8 @@ typedef struct {
 	uint32_t time;
 	uint8_t percent_open; // 0 - open, 100 - close, 101-105 - presets
 	uint8_t day_of_week; // LSB - monday
-	uint16_t flags;
+	uint8_t flags;
+	uint8_t m_s; // master / slaves bitmask
 	uint32_t reserved;
 } alarm_type;
 #define ALARM_FLAG_ENABLED 0x0001
@@ -329,7 +331,7 @@ class Log
 {
 private:
 	idx head, count;
-	LogEntry log[MAX_LOG_ENTRIES]; // 12*64 = 768 bytes of RAM
+	LogEntry log[MAX_LOG_ENTRIES]; // 12*32 = 384 bytes of RAM
 public:
 	Log();
 	~Log();
@@ -1676,7 +1678,6 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 
 		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
 		{
-
 			if (action == BA_OPEN) { Open(address); } else
 			if (action == BA_CLOSE) { Close(address); } else
 			if (action == BA_STOP) { Stop(address); } else
@@ -1753,7 +1754,7 @@ void RF_Action(uint8_t action, uint8_t flags)
 	}
 	if (action == 101) { Open(ADDR_ALL); elog.Add(EI_Cmd_Open, EL_INFO, ES_RF); } else
 	if (action == 100) { Close(ADDR_ALL); elog.Add(EI_Cmd_Close, EL_INFO, ES_RF); } else
-	if (action == 102) { ButtonClick(ADDR_ALL); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
+	if (action == 102) { ButtonClick(1, ADDR_ALL); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
 	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
 	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
@@ -2184,6 +2185,8 @@ void ValidateSettings()
 	if (!ini.btn1_long) ini.btn1_long = BA_P1_P2;
 	if (!ini.btn2_click) ini.btn2_click = BA_AUTO;
 	if (!ini.btn2_long) ini.btn2_long = BA_P1_P2;
+	for (int i=0; i<ALARMS; i++)
+		if (ini.alarms[i].m_s == 0) ini.alarms[i].m_s = 0xFF; // master & all slaves
 }
 
 void setup_Settings(void)
@@ -2790,13 +2793,13 @@ void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, cons
 	);
 }
 
-void SaveMasterSlave(const __FlashStringHelper *id, uint8_t *ini_btn_addr)
+void SaveMasterSlave(String id, uint8_t *ini_btn_addr)
 {
 	uint8_t b = 0;
-	for (int d = MAX_PRESETS; d >= 0; d--)
+	for (int d = MAX_SLAVE; d >= 0; d--)
 	{
 		b=b<<1;
-		if (httpServer.hasArg(id+String(d))) b|=1;
+		if (httpServer.hasArg(id+d)) b|=1;
 	}
 	*ini_btn_addr = b;
 }
@@ -3390,6 +3393,8 @@ void HTTP_handleAlarms(void)
 				if (httpServer.hasArg("d"+n+"_"+String(d))) b|=1;
 			}
 			ini.alarms[a].day_of_week = b;
+
+			if (MASTER) SaveMasterSlave("ms"+n+"_", &(ini.alarms[a].m_s));
 		}
 
 		SaveSettings(&ini, sizeof(ini));
@@ -3508,20 +3513,18 @@ void HTTP_handleAlarms(void)
 		out += F("</select>\n");
 
 		out += F("</td></tr><tr><td>");
-
 		out += FLF("Repeat:", "Повтор:");
 		out += F("</td><td colspan=\"2\" class=\"days\" id=\"d");
 		out += n;
 		out += F("\">\n");
-		// for (int d=0; d<7; d++)
-		// {
-		// 	String id="\"d"+n+"_"+String(d)+"\"";
-		// 	out += "<label for="+id+">";
-		// 	out += "<input type=\"checkbox\" id="+id+" name="+id+
-		// 			((ini.alarms[a].day_of_week & (1 << d)) ? " checked" : "")+">";
-		// 	out += DoWName(d);
-		// 	out += F("</label> \n");
-		// }
+
+		if (MASTER)
+		{
+			out += F("</td></tr><tr><td></td><td colspan=\"2\" class=\"m_s\" id=\"ms"); // master/slaves
+			out += n;
+			out += F("\">\n");
+		}
+
 		out += F("</td></tr>\n");
 	}
 
@@ -3532,7 +3535,10 @@ void HTTP_handleAlarms(void)
 	out += FLF("\"clock\", \"sunrise\", \"sunset\"", "\"часы\", \"восход\", \"закат\"");
 	out += F("];\nconst dow=[");
 	out += FLF("'Mo','Tu','We','Th','Fr','Sa','Su'", "'Пн','Вт','Ср','Чт','Пт','Сб','Вс'");
+	out += F("];\nconst m_s=[");
+	out += MASTER_AND_SLAVES;
 	out += F("];\n");
+	
 	for (int a=0; a<ALARMS; a++)
 	{
 		out += F("SetAlarm(");
@@ -3550,6 +3556,8 @@ void HTTP_handleAlarms(void)
 		r=0;
 		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET) r = ini.alarms[a].time - 10;
 		out += r;
+		out += F(",");
+		out += ini.alarms[a].m_s;
 		out += F(");\n");
 	}
 	out += F("</script>\n");
@@ -3680,13 +3688,13 @@ void HTTP_handleSet(void)
 	else if (httpServer.hasArg("click"))
 	{
 		elog.Add(EI_Cmd_Click, EL_INFO, ES_HTTP);
-		ButtonClick(addr);
+		ButtonClick(1, addr);
 		Return200();
 	}
 	else if (httpServer.hasArg("click2"))
 	{
 		elog.Add(EI_Cmd_Click2, EL_INFO, ES_HTTP);
-		ButtonClick(addr);
+		ButtonClick(2, addr);
 		Return200();
 	}
 	else if (httpServer.hasArg("longclick"))
@@ -3967,6 +3975,7 @@ void Scheduler()
 	static uint32_t last_t;
 	static int last_dow = -1;
 	int dayofweek;
+	bool slave[1 + MAX_SLAVE] = { 0, 0, 0, 0, 0, 0 }; // master([0]) and slaves([1 - MAX_SLAVE])
 
 	t = getTime();
 	if (t == 0) return;
@@ -3994,16 +4003,27 @@ void Scheduler()
 			SaveSettings(&ini, sizeof(ini));
 		}
 
+		// select master and slaves, from settings
+		for (uint8_t i=0; i<=MAX_SLAVE; i++)
+		{
+			if (MASTER)
+				slave[i] = ini.alarms[a].m_s & (0x01 << i);
+			else 
+				slave[i] = (i==0 ? 1 : 0);
+		}
+
 		if (ini.alarms[a].percent_open <= 100)
 		{ // percentage
 			p = ini.alarms[a].percent_open;
 			elog.Add(EI_Cmd_Percent, EL_INFO, ES_SCHEDULE + (p << 8));
-			ToPercent(p);
+			for (uint8_t address=0; address <= MAX_SLAVE; address++)
+				if (slave[address])	ToPercent(p, address);
 		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
 		{ // preset
 			p = ini.alarms[a].percent_open-100;
 			elog.Add(EI_Cmd_Preset, EL_INFO, ES_SCHEDULE + (p << 8));
-			ToPreset(p);
+			for (uint8_t address=0; address <= MAX_SLAVE; address++)
+				if (slave[address])	ToPreset(p, address);
 		}
 	}
 	dumb=0;
