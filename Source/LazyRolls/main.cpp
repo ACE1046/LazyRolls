@@ -24,7 +24,7 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.13 beta 1"
+#define VERSION "0.13 beta 1 "
 #define MQTT 0 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -216,12 +216,12 @@ struct {
 	uint8_t rf_pin; // RF remote input pin
 	int32_t lat; // latitude
 	int32_t lng; // longitude
-
 	uint8_t btn2_pin; // hardware button pin selection
 	uint8_t btn1_click, btn2_click; // Action on button click
 	uint8_t btn1_long, btn2_long; // Action on button long click
 	uint8_t btn1_c_addr, btn2_c_addr; // Button click, master and slaves selection, bitmask
 	uint8_t btn1_l_addr, btn2_l_addr; // Long click, master and slaves selection, bitmask
+	char ap_pswd[16+1]; // Access Point password
 } ini;
 
 // language functions
@@ -1981,7 +1981,10 @@ void StartSoftAP()
 	Serial.println(ini.hostname);
 	elog.Add(EI_Wifi_Start_AP, EL_WARN, 0);
 	WiFi.mode(WIFI_AP);
-	WiFi.softAP(ini.hostname); // ... but without password
+	if (!ini.ap_pswd[0])
+		WiFi.softAP(ini.hostname); // ... but without password
+	else
+		WiFi.softAP(ini.hostname, ini.ap_pswd); // or with password
 	LED_On();
 	CP_create();
 }
@@ -2187,6 +2190,7 @@ void ValidateSettings()
 	if (!ini.btn2_long) ini.btn2_long = BA_P1_P2;
 	for (int i=0; i<ALARMS; i++)
 		if (ini.alarms[i].m_s == 0) ini.alarms[i].m_s = 0xFF; // master & all slaves
+	if (strlen(ini.ap_pswd) < 8) ini.ap_pswd[0] = 0;
 }
 
 void setup_Settings(void)
@@ -2946,6 +2950,7 @@ void HTTP_saveSettings()
 		SaveMasterSlave(F("b2c_"), &ini.btn2_c_addr);
 		SaveMasterSlave(F("b2l_"), &ini.btn2_l_addr);
 	}
+	SaveString(F("ap_pswd"), ini.ap_pswd, sizeof(ini.ap_pswd));
 
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
@@ -3088,6 +3093,8 @@ void HTTP_handleSettings(void)
 	out += HTML_editIP(FLF("Mask", "Маска"), F("mask"), &ini.mask);
 	out += HTML_editIP(FLF("Gateway", "Шлюз"), F("gw"), &ini.gw);
 	out += HTML_editIP(F("DNS"), F("dns"), &ini.dns);
+	out += HTML_editString(FLF("AP pswd:", "Пароль AP:"),   F("ap_pswd"),  ini.ap_pswd,  sizeof(ini.ap_pswd)-1);
+	out += HTML_hint(FLF("Access point password, 8 chars minimum or blank", "Пароль режима точки доступа, 8 символов минимум или пусто"));
 
 	out += HTML_section(FLF("Time", "Время"));
 	out += HTML_editString(FLF("NTP-server:", "NTP-сервер:"),F("ntp"),     ini.ntpserver,sizeof(ini.ntpserver)-1);
