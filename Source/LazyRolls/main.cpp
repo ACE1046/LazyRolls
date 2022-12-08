@@ -2436,7 +2436,7 @@ String HTML_header()
 	"<link rel=\"stylesheet\" href=\"" CLASS_URL "\" type=\"text/css\">\n" \
 	"<script src=\"" JS_URL "\"></script>\n" \
 	"</head>\n" \
-	"<body onload=\"{ active=true;GetStatus();PinChange();MSChange();};\">\n" \
+	"<body onload=\"OnPageLoad();\">\n" \
 	"<div id=\"wrapper\">\n" \
 	"<header onclick=\"ShowMain();\">");
 	ret += name;
@@ -2690,11 +2690,40 @@ void HTTP_handleRoot(void)
 	if (mem_problem)
 		out += FLF("<p style=\"color:red;\">Incorrect memory size selected. Please use correct firmware or build with at least 16K FS</p>\n", 
 			"<p style=\"color:red;\">Неверный размер памяти. Используйте подходящую прошивку или откомпилируйте с минимумом 16K FS</p>\n");
-	out += F("<p><ul>\n" \
-		"<li class=\"menuopen\"><a href=\"open\" onclick=\"return Open();\"><div class=\"svg\"></div>[Open]</a>\n" \
-		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return Stop();\"><div class=\"svg\"></div>[Stop]</a>\n" \
-		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return Close();\"><div class=\"svg\"></div>[Close]</a>\n" \
-		"</li></p>");
+	out += F("<table>");
+	if (MASTER)
+	{
+		out += F("<tr><td colspan=\"2\"><ul class=\"addr\">");
+		for (int8_t i=-1; i<=MAX_SLAVE; i++)
+		{
+			out += F("<li id=\"ms_");
+			if (i<0) out += F("all"); else out += i;
+			out += F("\"><a onclick=\"return BtnMS(");
+			out += i;
+			out += F(");\">");
+			if (i<0) out += FLF("All", "Все");
+			if (i==0) out += FLF("This", "Эта");
+			if (i>0) out += i;
+			out += F("</a></li>\n");
+		}
+		out += F("</ul>\n</td></tr>\n");
+	}
+	out += F("<tr><td class=\"presets\"><ul>");
+	for (int8_t i=1; i<=MAX_PRESETS; i++)
+	{
+		out += F("<li id=\"ps_");
+		if (i<0) out += F("all"); else out += i;
+		out += F("\"><a onclick=\"return Preset(");
+		out += i;
+		out += F(");\">");
+		out += i;
+		out += F("</a></li>\n");
+	}
+	out += F("</ul>\n</td><td class=\"ctrl\"><ul>\n" \
+		"<li class=\"menuopen\"><a href=\"open\" onclick=\"return OpenA();\"><div class=\"svg\"></div>[Open]</a>\n" \
+		"</li><li class=\"menustop\"><a href=\"stop\" onclick=\"return StopA();\"><div class=\"svg\"></div>[Stop]</a>\n" \
+		"</li><li class=\"menuclose\"><a href=\"close\" onclick=\"return CloseA();\"><div class=\"svg\"></div>[Close]</a>\n" \
+		"</li></ul></td></tr></table>");
 
 	out += FL(F("<p>Reminder. After reboot both commands open and close will open cover first to find zero point (at endstop).</p>"),
 		F("<p>Напоминание. После перезагрузки, по любой команде (открыть или закрыть) штора вначале едет вверх, до концевика, " \

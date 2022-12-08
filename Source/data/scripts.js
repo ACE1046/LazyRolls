@@ -1,6 +1,7 @@
 var timerId;
 var timeout=1000;
 var active;
+var address = -1;
 window.onfocus = function() { active = true; clearTimeout(timerId); timeout=500; GetStatus(); };
 window.onblur = function() { active = false; clearTimeout(timerId); };
 
@@ -159,10 +160,13 @@ function Call(url)
 }
 
 function Open() { Call("set?pos=0"); return false; }
+function OpenA() { Call("set?pos=0" + addr_str()); return false; }
 function Close() { Call("set?pos=100"); return false; }
+function CloseA() { Call("set?pos=100" + addr_str()); return false; }
 function Steps(s) { Call("set?steps="+s); return false; }
 function StepsOvr(s) { Call("set?stepsovr="+s); return false; }
 function Stop() { Call("stop"); return false; }
+function StopA() { Call("stop" + addr_str()); return false; }
 function TestPreset(p) { var s=document.getElementById(p).value;var m=document.getElementById("length").value;if (Number(s)>Number(m)) { s=m; document.getElementById(p).value=s; } StepsOvr(s); return false; }
 function SetPreset(p) { document.getElementById(p).value = document.getElementById("pos").innerHTML; }
 
@@ -443,4 +447,47 @@ function SetAlarm(n, v1, v2, v3, v4)
 	AddWeek('d'+n, dow, v2);
 	AlarmRadio(n, a_srs, v3);
 	AddOption('sunh'+n, a_shs, v4);
+}
+
+function EnableClass(id, classname, enabled)
+{
+	var td = document.getElementById(id);
+	if (td)
+	{
+		if (!enabled) td.classList.remove(classname); else td.classList.add(classname);
+	}
+}
+
+function BtnMS(n)
+{
+	address = n;
+	EnableClass('ms_all', 'sel', n==-1)
+	EnableClass('ms_0', 'sel', n==0)
+	EnableClass('ms_1', 'sel', n==1)
+	EnableClass('ms_2', 'sel', n==2)
+	EnableClass('ms_3', 'sel', n==3)
+	EnableClass('ms_4', 'sel', n==4)
+	EnableClass('ms_5', 'sel', n==5)
+	return false;
+}
+
+function addr_str()
+{
+	var addr = "";
+	if (address >= 0) addr = "&addr=" + address;
+	return addr;
+}
+function Preset(n)
+{
+	Call("set?preset=" + n + addr_str());
+	return false;
+}
+
+function OnPageLoad()
+{
+	active=true;
+	GetStatus();
+	PinChange();
+	MSChange();
+	BtnMS(-1);
 }
