@@ -158,7 +158,7 @@ header { max-width: 830px;}
 .main .addr li
 {
 	display: inline-block;
-	margin: 14px 2px 0px 2px;
+	margin: 14px 0px 0px 1px;
 	width: auto;
 }
 
@@ -167,7 +167,7 @@ header { max-width: 830px;}
 	background: #aec0be;
 }
 td.ctrl, td.presets {
-	padding: 0px 5px 0px 5px;
+	padding: 0px 0px 0px 0px;
 }
 .main table {
 	padding: 0px 0px 0px 0px;
@@ -178,22 +178,29 @@ td.ctrl, td.presets {
 	text-decoration: none;
 	font-weight: 800;
 	color: #000000;
-	padding: 10px 11px;
+	padding: 12px 12px;
 	margin: 0px;
-	border-radius: 5px;
-	border: 1px solid #aec0be;
+	border-radius: 9px;
+	border: 3px solid #000000;
 	display: inline-block;
 	cursor: pointer;
 }
+.main .presets a
+{
+	padding: 14px 16px;
+}
 @media (min-width: 640px) {
-.main .addr li, .main .presets li
-{
-	font-size: 16px;
+	.main .addr li, .main .presets li {
+		font-size: 16px;
+	}
+	.main .addr a, .main .presets a	{
+		padding: 14px 13px;
+	}
 }
-.main .addr a, .main .presets a
-{
-	padding: 10px 14px;
-}
+@media (min-width: 780px) {
+	.main .addr a, .main .presets a	{
+		padding: 14px 18px;
+	}
 }
 .main .presets a
 {

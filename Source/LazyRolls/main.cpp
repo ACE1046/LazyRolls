@@ -12,7 +12,7 @@ http://imlazy.ru/rolls/
 30.03.2021 v0.10
 05.08.2021 v0.11
 27.01.2022 v0.12
-08.12.2022 v0.13
+09.12.2022 v0.13
 
 */
 #include <ESP8266WiFi.h>
@@ -24,12 +24,12 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.13 beta 1 "
-#define MQTT 0 // MQTT & HA functionality
-#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
-#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
-#define DAYLIGHT 0 // Sunrise functions
-#define RF 0 // RF receiver support
+#define VERSION "0.13"
+#define MQTT 1 // MQTT & HA functionality
+#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
+#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
+#define DAYLIGHT 1 // Sunrise functions
+#define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
 
 #include "spiff_files.h"
@@ -510,7 +510,7 @@ unsigned long lastRequest=0; // timestamp of last request
 unsigned long lastSync=0; // timestamp of last successful synchronization
 IPAddress timeServerIP;
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-byte NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
+uint8_t NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
 // Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
 const uint32_t seventyYears = 2208988800UL;
 uint32_t UNIXTime;
@@ -1038,7 +1038,7 @@ const char *aux_state_str()
 
 void MQTT_discover();
 
-void mqtt_callback(char* topic, byte* payload, unsigned int len)
+void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 {
 	int x, p;
 	uint8_t address;
@@ -1594,12 +1594,12 @@ void setup_Button()
 #endif
 
 #if RF
-  if (ini.rf_pin)
-  {
-    int pin_rf = pin2hw_pin(ini.rf_pin);
+	if (ini.rf_pin)
+	{
+		int pin_rf = pin2hw_pin(ini.rf_pin);
 	if (pin_rf != 15) pinMode(pin_rf, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
-    mySwitch.enableReceive(pin_rf); //запускаем RC приемник на gpio XX
-  }
+		mySwitch.enableReceive(pin_rf); //запускаем RC приемник на gpio XX
+	}
 #endif
 }
 
@@ -4062,16 +4062,13 @@ void loop(void)
 		Serial.println(F("Network idle. WiFi shutdown"));
 		WiFi_Off();
 	}
-	if (endstop_hit)
+	if (endstop_hit != EL_NONE)
 	{
-		if (endstop_hit != EL_NONE)
-		{
-			if (endstop_hit == EL_ERROR)
-				elog.Add(EI_Endstop_Hit_Error, EL_ERROR, endstop_hit_pos);
-			else
-				elog.Add(EI_Endstop_Hit, EL_INFO, endstop_hit_pos);
-			endstop_hit = EL_NONE;
-		}
+		if (endstop_hit == EL_ERROR)
+			elog.Add(EI_Endstop_Hit_Error, EL_ERROR, endstop_hit_pos);
+		else
+			elog.Add(EI_Endstop_Hit, EL_INFO, endstop_hit_pos);
+		endstop_hit = EL_NONE;
 	}
 
 	delay(10); // this delay enables light sleep mode
