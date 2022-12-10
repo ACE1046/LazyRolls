@@ -1741,8 +1741,8 @@ void process_Aux()
 unsigned long last_rf_code = 0;
 bool rf_repeat = 0;
 
-// 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3', 114, 
-// 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink'
+// 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3',
+// 114, 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink'
 void RF_Action(uint8_t action, uint8_t flags)
 {
 	if (!action) return;

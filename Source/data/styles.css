@@ -271,7 +271,6 @@ header {	margin: 10px; 	padding: 10px; }
 section, .status {	margin: 10px; }
 .status ul li.menuinfo { display: none; }
 .status ul li {	width: 20%; }
-
 }
 
 .rf span { white-space: nowrap; }

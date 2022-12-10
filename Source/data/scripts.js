@@ -419,18 +419,18 @@ function AddRadio(id, val, label, n, ch)
 {
 	td=document.getElementById('a_sel'+n);
 	if (!td) return;
-		var inp = document.createElement('input');
-		inp.type = 'radio';
-		inp.id = id+n;
-		inp.name = 'a_src'+n;
-		inp.value = val;
-		inp.defaultChecked = ch;
-		inp.setAttribute( "onchange", "a_ch("+n+");");
-		td.appendChild(inp);
-		var lbl = document.createElement('label');
-		lbl.htmlFor = inp.id;
-		lbl.innerHTML = label;
-		td.appendChild(lbl);
+	var inp = document.createElement('input');
+	inp.type = 'radio';
+	inp.id = id+n;
+	inp.name = 'a_src'+n;
+	inp.value = val;
+	inp.defaultChecked = ch;
+	inp.setAttribute( "onchange", "a_ch("+n+");");
+	td.appendChild(inp);
+	var lbl = document.createElement('label');
+	lbl.htmlFor = inp.id;
+	lbl.innerHTML = label;
+	td.appendChild(lbl);
 }
 
 function AlarmRadio(n, l, v)
