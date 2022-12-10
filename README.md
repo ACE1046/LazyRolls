@@ -5,7 +5,7 @@ Automatic motorized roller blinds project.
 Моторизированный привод для рулонных штор. Управление по Wi-Fi. Питание внешнее. Возможна интеграция в системы умного дома.
 
 ### Ссылки
-Описание проекта: [https://mysku.ru/blog/diy/62110.html](https://mysku.ru/blog/diy/62110.html)\
+Описание проекта: [https://mysku.club/blog/diy/62110.html](https://mysku.club/blog/diy/62110.html)\
 Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)\
 Видео работы: [https://www.youtube.com/watch?v=lvBh_m7pOAI](https://www.youtube.com/watch?v=lvBh_m7pOAI)
 
@@ -14,13 +14,13 @@ Automatic motorized roller blinds project.
 [Hubitat Elevation](https://github.com/yix/Hubitat/blob/master/drivers/LazyRolls.groovy) (Автор [yix](https://github.com/yix))\
 Home Assistant (встроенная поддержка через MQTT Discovery с версии 0.09)\
 [Homebridge](https://github.com/vitva/Lazyroll-settings-for-homebridge) (Автор Vitva)\
-[Управление с пульта ИК / RF433](https://mysku.ru/blog/diy/87912.html) (Автор SamoS)
+[Управление с пульта ИК / RF433](https://mysku.club/blog/diy/87912.html) (Автор SamoS)
 
 ### Структура директорий
 
 Firmware - готовые прошивки\
-Curtains - скетч для Ардуино\
-Curtains\data - файлы для SPIFFS. Иконка, css-стили, java scripts\
+Source - исходный код\
+Source\data - файлы для SPIFFS. Иконка, css-стили, java scripts\
 Board - файлы схемы и платы для DipTrace\
 Board\Gerbers - gerber files для заказа плат на фабрике\
 3D_parts - OpenSCAD и stl для печати
@@ -110,6 +110,14 @@ Board\Gerbers - gerber files для заказа плат на фабрике\
 * Исправлена (надеюсь) верстка страницы расписания.
 * Проект модифицирован для компиляции в PlatformIO, но можно откомпилировать и в ArduinoIDE. Часть кода переписана для экономии памяти. Arduino core for ESP8266 обновлено до v3.0.2.
 * Добавлен лог событий. Открывается в веб-интерфейсе по ссылке из блока информации. Лог на английском, но думаю там и так понятно. Отображаются основные события, причина перезагрузки, отвалы от сети и mqtt-сервера, срабатывание концевика в движении, синхронизация времени. Для отладки возможных проблем.
+
+10.12.2022 v0.13
+* Поддержка приемника 433МГц.
+* Восход и закат в расписании.
+* Поддержка двух физических кнопок с возможностью выбирать действие по нажатию и, в режиме мастера, кем управлять. Можно сделать раздельные кнопки Открыть и Закрыть, а можно разделить кнопки для управления только этой шторой и всей группой.
+* На главную страницу добавлены кнопки пресетов. В режиме мастера добавлен выбор, кем управлять, всеми, этой шторой или ведомыми.
+* В режиме мастера можно в расписании раздельно управлять ведущим и ведомыми.
+* Можно задать пароль для режима точки доступа, создаваемой после включения привода при отсутствии Wi-Fi.
 
 ### Authors
 
