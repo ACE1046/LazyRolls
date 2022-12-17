@@ -27,10 +27,10 @@ extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
 }
 
-#define VERSION "0.13.1 garp"
+#define VERSION "0.13 dc\0"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
-#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
@@ -147,7 +147,7 @@ uint32_t uart_crc_errors = 0;
 #define MAX_RECONNECT_ATTEMPS 2 // reconnect attemps before creating Access Point
 bool rf_page_open = 0; // true while RF settings open
 bool mem_problem = 0; // memory error flag, incorrect compile settings
-
+volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -415,11 +415,13 @@ const __FlashStringHelper* LEDLevelString(uint8_t level = 0xFF)
 
 void LED_On()
 {
+	pwm_LED = 0;
 	digitalWrite(PIN_LED, LOW);
 }
 
 void LED_Off()
 {
+	pwm_LED = 0;
 	digitalWrite(PIN_LED, HIGH);
 }
 
@@ -466,8 +468,8 @@ void ProcessLED()
 
 	if (led_mode == LED_ON)
 	{
-		if (led_level == LED_LOW) analogWrite(PIN_LED, 980); else
-		if (led_level == LED_MED) analogWrite(PIN_LED, 800); else
+		if (led_level == LED_LOW) pwm_LED = 240; else
+		if (led_level == LED_MED) pwm_LED = 192; else
 			LED_On();
 	}
 	else if (led_mode == LED_ALIVE)
@@ -850,7 +852,8 @@ void ProcessUART()
 }
 
 //----------------------- Motor ----------------------------------------
-#define PINOUT_SD 3
+#define PINOUT_SD 3 // step/dir motor
+#define PINOUT_DC 4 // DC motor
 const uint8_t microstep[8][4]={
 	{1, 0, 0, 0},
 	{1, 1, 0, 0},
@@ -864,7 +867,7 @@ void FillStepsTable()
 {
 	uint8_t i, j, n;
 
-	if (ini.pinout >= PINOUT_SD) return; // not needed for step/dir
+	if (ini.pinout >= PINOUT_SD) return; // not needed for step/dir or DC
 
 	for (i=0; i<8; i++)
 	{
@@ -1386,6 +1389,7 @@ void UpdateMQTTInfo() {}
 // ==================== timer & interrupt ===============================
 
 volatile uint16_t switch_ignore_steps;
+bool pwmC = 0;
 
 #define MAX_SPEED 500
 void ICACHE_RAM_ATTR timer1Isr()
@@ -1396,6 +1400,13 @@ void ICACHE_RAM_ATTR timer1Isr()
 
 	bool dir_up;
 
+	if (pwm_LED)
+	{
+		static uint8_t pwm = 0;
+		( pwm >= pwm_LED ? GPOC = 1 << PIN_LED : GPOS = 1 << PIN_LED );
+		pwm-=2;
+	}
+
 	if (position==roll_to)
 	{
 		MotorOff();
@@ -1404,6 +1415,13 @@ void ICACHE_RAM_ATTR timer1Isr()
 	}
 
 	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
+
+	if (pwmC)
+	{
+		static uint8_t pwm = 0;
+		( pwm >= ini.step_delay_mks-100 ? GPOS = 1 << PIN_C : GPOC = 1 << PIN_C );
+		pwm-=16;
+	}
 
 	if (delay>0)
 	{
@@ -1474,21 +1492,46 @@ void ICACHE_RAM_ATTR timer1Isr()
 		}
 	}
 
-	if (ini.pinout != PINOUT_SD)
+	switch (ini.pinout)
 	{
-		GPOS = step_s[step % 8];
-		GPOC = step_c[step % 8];
-	} else
-	{
-		GPOC = 1 << PIN_EN; // active - low
-		if (dir_up ^ ini.reversed) GPOS = 1 << PIN_DR; else GPOC = 1 << PIN_DR;
-		GPOS = 1 << PIN_ST;
+		case PINOUT_SD: // step/dir
+			GPOC = 1 << PIN_EN; // active - low
+			if (dir_up ^ ini.reversed) GPOS = 1 << PIN_DR; else GPOC = 1 << PIN_DR;
+			GPOS = 1 << PIN_ST;
+		break;
+		case PINOUT_DC: // DC motor
+			// GPOS = 1 << PIN_C;
+			//analogWrite(PIN_C, ini.step_delay_mks/10);
+			//static uint8_t pwm = 0;
+			//( pwm > ini.step_delay_mks-100 ? GPOS = 1 << PIN_C : GPOC = 1 << PIN_C );
+			//pwm--;
+			if (dir_up ^ ini.reversed)
+			{
+				GPOS = 1 << PIN_A;
+				GPOC = 1 << PIN_B;
+			} else
+			{
+				GPOS = 1 << PIN_B;
+				GPOC = 1 << PIN_A;
+			}
+		break;
+		default: // stepper
+			GPOS = step_s[step % 8];
+			GPOC = step_c[step % 8];
+		break;
 	}
 }
 
 void AdjustTimerInterval()
 {
-	timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/16);
+	if (ini.pinout == PINOUT_DC)
+	{
+		//analogWrite(2, ini.step_delay_mks/10);
+		pwmC = 1;
+		timer1_write((uint32_t)31*ESP.getCpuFreqMHz()/16);
+	}
+	else
+		timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/16);
 }
 
 void SetupTimer()
@@ -2160,7 +2203,7 @@ void init_SPIFFS()
 void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-	if (ini.pinout<0 || ini.pinout>=4) ini.pinout=0;
+	if (ini.pinout<0 || ini.pinout>=5) ini.pinout=0;
 	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
@@ -3127,7 +3170,7 @@ void HTTP_handleSettings(void)
 	// out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
 	// out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
 	out += F("</select></td></tr>\n");
-	out += AddOptions(F("pinout"), F("po"), F("2,\"A-B-C-D\",0,\"A-C-B-D\",1,\"A-B-D-C\",3,\"Step/Dir\""), ini.pinout);
+	out += AddOptions(F("pinout"), F("po"), F("2,\"A-B-C-D\",0,\"A-C-B-D\",1,\"A-B-D-C\",3,\"Step/Dir\",4,\"DC-motor\""), ini.pinout);
 	out += F("<tr><td>");
 	out += FLF("Direction:", "Направление:");
 	out += F("</td><td><select id=\"reversed\" name=\"reversed\">\n");
@@ -3745,7 +3788,7 @@ void HTTP_handleTest(void)
 	if (httpServer.hasArg("up")) dir=true;
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
 	if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
-	if (ini.pinout>=4) ini.pinout=0;
+	if (ini.pinout>=5) ini.pinout=0;
 	if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
 	if (ini.step_delay_mks<MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
