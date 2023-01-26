@@ -24,7 +24,7 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 
-#define VERSION "0.13"
+#define VERSION "0.13.1"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -1261,7 +1261,7 @@ void MQTT_discover()
 		MQTT_discover_add_sensor(id, F("IP"), F("ip"), NULL, F("mdi:ip-network-outline"), NULL);
 		MQTT_discover_add_sensor(id, F("RSSI"), F("rssi"), F("signal_strength"), NULL, F("dBm"));
 		MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
-		MQTT_discover_add_sensor(id, F("voltage"), F("voltage"), F("voltage"), NULL, NULL);
+		MQTT_discover_add_sensor(id, F("voltage"), F("voltage"), F("voltage"), NULL, F("V"));
 		if (ini.aux_pin !=0)
 		{
 			MQTT_discover_add_sensor(id, F("aux"), F("aux"), F("window"), NULL, NULL, true);
@@ -2816,24 +2816,24 @@ void HTTP_handleUpdate(void)
 	HTTP_Activity();
 
 	out = HTML_header();
-	out += F("<section class=\"main\" id=\"main\"><p>" \
-	 "<form method='POST' action='/update2' enctype='multipart/form-data'>");
+	out += F("<section class=\"main\" id=\"main\">\n<p>");
 	out += FL(F("Firmware:"), F("Прошивка:"));
-	out += F("<br><input type='file' accept='.bin,.bin.gz' name='firmware'>" \
+	out += F("</p>\n<form method='POST' action='/update2' enctype='multipart/form-data'>" \
+		"<input type='file' accept='.bin,.bin.gz' name='firmware'>" \
 		"<input type='submit' value='");
 	out += FL(F("Update Firmware"), F("Обновить прошивку"));
-	out += F("'></form></p><p>");
-	out += FL(F("Choose file for firmware update.<br/>New firmware can be downloaded from "), 
+	out += F("'></form>\n<p>");
+	out += FL(F("Choose file for firmware update.<br>New firmware can be downloaded from "), 
 		F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
-	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br/>");
+	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br>\n");
 	if (mem == 1024*1024)
-		out += FL(F("Choose *.1Mbyte.bin.<br/>"), F("Выбирайте *.1Mbyte.bin.<br/>"));
+		out += FL(F("Choose *.1Mbyte.bin.<br>"), F("Выбирайте *.1Mbyte.bin.<br>"));
 	if (mem == 4*1024*1024)
-		out += FL(F("Choose *.4Mbyte.bin.<br/>"), F("Выбирайте *.4Mbyte.bin.<br/>"));
-	out += FL(F("Settings will be lost, if downgrading to previous version. Default password admin admin."), 
-		F("Настройки сбрасываются, если прошивается более старая версия. Пароль по умолчанию admin admin"));
+		out += FL(F("Choose *.4Mbyte.bin.<br>"), F("Выбирайте *.4Mbyte.bin.<br>"));
+	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin."), 
+		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin"));
 
-	out += F("</section>\n");
+	out += F("</p></section>\n");
 
 	out += HTML_footer();
 	httpServer.send(200, "text/html", out);
