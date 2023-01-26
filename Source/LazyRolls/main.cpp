@@ -101,6 +101,7 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_LED 2
 #define DIR_UP (-1)
 #define DIR_DN (1)
+#define MAX_PINOUT 8 // Motor types. 3xStepper + 1 step/dir + 4 DC/PWM/Enc
 #define DEFAULT_UP_SAFE_LIMIT 300 // make extra rotations up if not hit switch
 #define DEFAULT_SWITCH_IGNORE_STEPS 100 // ignore endstop for first step on moving down
 #define MIN_STEP_DELAY 50 // minimal motor step time in mks
@@ -854,6 +855,9 @@ void ProcessUART()
 //----------------------- Motor ----------------------------------------
 #define PINOUT_SD 3 // step/dir motor
 #define PINOUT_DC 4 // DC motor
+#define PINOUT_DC_PWM 5
+#define PINOUT_DC_ENC 6
+#define PINOUT_DC_PWM_ENC 7
 const uint8_t microstep[8][4]={
 	{1, 0, 0, 0},
 	{1, 1, 0, 0},
@@ -885,16 +889,53 @@ void FillStepsTable()
 	}
 }
 
-void inline ICACHE_RAM_ATTR MotorOff()
+void SetupMotorPins()
 {
-	if (ini.pinout != PINOUT_SD)
-		// digitalWrite(PIN_A, LOW);
-		// digitalWrite(PIN_B, LOW);
-		// digitalWrite(PIN_C, LOW);
-		// digitalWrite(PIN_D, LOW);
-		GPOC = (1 << PIN_A) | (1 << PIN_B) | (1 << PIN_C) | (1 << PIN_D);
-	else
-		GPOS = (1 << PIN_EN) | (1 << PIN_ST); // Disable, step end
+	if (ini.pinout < PINOUT_SD)
+	{
+		pinMode(PIN_A, OUTPUT);
+		pinMode(PIN_B, OUTPUT);
+		pinMode(PIN_C, OUTPUT);
+		pinMode(PIN_D, OUTPUT);
+	} else if (ini.pinout == PINOUT_SD)
+	{
+		pinMode(PIN_EN, OUTPUT);
+		pinMode(PIN_ST, OUTPUT);
+		pinMode(PIN_DR, OUTPUT);
+	} else
+	{
+		pinMode(PIN_A, OUTPUT);
+		pinMode(PIN_B, OUTPUT);
+		if (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+		{
+			pinMode(PIN_C, INPUT);
+			pinMode(PIN_D, INPUT);
+		}
+	}
+	pinMode(PIN_SWITCH, INPUT_PULLUP);
+}
+
+void ICACHE_RAM_ATTR MotorOff()
+{
+	switch (ini.pinout)
+	{
+		case PINOUT_SD:
+			GPOS = (1 << PIN_EN) | (1 << PIN_ST); // Disable, step end
+			break;
+		case PINOUT_DC:
+		case PINOUT_DC_PWM:
+		case PINOUT_DC_ENC:
+		case PINOUT_DC_PWM_ENC:
+			GPOC = (1 << PIN_A) | (1 << PIN_B);
+			break;
+		default:
+			// digitalWrite(PIN_A, LOW);
+			// digitalWrite(PIN_B, LOW);
+			// digitalWrite(PIN_C, LOW);
+			// digitalWrite(PIN_D, LOW);
+			GPOC = (1 << PIN_A) | (1 << PIN_B) | (1 << PIN_C) | (1 << PIN_D);
+			break;
+	}
 }
 
 bool ICACHE_RAM_ATTR IsSwitchPressed()
@@ -1473,22 +1514,37 @@ void ICACHE_RAM_ATTR timer1Isr()
 		}
 	}
 
-	if (dir_up)
+	if (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
 	{
-		if (step > 0) step--;
-		else
-		{
-			step=7;
-			position--;
-		}
+		uint8_t encA, encB;
+		static uint8_t oldA, oldB;
+		encA = ((GPI >> ((PIN_C) & 0xF)) & 1);
+		encB = ((GPI >> ((PIN_D) & 0xF)) & 1);
+		if (oldA != encA) (encA != encB ? position++ : position--);
+		if (oldB != encB) (encA == encB ? position++ : position--);
+		oldA = encA;
+		oldB = encB;
+
+		if (!dir_up && switch_ignore_steps>0) switch_ignore_steps--;
 	} else
 	{
-		step++;
-		if (step==8)
+		if (dir_up)
 		{
-			step=0;
-			position++;
-			if (switch_ignore_steps>0) switch_ignore_steps--;
+			if (step > 0) step--;
+			else
+			{
+				step=7;
+				position--;
+			}
+		} else
+		{
+			step++;
+			if (step==8)
+			{
+				step=0;
+				position++;
+				if (switch_ignore_steps>0) switch_ignore_steps--;
+			}
 		}
 	}
 
@@ -1500,11 +1556,9 @@ void ICACHE_RAM_ATTR timer1Isr()
 			GPOS = 1 << PIN_ST;
 		break;
 		case PINOUT_DC: // DC motor
-			// GPOS = 1 << PIN_C;
-			//analogWrite(PIN_C, ini.step_delay_mks/10);
-			//static uint8_t pwm = 0;
-			//( pwm > ini.step_delay_mks-100 ? GPOS = 1 << PIN_C : GPOC = 1 << PIN_C );
-			//pwm--;
+		case PINOUT_DC_PWM:
+		case PINOUT_DC_ENC:
+		case PINOUT_DC_PWM_ENC:
 			if (dir_up ^ ini.reversed)
 			{
 				GPOS = 1 << PIN_A;
@@ -2203,7 +2257,7 @@ void init_SPIFFS()
 void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
-	if (ini.pinout<0 || ini.pinout>=5) ini.pinout=0;
+	if (ini.pinout<0 || ini.pinout>=MAX_PINOUT) ini.pinout=0;
 	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
@@ -2437,14 +2491,7 @@ void setup()
 	});
 	httpServer.begin();
 
-	pinMode(PIN_SWITCH, INPUT_PULLUP);
-	pinMode(PIN_A, OUTPUT);
-	pinMode(PIN_B, OUTPUT);
-	pinMode(PIN_C, OUTPUT);
-	pinMode(PIN_D, OUTPUT);
-	pinMode(PIN_EN, OUTPUT);
-	pinMode(PIN_ST, OUTPUT);
-	pinMode(PIN_DR, OUTPUT);
+	SetupMotorPins();
 	MotorOff();
 
 	setup_OTA();
@@ -3011,6 +3058,7 @@ void HTTP_saveSettings()
 
 	FillStepsTable();
 	AdjustTimerInterval();
+	SetupMotorPins();
 	CalcAlarmTimes();
 
 	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
@@ -3170,7 +3218,16 @@ void HTTP_handleSettings(void)
 	// out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
 	// out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
 	out += F("</select></td></tr>\n");
-	out += AddOptions(F("pinout"), F("po"), F("2,\"A-B-C-D\",0,\"A-C-B-D\",1,\"A-B-D-C\",3,\"Step/Dir\",4,\"DC-motor\""), ini.pinout);
+	out += AddOptions(F("pinout"), F("po"), F(
+		"2,\"A-B-C-D\"," \
+		"0,\"A-C-B-D\"," \
+		"1,\"A-B-D-C\"," \
+		TOSTRING(PINOUT_SD) ",\"Step/Dir\"," \
+		TOSTRING(PINOUT_DC) ",\"DC motor\"," \
+		TOSTRING(PINOUT_DC_PWM) ",\"DC + PWM\"," \
+		TOSTRING(PINOUT_DC_ENC) ",\"DC + Enc\"," \
+		TOSTRING(PINOUT_DC_PWM_ENC) ",\"DC + PWM + Enc\""), 
+		ini.pinout);
 	out += F("<tr><td>");
 	out += FLF("Direction:", "Направление:");
 	out += F("</td><td><select id=\"reversed\" name=\"reversed\">\n");
@@ -3788,7 +3845,7 @@ void HTTP_handleTest(void)
 	if (httpServer.hasArg("up")) dir=true;
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
 	if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
-	if (ini.pinout>=5) ini.pinout=0;
+	if (ini.pinout>=MAX_PINOUT) ini.pinout=2;
 	if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
 	if (ini.step_delay_mks<MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
 	if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
@@ -3797,6 +3854,7 @@ void HTTP_handleTest(void)
 
 	FillStepsTable();
 	AdjustTimerInterval();
+	SetupMotorPins();
 
 	TestMode = 1;
 	if (dir ^ ini.sw_at_bottom)
@@ -3819,6 +3877,7 @@ void HTTP_handleTest(void)
 
 	FillStepsTable();
 	AdjustTimerInterval();
+	SetupMotorPins();
 
 	httpServer.send(200, "text/html", String(position));
 }
