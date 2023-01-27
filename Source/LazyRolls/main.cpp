@@ -2136,7 +2136,7 @@ void ProcessWiFi()
 			else Serial.println(F("mDNS responder started"));
 			MDNS.addService("http", "tcp", 80);
 #endif
-		} else return;
+		}
 	}
 
 	if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS && WiFi.status() != WL_DISCONNECTED)
@@ -2156,6 +2156,7 @@ void ProcessWiFi()
 		}
 	}
 }
+
 WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
 void WiFi_On()
 {
