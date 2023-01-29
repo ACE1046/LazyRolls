@@ -23,8 +23,11 @@ http://imlazy.ru/rolls/
 #include <WiFiUdp.h>
 #include <DNSServer.h>
 #include "settings.h"
+extern "C" {
+#include "lwip/etharp.h" // gratuitous arp
+}
 
-#define VERSION "0.13.1"
+#define VERSION "0.13.1 garp"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -4036,9 +4039,25 @@ void Scheduler()
 	dumb=0;
 }
 
+#define GRATUITOUS_ARP_MS 60000 // refresh arp every 60 sec
+void GratuitousARP()
+{
+   struct netif *netif = netif_list;
+   static uint32_t last_garp_time = 0;
+   if (!WiFi_connected) return;
+   if (millis() - last_garp_time < GRATUITOUS_ARP_MS) return;
+   last_garp_time = millis();
+   while (netif)
+   {
+      etharp_gratuitous(netif);
+      netif = netif->next;
+   }
+}
+
 void loop(void)
 {
 	ProcessWiFi();
+	GratuitousARP();
 	ProcessLED();
 	ProcessRF();
 
