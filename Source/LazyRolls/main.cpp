@@ -100,6 +100,8 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_DR 12
 #define PIN_LED 2
 #define PIN_PWM 15
+#define PIN_ENC_A PIN_C
+#define PIN_ENC_B PIN_D
 #define DIR_UP (-1)
 #define DIR_DN (1)
 #define MAX_PINOUT 8 // Motor types. 3xStepper + 1 step/dir + 4 DC/PWM/Enc
@@ -150,7 +152,7 @@ uint32_t uart_crc_errors = 0;
 bool rf_page_open = 0; // true while RF settings open
 bool mem_problem = 0; // memory error flag, incorrect compile settings
 volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
-bool pwmC = 0;
+uint16_t pwm_phase_low_ticks, pwm_phase_high_ticks;
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -860,6 +862,11 @@ void ProcessUART()
 #define PINOUT_DC_PWM 5
 #define PINOUT_DC_ENC 6
 #define PINOUT_DC_PWM_ENC 7
+
+#define MOTOR_TYPE_DC (ini.pinout == PINOUT_DC || ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+#define MOTOR_WITH_PWM (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
+#define MOTOR_WITH_ENC (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+
 const uint8_t microstep[8][4]={
 	{1, 0, 0, 0},
 	{1, 1, 0, 0},
@@ -893,7 +900,6 @@ void FillStepsTable()
 
 void SetupMotorPins()
 {
-	pwmC = 0;
 	if (ini.pinout < PINOUT_SD)
 	{
 		pinMode(PIN_A, OUTPUT);
@@ -909,25 +915,22 @@ void SetupMotorPins()
 	{
 		pinMode(PIN_A, OUTPUT);
 		pinMode(PIN_B, OUTPUT);
-		if (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+		if (MOTOR_WITH_ENC)
 		{
-			pinMode(PIN_C, INPUT);
-			pinMode(PIN_D, INPUT);
+			pinMode(PIN_ENC_A, INPUT);
+			pinMode(PIN_ENC_B, INPUT);
 		}
-		if (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
+		if (MOTOR_WITH_PWM)
 		{
 			pinMode(PIN_PWM, OUTPUT);
-			pwmC = 1;
-		} else
-		{
-			pwmC = 0;
 		}
 	}
 	pinMode(PIN_SWITCH, INPUT_PULLUP);
 }
 
-void ICACHE_RAM_ATTR MotorOff()
+void IRAM_ATTR MotorOff()
 {
+	ETS_CCOMPARE0_DISABLE(); // disable PWM
 	switch (ini.pinout)
 	{
 		case PINOUT_SD:
@@ -938,7 +941,7 @@ void ICACHE_RAM_ATTR MotorOff()
 		case PINOUT_DC_ENC:
 		case PINOUT_DC_PWM_ENC:
 			GPOC = (1 << PIN_A) | (1 << PIN_B);
-			GPOC = (1 << PIN_PWM) | (1 << PIN_PWM);
+			GPOC = (1 << PIN_PWM);
 			break;
 		default:
 			// digitalWrite(PIN_A, LOW);
@@ -950,7 +953,7 @@ void ICACHE_RAM_ATTR MotorOff()
 	}
 }
 
-bool ICACHE_RAM_ATTR IsSwitchPressed()
+bool IRAM_ATTR IsSwitchPressed()
 {
 	// return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
 	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
@@ -1444,12 +1447,11 @@ void UpdateMQTTInfo() {}
 volatile uint16_t switch_ignore_steps;
 
 #define MAX_SPEED 500
-void ICACHE_RAM_ATTR timer1Isr()
+void IRAM_ATTR timer1Isr()
 {
 	static uint8_t step=0;
 	static uint16_t speed=0;
 	static uint8_t skip=0;
-
 	bool dir_up;
 
 	if (pwm_LED)
@@ -1457,13 +1459,6 @@ void ICACHE_RAM_ATTR timer1Isr()
 		static uint8_t pwm = 0;
 		( pwm >= pwm_LED ? GPOC = 1 << PIN_LED : GPOS = 1 << PIN_LED );
 		pwm-=2;
-	}
-
-	if (pwmC && position != roll_to)
-	{
-		static uint8_t pwm = 0;
-		( pwm >= ini.step_delay_mks-100 ? GPOS = 1 << PIN_PWM : GPOC = 1 << PIN_PWM );
-		pwm-=25;
 	}
 
 	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
@@ -1536,7 +1531,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 			oldA = encA;
 			oldB = encB;
 			if (ini.reversed) pos_change = 0 - pos_change;
-			skip = 20;
+			skip = 5;
 			break;
 		case PINOUT_DC:
 		case PINOUT_DC_PWM:
@@ -1549,7 +1544,7 @@ void ICACHE_RAM_ATTR timer1Isr()
 				last = ms;
 				if (dir_up) pos_change--; else pos_change++;
 			}
-			skip = 20;
+			skip = 5;
 			break;
 		default: // all steppers
 			if (dir_up)
@@ -1578,6 +1573,15 @@ void ICACHE_RAM_ATTR timer1Isr()
 	if (!dir_up && pos_change !=0 && switch_ignore_steps>0) switch_ignore_steps--;
 	position += pos_change;
 
+	if (MOTOR_WITH_PWM)
+	{
+		if (pwm_phase_high_ticks == 0) GPOC = 1 << PIN_PWM; else
+		if (pwm_phase_low_ticks  == 0) GPOS = 1 << PIN_PWM; else
+		{
+			ETS_CCOMPARE0_ENABLE();
+			timer0_write(ESP.getCycleCount() + pwm_phase_low_ticks);
+		}
+	}
 	switch (ini.pinout)
 	{
 		case PINOUT_SD: // step/dir
@@ -1606,16 +1610,48 @@ void ICACHE_RAM_ATTR timer1Isr()
 	}
 }
 
-#define MOTOR_TYPE_DC (ini.pinout == PINOUT_DC || ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+#define TIMER1_TICKS_PER_US (APB_CLK_FREQ / 1000000L / 16)
+#define pwm_ticks 3300 // 3300 gives ~20 kHz frequency
 void AdjustTimerInterval()
 {
+	uint16_t l, h;
+	uint32_t s;
+
 	if (MOTOR_TYPE_DC)
 	{ // Motor without feedback. Step = millisecond
-		//analogWrite(2, ini.step_delay_mks/10);
-		timer1_write((uint32_t)5*ESP.getCpuFreqMHz()/16); // 200 kHz
+		timer1_write((uint32_t)50*TIMER1_TICKS_PER_US); // 20 kHz
 	}
 	else
-		timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/16);
+		timer1_write((uint32_t)ini.step_delay_mks*TIMER1_TICKS_PER_US/4); // 4 interrupts per step
+
+	s = ini.step_delay_mks;
+	if (s < 100) s = 0;
+	else if (s > 355) s = 255;
+	else s = s - 100;
+
+	h = s * pwm_ticks / 255;
+	if (h < pwm_ticks / 10) h = 0; // not less 10%
+	if (h > pwm_ticks * 9 / 10) h = pwm_ticks; // not more 90%
+	l = pwm_ticks - h;
+
+	pwm_phase_low_ticks = l;
+	pwm_phase_high_ticks = h;
+}
+
+void IRAM_ATTR timer0Isr(void *para, void *frame)
+{
+	static uint8_t pwm_phase = 0;
+    (void) para;
+    (void) frame;
+	pwm_phase = !pwm_phase;
+	if (pwm_phase)
+	{
+		GPOC = 1 << PIN_PWM;
+		timer0_write(ESP.getCycleCount() + pwm_phase_low_ticks);
+	} else {
+		GPOS = 1 << PIN_PWM;
+		timer0_write(ESP.getCycleCount() + pwm_phase_high_ticks);
+	}
 }
 
 void SetupTimer()
@@ -1624,6 +1660,10 @@ void SetupTimer()
 	timer1_attachInterrupt(timer1Isr);
 	timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
 	AdjustTimerInterval();
+	noInterrupts();
+	ETS_CCOMPARE0_INTR_ATTACH(timer0Isr, NULL);
+	ETS_CCOMPARE0_DISABLE();
+	interrupts();
 }
 
 void StopTimer()
@@ -2459,6 +2499,7 @@ void HTTP_handleUpdate(void);
 void HTTP_handleLog(void);
 void HTTP_redirect(String link);
 
+	volatile uint32_t i;
 void setup()
 {
 	rst_info *resetInfo;
@@ -4232,4 +4273,17 @@ void loop(void)
 	// 	heap = h;
 	// 	Serial.println(heap);
 	// }
+
+/* 	// cpu load test
+	static uint32_t ms;
+	if (millis() - ms > 10000)
+	{
+		ms = millis();
+		Serial.println(ESP.getCpuFreqMHz());
+
+		uint32_t t1=millis();
+		for (i=0; i<1000000; i++) ;
+		Serial.println(millis()-t1);
+	}
+*/
 }
