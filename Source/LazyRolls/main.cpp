@@ -99,6 +99,7 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_ST 13
 #define PIN_DR 12
 #define PIN_LED 2
+#define PIN_PWM 15
 #define DIR_UP (-1)
 #define DIR_DN (1)
 #define MAX_PINOUT 8 // Motor types. 3xStepper + 1 step/dir + 4 DC/PWM/Enc
@@ -149,6 +150,7 @@ uint32_t uart_crc_errors = 0;
 bool rf_page_open = 0; // true while RF settings open
 bool mem_problem = 0; // memory error flag, incorrect compile settings
 volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
+bool pwmC = 0;
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -891,6 +893,7 @@ void FillStepsTable()
 
 void SetupMotorPins()
 {
+	pwmC = 0;
 	if (ini.pinout < PINOUT_SD)
 	{
 		pinMode(PIN_A, OUTPUT);
@@ -911,6 +914,14 @@ void SetupMotorPins()
 			pinMode(PIN_C, INPUT);
 			pinMode(PIN_D, INPUT);
 		}
+		if (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
+		{
+			pinMode(PIN_PWM, OUTPUT);
+			pwmC = 1;
+		} else
+		{
+			pwmC = 0;
+		}
 	}
 	pinMode(PIN_SWITCH, INPUT_PULLUP);
 }
@@ -927,6 +938,7 @@ void ICACHE_RAM_ATTR MotorOff()
 		case PINOUT_DC_ENC:
 		case PINOUT_DC_PWM_ENC:
 			GPOC = (1 << PIN_A) | (1 << PIN_B);
+			GPOC = (1 << PIN_PWM) | (1 << PIN_PWM);
 			break;
 		default:
 			// digitalWrite(PIN_A, LOW);
@@ -1430,14 +1442,13 @@ void UpdateMQTTInfo() {}
 // ==================== timer & interrupt ===============================
 
 volatile uint16_t switch_ignore_steps;
-bool pwmC = 0;
 
 #define MAX_SPEED 500
 void ICACHE_RAM_ATTR timer1Isr()
 {
 	static uint8_t step=0;
 	static uint16_t speed=0;
-	static uint8_t delay=0;
+	static uint8_t skip=0;
 
 	bool dir_up;
 
@@ -1448,33 +1459,29 @@ void ICACHE_RAM_ATTR timer1Isr()
 		pwm-=2;
 	}
 
-	if (position==roll_to)
+	if (pwmC && position != roll_to)
 	{
-		MotorOff();
-		speed=0;
-		return; // stopped, do nothing
+		static uint8_t pwm = 0;
+		( pwm >= ini.step_delay_mks-100 ? GPOS = 1 << PIN_PWM : GPOC = 1 << PIN_PWM );
+		pwm-=25;
 	}
 
 	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
 
-	if (pwmC)
+	if (skip>0)
 	{
-		static uint8_t pwm = 0;
-		( pwm >= ini.step_delay_mks-100 ? GPOS = 1 << PIN_C : GPOC = 1 << PIN_C );
-		pwm-=16;
-	}
-
-	if (delay>0)
-	{
-		delay--;
+		// this skip used to reduce total time in ISR. 
+		skip--;
 		return;
 	}
 
-	if (speed < MAX_SPEED)
+	if (position==roll_to)
 	{
-		delay=4+ ((MAX_SPEED-speed) / 100);
-		speed++;
-	} else delay=3;
+		MotorOff();
+		speed = 0;
+		skip = 10;
+		return; // stopped, do nothing
+	}
 
 	dir_up=(roll_to < position); // up - true
 
@@ -1514,39 +1521,62 @@ void ICACHE_RAM_ATTR timer1Isr()
 		}
 	}
 
-	if (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+	int8_t pos_change = 0;
+	switch (ini.pinout)
 	{
-		uint8_t encA, encB;
-		static uint8_t oldA, oldB;
-		encA = ((GPI >> ((PIN_C) & 0xF)) & 1);
-		encB = ((GPI >> ((PIN_D) & 0xF)) & 1);
-		if (oldA != encA) (encA != encB ? position++ : position--);
-		if (oldB != encB) (encA == encB ? position++ : position--);
-		oldA = encA;
-		oldB = encB;
-
-		if (!dir_up && switch_ignore_steps>0) switch_ignore_steps--;
-	} else
-	{
-		if (dir_up)
-		{
-			if (step > 0) step--;
-			else
+		case PINOUT_DC_ENC:
+		case PINOUT_DC_PWM_ENC:
+			// encoder based position
+			uint8_t encA, encB;
+			static uint8_t oldA, oldB;
+			encA = ((GPI >> ((PIN_C) & 0xF)) & 1);
+			encB = ((GPI >> ((PIN_D) & 0xF)) & 1);
+			if (oldA != encA) (encA != encB ? pos_change++ : pos_change--);
+			if (oldB != encB) (encA == encB ? pos_change++ : pos_change--);
+			oldA = encA;
+			oldB = encB;
+			if (ini.reversed) pos_change = 0 - pos_change;
+			skip = 20;
+			break;
+		case PINOUT_DC:
+		case PINOUT_DC_PWM:
+			// DC motor without encoder, time based position
+			static uint32_t last = 0;
+			uint32_t ms;
+			ms = millis();
+			if (last != ms)
 			{
-				step=7;
-				position--;
+				last = ms;
+				if (dir_up) pos_change--; else pos_change++;
 			}
-		} else
-		{
-			step++;
-			if (step==8)
+			skip = 20;
+			break;
+		default: // all steppers
+			if (dir_up)
 			{
-				step=0;
-				position++;
-				if (switch_ignore_steps>0) switch_ignore_steps--;
+				if (step == 0)
+				{
+					step = 8;
+					pos_change--;
+				}
+				step--;
+			} else
+			{
+				step++;
+				if (step == 8)
+				{
+					step = 0;
+					pos_change++;
+				}
 			}
-		}
+			if (speed < MAX_SPEED)
+			{
+				skip = 4 + ((MAX_SPEED-speed) / 100);
+				speed++;
+			} else skip=3;
 	}
+	if (!dir_up && pos_change !=0 && switch_ignore_steps>0) switch_ignore_steps--;
+	position += pos_change;
 
 	switch (ini.pinout)
 	{
@@ -1576,13 +1606,13 @@ void ICACHE_RAM_ATTR timer1Isr()
 	}
 }
 
+#define MOTOR_TYPE_DC (ini.pinout == PINOUT_DC || ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
 void AdjustTimerInterval()
 {
-	if (ini.pinout == PINOUT_DC)
-	{
+	if (MOTOR_TYPE_DC)
+	{ // Motor without feedback. Step = millisecond
 		//analogWrite(2, ini.step_delay_mks/10);
-		pwmC = 1;
-		timer1_write((uint32_t)31*ESP.getCpuFreqMHz()/16);
+		timer1_write((uint32_t)5*ESP.getCpuFreqMHz()/16); // 200 kHz
 	}
 	else
 		timer1_write((uint32_t)ini.step_delay_mks*ESP.getCpuFreqMHz()/4/16);
