@@ -27,7 +27,7 @@ extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
 }
 
-#define VERSION "0.13 dc\0"
+#define VERSION "0.13 dc"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -153,6 +153,7 @@ bool rf_page_open = 0; // true while RF settings open
 bool mem_problem = 0; // memory error flag, incorrect compile settings
 volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
 uint16_t pwm_phase_low_ticks, pwm_phase_high_ticks;
+volatile bool virtual_endstop_hit = 0;
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -312,8 +313,8 @@ const char EQ_BUTTON[] PROGMEM = "Src: Button";
 const char EQ_RF[] PROGMEM = "Src: RF";
 
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
-enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
-	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, 
+enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close,
+	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect,
 	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
@@ -694,7 +695,7 @@ String PrintSunriseTable()
 		out += ("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
 		if (i > 0) out += "+";
-		if (i != 0) 
+		if (i != 0)
 		{
 			out += i;
 			out += ("&deg;");
@@ -1076,7 +1077,7 @@ enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
 
 void UpdateMQTTInfo()
 {
-	last_mqtt_info=0;	
+	last_mqtt_info=0;
 }
 
 void ICACHE_RAM_ATTR auxISR()
@@ -1143,6 +1144,9 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
 	else if (strncmp(str, "=", 1) == 0) { p=strtol(str+1, NULL, 10); ToPosition(p, address); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MQTT + (p<<8)); }
 	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
+	else if (strncmp(str, "report", 6) == 0) { last_mqtt = 0; last_mqtt_info = 0; }
+	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
+
 }
 
 String ReplaceHostname(const char *topic)
@@ -1236,16 +1240,16 @@ void MQTT_Delete_HA_Sensors()
 	MQTT_discover_delete_sensor(F("aux"), true);
 }
 
-void MQTT_discover_add_sensor(const char * device_id, 
-	const __FlashStringHelper* name, 
-	const __FlashStringHelper* sensor_id, 
+void MQTT_discover_add_sensor(const char * device_id,
+	const __FlashStringHelper* name,
+	const __FlashStringHelper* sensor_id,
 	const __FlashStringHelper* dev_class,
-	const __FlashStringHelper* icon, 
-	const __FlashStringHelper* unit, 
+	const __FlashStringHelper* icon,
+	const __FlashStringHelper* unit,
 	bool binary = false)
 {
 	String mqtt_topic, mqtt_data;
-	
+
 #define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // "a":"b (b - string)
 #define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // "a":"b (b - const)
 #define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b (b - string)
@@ -1297,6 +1301,7 @@ void MQTT_discover()
 	cqpv("~", mqtt_topic_sub);
 	cqpc("set_pos_t", "~");
 	cqpv("pos_t", mqtt_topic_pub);
+	//cqpv("stat_t", mqtt_topic_pub);
 	cqpc("cmd_t", "~");
 	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
 	mqtt_data += id;
@@ -1369,7 +1374,7 @@ void ProcessMQTT()
 				if (ini.mqtt_invert) val=100-val;
 			break;
 		}
-		if (val != last_val || last_mqtt==0 || millis()-last_mqtt > 60*60*1000)
+		if (val != last_val || last_mqtt==0 || millis()-last_mqtt > 5*60*1000)
 		{
 			char buf[32];
 			last_val=val;
@@ -1395,6 +1400,36 @@ void ProcessMQTT()
 					break;
 			}
 			mqtt->publish(mqtt_topic_pub.c_str(), buf);
+		}
+		if (ini.mqtt_discovery) // open/opening/closing/closed/stopped
+		{
+			enum { stOpen, stOpening, stClosed, stClosing, stStopped };
+			uint8_t state;
+			static uint8_t last_state;
+			state = stStopped;
+			if (roll_to < position) state = (ini.sw_at_bottom ? stClosing : stOpening);
+			if (roll_to > position) state = (ini.sw_at_bottom ? stOpening : stClosing);
+			if (roll_to == position)
+			{
+				state = (stStopped);
+				if (Position2Percents(position) ==   0) state = stOpen;
+				if (Position2Percents(position) == 100) state = stClosed;
+			}
+			if (state != last_state)
+			{
+				char buf[10];
+				buf[0] = 0;
+				last_state = state;
+				switch (state)
+				{
+					case stOpen:    strcpy_P(buf, PSTR("open"));    break;
+					case stOpening: strcpy_P(buf, PSTR("opening")); break;
+					case stClosed:  strcpy_P(buf, PSTR("closed"));  break;
+					case stClosing: strcpy_P(buf, PSTR("closing")); break;
+					case stStopped: strcpy_P(buf, PSTR("stopped")); break;
+				}
+				mqtt->publish(mqtt_topic_pub.c_str(), buf);
+			}
 		}
 	}
 	// Information
@@ -1466,7 +1501,7 @@ void IRAM_ATTR timer1Isr()
 
 	if (skip>0)
 	{
-		// this skip used to reduce total time in ISR. 
+		// this skip used to reduce total time in ISR.
 		skip--;
 		return;
 	}
@@ -1484,8 +1519,9 @@ void IRAM_ATTR timer1Isr()
 	if (position==0 && !dir_up) switch_ignore_steps=ini.switch_ignore_steps;
 	if (dir_up) switch_ignore_steps=0;
 
-	if (IsSwitchPressed() && !TestMode)
+	if ((IsSwitchPressed() || virtual_endstop_hit) && !TestMode)
 	{
+		virtual_endstop_hit = 0;
 		if (switch_ignore_steps == 0)
 		{
 			endstop_hit_pos = position;
@@ -1642,8 +1678,8 @@ void AdjustTimerInterval()
 void IRAM_ATTR timer0Isr(void *para, void *frame)
 {
 	static uint8_t pwm_phase = 0;
-    (void) para;
-    (void) frame;
+	(void) para;
+	(void) frame;
 	pwm_phase = !pwm_phase;
 	if (pwm_phase)
 	{
@@ -1805,7 +1841,7 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 
 	if (!slave[0])
 	{ // if master is not selected, we cannot dublicate action to slaves. We will send click/dblclick
-		for (address=1; address <= MAX_SLAVE; address++) 
+		for (address=1; address <= MAX_SLAVE; address++)
 			if (slave[address])
 			{
 				if (longclick)
@@ -1944,7 +1980,7 @@ void RF_Keypress(uint32_t code)
 void ProcessRF()
 {
 	static unsigned long last_rf = 0;
-	
+
 	if (mySwitch.available())
 	{
 		unsigned long code = mySwitch.getReceivedValue();
@@ -2242,7 +2278,7 @@ void WiFi_On()
 		WiFi.begin(ini.ssid, ini.password);
 	else
 		StartSoftAP();
-	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) 
+	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)
 	{
 		Serial.println(F("Disconnected"));
 		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
@@ -2750,7 +2786,7 @@ String HTML_status()
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
-	out += HTML_tableLine(L("<a href=\"/log\" onclick=\"return ShowLog();\">Log</a>", 
+	out += HTML_tableLine(L("<a href=\"/log\" onclick=\"return ShowLog();\">Log</a>",
 		"<a href=\"/log\" onclick=\"return ShowLog();\">Лог</a>"), String((int)elog.Count()), "log_count");
 
 	out += HTML_section(FLF("Position", "Положение"));
@@ -2861,7 +2897,7 @@ void HTTP_handleRoot(void)
 
 	out += F("<section class=\"main\" id=\"main\">");
 	if (mem_problem)
-		out += FLF("<p style=\"color:red;\">Incorrect memory size selected. Please use correct firmware or build with at least 16K FS</p>\n", 
+		out += FLF("<p style=\"color:red;\">Incorrect memory size selected. Please use correct firmware or build with at least 16K FS</p>\n",
 			"<p style=\"color:red;\">Неверный размер памяти. Используйте подходящую прошивку или откомпилируйте с минимумом 16K FS</p>\n");
 	out += F("<table>");
 	if (MASTER)
@@ -2955,7 +2991,7 @@ void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, cons
 	if (!httpServer.hasArg(id2)) return;
 	if (!httpServer.hasArg(id3)) return;
 	if (!httpServer.hasArg(id4)) return;
-	IP4_ADDR(iniip, 
+	IP4_ADDR(iniip,
 		atoi(httpServer.arg(id1).c_str()),
 		atoi(httpServer.arg(id2).c_str()),
 		atoi(httpServer.arg(id3).c_str()),
@@ -2989,14 +3025,14 @@ void HTTP_handleUpdate(void)
 		"<input type='submit' value='");
 	out += FL(F("Update Firmware"), F("Обновить прошивку"));
 	out += F("'></form>\n<p>");
-	out += FL(F("Choose file for firmware update.<br>New firmware can be downloaded from "), 
+	out += FL(F("Choose file for firmware update.<br>New firmware can be downloaded from "),
 		F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
 	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br>\n");
 	if (mem == 1024*1024)
 		out += FL(F("Choose *.1Mbyte.bin.<br>"), F("Выбирайте *.1Mbyte.bin.<br>"));
 	if (mem == 4*1024*1024)
 		out += FL(F("Choose *.4Mbyte.bin.<br>"), F("Выбирайте *.4Mbyte.bin.<br>"));
-	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin."), 
+	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin."),
 		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin"));
 
 	out += F("</p></section>\n");
@@ -3299,7 +3335,7 @@ void HTTP_handleSettings(void)
 		TOSTRING(PINOUT_DC) ",\"DC motor\"," \
 		TOSTRING(PINOUT_DC_PWM) ",\"DC + PWM\"," \
 		TOSTRING(PINOUT_DC_ENC) ",\"DC + Enc\"," \
-		TOSTRING(PINOUT_DC_PWM_ENC) ",\"DC + PWM + Enc\""), 
+		TOSTRING(PINOUT_DC_PWM_ENC) ",\"DC + PWM + Enc\""),
 		ini.pinout);
 	out += F("<tr><td>");
 	out += FLF("Direction:", "Направление:");
@@ -3342,7 +3378,7 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("Length:", "Длина:"), F("switch_ignore"), String(ini.switch_ignore_steps).c_str(), 5);
 	out += HTML_hint(FLF("(switch ignore zone, steps, default 100)", "(игнорировать концевик первые шаги, обычно 100)"));
 	out += HTML_editString(FLF("Extra:", "Запас:"), F("up_safe_limit"), String(ini.up_safe_limit).c_str(), 5);
-	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)", 
+	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)",
 		"(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)"));
 
 #if MQTT
@@ -3356,7 +3392,7 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("Password:", "Пароль:"), F("mqtt_password"), "*", sizeof(ini.mqtt_password)-1);
 	out += HTML_editString(FLF("Keep-alive:", "Keep-alive:"), F("mqtt_ping_interval"), String(ini.mqtt_ping_interval).c_str(), 5);
 	out += HTML_editString(FLF("Commands:", "Команды:"), F("mqtt_topic_command"), ini.mqtt_topic_command, sizeof(ini.mqtt_topic_command)-1);
-	out += HTML_hint(FLF("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)", 
+	out += HTML_hint(FLF("Allowed commands: on/open/off/close/stop, 0 - 100 (percents), =123 (steps), @1 (preset)",
 		"Допустимые команды: on/open/off/close/stop, 0 - 100 (проценты), =123 (шаги), @1 (пресет)"));
 	out += HTML_editString(FLF("State:", "Статус:"), F("mqtt_topic_state"), ini.mqtt_topic_state, sizeof(ini.mqtt_topic_state)-1);
 	out += F("<tr><td>");
@@ -3721,7 +3757,7 @@ void HTTP_handleAlarms(void)
 	out += F("];\nconst m_s=[");
 	out += MASTER_AND_SLAVES;
 	out += F("];\n");
-	
+
 	for (int a=0; a<ALARMS; a++)
 	{
 		out += F("SetAlarm(");
@@ -4104,7 +4140,7 @@ void HTTP_handleLog(void)
 				case EI_Cmd_Open:
 				case EI_Cmd_Close:
 				case EI_Cmd_Click:
-				case EI_Cmd_LClick: 
+				case EI_Cmd_LClick:
 					out += FPSTR((char*)pgm_read_dword(&(event_src_txt[e->val & 0xFF]))); break;
 				case EI_Wifi_Got_IP:
 					out += IPAddress(e->val).toString(); break;
@@ -4193,7 +4229,7 @@ void Scheduler()
 		{
 			if (MASTER)
 				slave[i] = ini.alarms[a].m_s & (0x01 << i);
-			else 
+			else
 				slave[i] = (i==0 ? 1 : 0);
 		}
 
@@ -4217,16 +4253,16 @@ void Scheduler()
 #define GRATUITOUS_ARP_MS 60000 // refresh arp every 60 sec
 void GratuitousARP()
 {
-   struct netif *netif = netif_list;
-   static uint32_t last_garp_time = 0;
-   if (!WiFi_connected) return;
-   if (millis() - last_garp_time < GRATUITOUS_ARP_MS) return;
-   last_garp_time = millis();
-   while (netif)
-   {
-      etharp_gratuitous(netif);
-      netif = netif->next;
-   }
+	struct netif *netif = netif_list;
+	static uint32_t last_garp_time = 0;
+	if (!WiFi_connected) return;
+	if (millis() - last_garp_time < GRATUITOUS_ARP_MS) return;
+	last_garp_time = millis();
+	while (netif)
+	{
+		etharp_gratuitous(netif);
+		netif = netif->next;
+	}
 }
 
 void MotorFailsafe()
