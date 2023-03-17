@@ -310,6 +310,18 @@ function DisableEl(id)
 	if(h) h.disabled = true; 
 }
 
+function ShowEl(id)
+{
+	h = document.getElementById(id);
+	if(h) h.style.display = '';
+}
+
+function HideEl(id)
+{
+	h = document.getElementById(id);
+	if(h) h.style.display = 'none';
+}
+
 function stt(t, id, tag)
 {
 	f=t.responseXML.getElementsByTagName(tag)[0];
@@ -484,6 +496,25 @@ function Preset(n)
 	return false;
 }
 
+function PinoutChange()
+{
+	var pinout = document.getElementById('pinout');
+	if (!pinout) return;
+
+	var i = pinout.selectedIndex;
+	if (i<4) ShowEl('po_step'); else HideEl('po_step');
+	if (i==4 || i==5) ShowEl('po_ms'); else HideEl('po_ms');
+	var st_time = document.getElementById('delay');
+	if (st_time)
+	{
+		st_time = st_time.parentElement.parentElement;
+		if (i<4)
+			st_time.style.display = '';
+		else
+			st_time.style.display = 'none';
+	}
+}
+
 function OnPageLoad()
 {
 	active=true;
@@ -491,4 +522,5 @@ function OnPageLoad()
 	PinChange();
 	MSChange();
 	BtnMS(-1);
+	PinoutChange();
 }

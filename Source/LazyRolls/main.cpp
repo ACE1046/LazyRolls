@@ -3073,6 +3073,17 @@ String HTML_hint(const __FlashStringHelper* hint)
 	return s;
 }
 
+String HTML_hint(const __FlashStringHelper* hint, const __FlashStringHelper* id)
+{
+	String s;
+	s = F("<tr id=\"");
+	s += id;
+	s += F("\"><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
+}
+
 String HTML_hint(const String &hint)
 {
 	String s;
@@ -3321,7 +3332,7 @@ void HTTP_handleSettings(void)
 	out += HTML_section(FLF("Motor", "Мотор"));
 	out += F("<tr><td>");
 	out += FLF("Pinout:", "Подключение:");
-	out += F("</td><td><select id=\"pinout\" name=\"pinout\">\n");
+	out += F("</td><td><select id=\"pinout\" name=\"pinout\" onchange=\"PinoutChange();\">\n");
 	// out += HTML_addOption(2, ini.pinout, F("A-B-C-D"));
 	// out += HTML_addOption(0, ini.pinout, F("A-C-B-D"));
 	// out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
@@ -3344,7 +3355,9 @@ void HTTP_handleSettings(void)
 	out += HTML_addOption(0, ini.reversed, FLF("Reversed", "Обратное"));
 	out += F("</select></td></tr>\n");
 	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(ini.step_delay_mks).c_str(), 5);
-	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"));
+	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"), F("po_step"));
+	out += HTML_hint(FLF("(step = 1 millisecond)", "(шаг = 1 миллисекунда)"), F("po_ms"));
+	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/motor.html\">imlazy.ru/rolls/motor.html</a>");
 	out += F("<tr><td colspan=\"2\">\n" \
 	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\"");
 	out += FLF("Test up", "Тест вверх");
