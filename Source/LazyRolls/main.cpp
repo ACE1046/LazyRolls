@@ -302,6 +302,7 @@ const char ET_Endstop_Hit_Error[] PROGMEM = "Stopped at endstop on going down";
 const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
 const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
 const char ET_Started[] PROGMEM = "Started";
+const char ET_Stall[] PROGMEM = "Motor stalled";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
@@ -313,10 +314,10 @@ const char EQ_RF[] PROGMEM = "Src: RF";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close, 
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect, 
-	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect };
+	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
-	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect };
+	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
@@ -4228,10 +4229,36 @@ void GratuitousARP()
    }
 }
 
+void MotorFailsafe()
+{ // Shut down motor after some time of work in case of encoder fail
+	static uint32_t last_idle, last_move;
+	static int last_pos = 0;
+	if (MOTOR_WITH_ENC)
+	{
+		if (position == roll_to)
+		{
+			last_move = last_idle = millis();
+			return;
+		}
+		if (position < last_pos - 3 || position > last_pos + 3) // position changed at least 3 steps
+		{
+			last_move = millis();
+			last_pos = position;
+			return;
+		}
+		if ((millis() - last_idle > 3 * 60 * 1000) || //  3 min of continuous work
+			(millis() - last_move > 2 * 1000)) // 2 seconds of stall
+		{
+			Stop(ADDR_MASTER);
+			elog.Add(EI_Stall, EL_ERROR, 0);
+		}
+	}
+}
+
 void loop(void)
 {
 	ProcessWiFi();
-	GratuitousARP();
+	if (!ini.mqtt_enabled) GratuitousARP();
 	ProcessLED();
 	ProcessRF();
 
@@ -4245,6 +4272,7 @@ void loop(void)
 	process_Aux();
 	if (MASTER) SendUARTPing();
 	if (SLAVE) ProcessUART();
+	MotorFailsafe();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
