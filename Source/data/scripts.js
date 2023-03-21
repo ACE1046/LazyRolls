@@ -177,18 +177,22 @@ function Test(dir)
 	pinout=document.getElementById("pinout").value;
 	reversed=document.getElementById("reversed").value;
 	delay=document.getElementById("delay").value;
+	pwm=document.getElementById("pwm").value;
 	var xhttp = new XMLHttpRequest();
 	xhttp.onreadystatechange = function() 
 	{
-		if (this.readyState == 4 && this.status == 200) 
+		if (this.readyState == 4)
 		{
+			if (this.status == 200)
+			{
+				document.getElementById("pos").innerHTML=this.responseText;
+				document.getElementById("dest").innerHTML=this.responseText;
+			}
 			document.getElementById("btn_up").disabled=false;
 			document.getElementById("btn_dn").disabled=false;
-			document.getElementById("pos").innerHTML=this.responseText;
-			document.getElementById("dest").innerHTML=this.responseText;
 		}
 	};
-	url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay;
+	url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay+"&pwm="+pwm;
 	if (dir==1) url=url+"&up=1"; else url=url+"&down=1";
 	xhttp.open("GET", url, true);
 	xhttp.send();
@@ -504,6 +508,7 @@ function PinoutChange()
 	var i = pinout.selectedIndex;
 	if (i<4) ShowEl('po_step'); else HideEl('po_step');
 	if (i==4 || i==5) ShowEl('po_ms'); else HideEl('po_ms');
+	if (i==5 || i==7) ShowEl('po_pwm'); else HideEl('po_pwm');
 	var st_time = document.getElementById('delay');
 	if (st_time)
 	{
@@ -515,6 +520,20 @@ function PinoutChange()
 	}
 }
 
+function PwmChange()
+{
+	var pwm = document.getElementById('pwm');
+	if (!pwm) return;
+	var pwm_num = document.getElementById('pwm_num');
+	if (!pwm_num) return;
+
+	var i = pwm.value;
+	if (i < 10) i = 0;
+	if (i > 90) i = 100;
+	pwm.value = i;
+	pwm_num.innerText = '  ' + i + '%';
+}
+
 function OnPageLoad()
 {
 	active=true;
@@ -523,4 +542,5 @@ function OnPageLoad()
 	MSChange();
 	BtnMS(-1);
 	PinoutChange();
+	PwmChange();
 }

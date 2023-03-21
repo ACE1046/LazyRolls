@@ -304,6 +304,7 @@ const char ET_MQTT_Connect[] PROGMEM = "MQTT connected";
 const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
 const char ET_Started[] PROGMEM = "Started";
 const char ET_Stall[] PROGMEM = "Motor stalled";
+const char ET_Auto[] PROGMEM = "Open/Close";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
@@ -315,10 +316,10 @@ const char EQ_RF[] PROGMEM = "Src: RF";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close,
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect,
-	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall };
+	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
-	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall };
+	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
@@ -1482,6 +1483,21 @@ void UpdateMQTTInfo() {}
 
 volatile uint16_t switch_ignore_steps;
 
+int8_t IRAM_ATTR getEncoder()
+{
+	uint8_t encA, encB;
+	static uint8_t oldA, oldB;
+	int8_t pos_change = 0;
+	encA = ((GPI >> ((PIN_C) & 0xF)) & 1);
+	encB = ((GPI >> ((PIN_D) & 0xF)) & 1);
+	if (oldA != encA) (encA != encB ? pos_change++ : pos_change--);
+	if (oldB != encB) (encA == encB ? pos_change++ : pos_change--);
+	oldA = encA;
+	oldB = encB;
+	if (ini.reversed) pos_change = 0 - pos_change;
+	return pos_change;
+}
+
 #define MAX_SPEED 500
 void IRAM_ATTR timer1Isr()
 {
@@ -1511,6 +1527,12 @@ void IRAM_ATTR timer1Isr()
 		MotorOff();
 		speed = 0;
 		skip = 10;
+		if (MOTOR_WITH_ENC)
+		{
+			position += getEncoder();
+			roll_to = position;
+			skip = 3;
+		}
 		return; // stopped, do nothing
 	}
 
@@ -1568,7 +1590,7 @@ void IRAM_ATTR timer1Isr()
 			oldA = encA;
 			oldB = encB;
 			if (ini.reversed) pos_change = 0 - pos_change;
-			skip = 5;
+			skip = 1; 
 			break;
 		case PINOUT_DC:
 		case PINOUT_DC_PWM:
@@ -1661,18 +1683,23 @@ void AdjustTimerInterval()
 	else
 		timer1_write((uint32_t)ini.step_delay_mks*TIMER1_TICKS_PER_US/4); // 4 interrupts per step
 
-	s = ini.step_delay_mks;
-	if (s < 100) s = 0;
-	else if (s > 355) s = 255;
-	else s = s - 100;
+	if (MOTOR_WITH_PWM)
+	{
+		s = ini.step_delay_mks;
+		if (s >= 100) s = 100;
 
-	h = s * pwm_ticks / 255;
-	if (h < pwm_ticks / 10) h = 0; // not less 10%
-	if (h > pwm_ticks * 9 / 10) h = pwm_ticks; // not more 90%
-	l = pwm_ticks - h;
+		if (s > 0 && s < 10) s = 10; // not less 10% or 0%
+		if (s > 90 && s < 100) s = 90; // not more 90% or 100%
 
-	pwm_phase_low_ticks = l;
-	pwm_phase_high_ticks = h;
+		h = s * pwm_ticks / 100;
+		if (h < pwm_ticks / 10) h = 0;
+		if (h > pwm_ticks * 9 / 10) h = pwm_ticks;
+		l = pwm_ticks - h;
+
+		pwm_phase_low_ticks = l;
+		pwm_phase_high_ticks = h;
+	} else
+		pwm_phase_low_ticks = 0;
 }
 
 void IRAM_ATTR timer0Isr(void *para, void *frame)
@@ -1835,8 +1862,10 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 				mask = mask << 1;
 			}
 		}
+		if (address == ADDR_ALL)
+			for (uint8_t i=0; i<=MAX_SLAVE; i++) slave[0] = 1;
+		if (address == ADDR_MASTER) slave[0] = 1;
 		if ((address != ADDR_MASTER) && (address <= MAX_SLAVE)) slave[address] = 1;
-		if ((address == ADDR_MASTER) || (address == ADDR_ALL)) slave[0] = 1;
 	} else slave[0] = 1;
 
 	if (!slave[0])
@@ -1949,7 +1978,9 @@ unsigned long last_rf_code = 0;
 bool rf_repeat = 0;
 
 // 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3',
-// 114, 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink'
+// 114, 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink',
+// 105, 'Button 1 Click', 106, 'Button 2 Click', 107, 'Button 1 Long', 108, 'Button 2 Long'
+
 void RF_Action(uint8_t action, uint8_t flags)
 {
 	if (!action) return;
@@ -1961,7 +1992,11 @@ void RF_Action(uint8_t action, uint8_t flags)
 	}
 	if (action == 101) { Open(ADDR_ALL); elog.Add(EI_Cmd_Open, EL_INFO, ES_RF); } else
 	if (action == 100) { Close(ADDR_ALL); elog.Add(EI_Cmd_Close, EL_INFO, ES_RF); } else
-	if (action == 102) { ButtonClick(1, ADDR_ALL); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
+	if (action == 102) { ButtonAction(BA_AUTO, 0, ADDR_ALL, 0); elog.Add(EI_Auto, EL_INFO, ES_RF); } else
+	if (action == 105) { ButtonClick(1, ADDR_DEFAULT); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
+	if (action == 106) { ButtonClick(2, ADDR_DEFAULT); elog.Add(EI_Cmd_Click2, EL_INFO, ES_RF); } else
+	if (action == 107) { ButtonLongClick(1, ADDR_DEFAULT); elog.Add(EI_Cmd_LClick, EL_INFO, ES_RF); } else
+	if (action == 108) { ButtonLongClick(2, ADDR_DEFAULT); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_RF); } else
 	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
 	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
@@ -2145,8 +2180,10 @@ void RF_handleHTTP()
 		out += F("</label></span>\n</td>\n</tr>");
 	}
 	out += F("<script>const opts1 = ");
-	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5',102,'Open/Close',103,'Stop',104,'Blink'];\n",
-			   "[0,'Нет',101,'Открыть',20,'20%',40,'40%',60,'60%',80,'80%',100,'Закрыть',111,'Пресет 1',112,'Пресет 2',113,'Пресет 3',114,'Пресет 4',115,'Пресет 5',102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть'];\n");
+	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5'," \
+		"102,'Open/Close',103,'Stop',104,'Blink',105,'Button 1',106,'Button 2',107,'Button 1 Long',108,'Button 2 Long'];\n",
+			   "[0,'Нет',101,'Открыть',20,'20%',40,'40%',60,'60%',80,'80%',100,'Закрыть',111,'Пресет 1',112,'Пресет 2',113,'Пресет 3',114,'Пресет 4',115,'Пресет 5'," \
+		"102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть',105,'Кнопка 1',106,'Кнопка 2',107,'Кнопка 1 длинное',108,'Кнопка 2 длинное'];\n");
 	for (int i=0; i < MAX_RF_CMDS; i++)
 	{
 		out += F("AddOption('rfa");
@@ -2366,8 +2403,15 @@ void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
 	if (ini.pinout<0 || ini.pinout>=MAX_PINOUT) ini.pinout=0;
-	if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
-	if (ini.step_delay_mks>=65000) ini.step_delay_mks=def_step_delay_mks;
+	if (MOTOR_WITH_PWM)
+	{
+		if (ini.step_delay_mks > 100) ini.step_delay_mks = 100;
+	}
+	else
+	{
+		if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks = MIN_STEP_DELAY;
+		if (ini.step_delay_mks >= 65000) ini.step_delay_mks = def_step_delay_mks;
+	}
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
 	if (ini.full_length<300 || ini.full_length>999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
@@ -3115,7 +3159,10 @@ void HTTP_saveSettings()
 	SaveInt(F("lang"), &ini.lang);
 	SaveInt(F("pinout"), &ini.pinout);
 	SaveInt(F("reversed"), &ini.reversed);
-	SaveInt(F("delay"), &ini.step_delay_mks);
+	if (MOTOR_WITH_PWM)
+		SaveInt(F("pwm"), &ini.step_delay_mks);
+	else
+		SaveInt(F("delay"), &ini.step_delay_mks);
 	SaveInt(F("timezone"), &ini.timezone);
 	SaveInt(F("length"), &ini.full_length);
 	SaveInt(F("switch"), &ini.switch_reversed);
@@ -3265,6 +3312,7 @@ String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *
 void HTTP_handleSettings(void)
 {
 	String out;
+	int i;
 
 	HTTP_Activity();
 
@@ -3354,7 +3402,17 @@ void HTTP_handleSettings(void)
 	out += HTML_addOption(1, ini.reversed, FLF("Normal", "Прямое"));
 	out += HTML_addOption(0, ini.reversed, FLF("Reversed", "Обратное"));
 	out += F("</select></td></tr>\n");
-	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(ini.step_delay_mks).c_str(), 5);
+	i = ini.step_delay_mks;
+	if (MOTOR_WITH_PWM) i = 1500;
+	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(i).c_str(), 5);
+	out += F("<tr id=\"po_pwm\"><td>");
+	out += FLF("Speed:", "Скорость");
+	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
+	i = ini.step_delay_mks;
+	if (!MOTOR_WITH_PWM) i = 100;
+	out += i;
+	out += F("\" class=\"slider\" id=\"pwm\" name=\"pwm\" onchange=\"PwmChange();\">");
+	out += F("<label id=\"pwm_num\">100%</label></td></tr>\n");
 	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"), F("po_step"));
 	out += HTML_hint(FLF("(step = 1 millisecond)", "(шаг = 1 миллисекунда)"), F("po_ms"));
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/motor.html\">imlazy.ru/rolls/motor.html</a>");
@@ -3968,9 +4026,16 @@ void HTTP_handleTest(void)
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
 	if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
 	if (ini.pinout>=MAX_PINOUT) ini.pinout=2;
-	if (httpServer.hasArg("delay")) ini.step_delay_mks=atoi(httpServer.arg("delay").c_str());
-	if (ini.step_delay_mks<MIN_STEP_DELAY) ini.step_delay_mks=MIN_STEP_DELAY;
-	if (ini.step_delay_mks>65000) ini.step_delay_mks=65000;
+	if (MOTOR_WITH_PWM)
+	{
+		if (httpServer.hasArg("pwm")) ini.step_delay_mks = atoi(httpServer.arg("pwm").c_str());
+		if (ini.step_delay_mks > 100) ini.step_delay_mks = 100;
+	} else
+	{
+		if (httpServer.hasArg("delay")) ini.step_delay_mks = atoi(httpServer.arg("delay").c_str());
+		if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks = MIN_STEP_DELAY;
+		if (ini.step_delay_mks > 65000) ini.step_delay_mks = 65000;
+	}
 	if (httpServer.hasArg("steps")) steps=atoi(httpServer.arg("steps").c_str());
 	if (steps<0) steps=0;
 
