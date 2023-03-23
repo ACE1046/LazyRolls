@@ -877,6 +877,25 @@ void ProcessUART()
 #define MOTOR_WITH_PWM (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
 #define MOTOR_WITH_ENC (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
 
+void IRAM_ATTR EnablePWM(bool en)
+{
+	volatile static bool pwm_active = 0;
+	if (en)
+	{
+		if (!pwm_active)
+		{
+			pwm_active = 1;
+			GPOC = 1 << PIN_PWM;
+			ETS_CCOMPARE0_ENABLE();
+			timer0_write(ESP.getCycleCount() + pwm_phase_low_ticks);
+		}
+	} else
+	{
+		pwm_active = 0;
+		ETS_CCOMPARE0_DISABLE();
+	}
+}
+
 const uint8_t microstep[8][4]={
 	{1, 0, 0, 0},
 	{1, 1, 0, 0},
@@ -940,7 +959,7 @@ void SetupMotorPins()
 
 void IRAM_ATTR MotorOff()
 {
-	ETS_CCOMPARE0_DISABLE(); // disable PWM
+	EnablePWM(false);
 	switch (ini.pinout)
 	{
 		case PINOUT_SD:
@@ -1662,13 +1681,11 @@ void IRAM_ATTR timer1Isr()
 
 	if (MOTOR_WITH_PWM)
 	{
-		if (pwm_phase_high_ticks == 0) GPOC = 1 << PIN_PWM; else
-		if (pwm_phase_low_ticks  == 0) GPOS = 1 << PIN_PWM; else
-		{
-			ETS_CCOMPARE0_ENABLE();
-			timer0_write(ESP.getCycleCount() + pwm_phase_low_ticks);
-		}
+		if (pwm_phase_high_ticks == 0) GPOC = 1 << PIN_PWM; else // pwm 0%
+		if (pwm_phase_low_ticks  == 0) GPOS = 1 << PIN_PWM; else // pwm 100%
+			EnablePWM(true);
 	}
+
 	switch (ini.pinout)
 	{
 		case PINOUT_SD: // step/dir
@@ -1754,7 +1771,7 @@ void SetupTimer()
 	AdjustTimerInterval();
 	noInterrupts();
 	ETS_CCOMPARE0_INTR_ATTACH(timer0Isr, NULL);
-	ETS_CCOMPARE0_DISABLE();
+	EnablePWM(false);
 	interrupts();
 }
 
