@@ -284,3 +284,8 @@ section, .status {	margin: 10px; }
 .sun th { padding: 0 5px 0 5px; }
 .sun td:nth-child(n+2) { text-align: right; }
 .sun tr:nth-child(8) { font-weight: 600; }
+
+section.info {
+	position: sticky;
+	top: 10px;
+}

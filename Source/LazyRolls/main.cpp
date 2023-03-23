@@ -2684,6 +2684,7 @@ void setup()
 	// start position is twice as fully open. So on first close we will go up till home position
 	position=ini.full_length*2+ini.up_safe_limit;
 	if (IsSwitchPressed()) position=0; // Fully open, if switch is pressed
+	if (ini.end2_pin && IsSwitch2Pressed()) position=ini.full_length; // Fully closed, if switch 2 is pressed
 	roll_to=position;
 
 	FillStepsTable();
@@ -2770,17 +2771,15 @@ String HTML_editString(const __FlashStringHelper *header, const __FlashStringHel
 {
 	String out;
 
-	out=F("<tr><td class=\"idname\">");
+	out=F("<script>edtStr(\"");
 	out += header;
-	out += F("</td><td class=\"val\"><input type=\"text\" name=\"");
+	out += F("\",\"");
 	out += id;
-	out += F("\" id=\"");
-	out += id;
-	out += F("\" value=\"");
+	out += F("\",\"");
 	out += inistr;
-	out += F("\" maxlength=\"");
+	out += F("\",");
 	out += len;
-	out += F("\"/></td></tr>\n");
+	out += F(");</script>\n");
 
 	return out;
 }
@@ -2789,23 +2788,63 @@ String HTML_editIP(const __FlashStringHelper* header, const __FlashStringHelper*
 {
 	String out;
 
-	out=F("<tr><td class=\"idip\">");
+	out=F("<script>edtIP(\"");
 	out += header;
-	out += F("</td><td class=\"val_ip\">");
-	for (int i=0; i<4; i++)
-	{
-		out += F("<input type=\"text\" name=\"");
-		out += id;
-		out += i+1;
-		out += F("\" value=\"");
-		out += String(ip4_addr_get_byte(inifield, i));
-		//out += F("\" maxlength=3\"");
-		out += F("\"/>");
-		if (i<3) out += " . ";
-	}
-	out += F("</td></tr>\n");
+	out += F("\",\"");
+	out += id;
+	out += F("\",");
+	out += inifield->addr;
+	out += F(");</script>\n");
 
 	return out;
+}
+
+String HTML_steps(String lbl, String id, int val, String name)
+{
+	String out;
+	out += F("<script>edtSteps(\"");
+	out += lbl;
+	out += F("\",\"");
+	out += id;
+	out += F("\",");
+	out += String(val);
+	out += F(",\"");
+	out += name;
+	out += F("\",\"");
+	out += FLF("Test", "Тест");
+	out += F("\",\"");
+	out += FLF("Here", "Тут");
+	out += F("\");</script>\n");
+	return out;
+}
+
+String HTML_hint(const __FlashStringHelper* hint)
+{
+	String s;
+	s = F("<tr><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
+}
+
+String HTML_hint(const __FlashStringHelper* hint, const __FlashStringHelper* id)
+{
+	String s;
+	s = F("<tr id=\"");
+	s += id;
+	s += F("\"><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
+}
+
+String HTML_hint(const String &hint)
+{
+	String s;
+	s = F("<tr><td></td><td>");
+	s += hint;
+	s += F("</td></tr>\n");
+	return s;
 }
 
 String HTML_addOption(int value, int selected, const __FlashStringHelper *text, const char *id = NULL)
@@ -3117,58 +3156,6 @@ void HTTP_handleUpdate(void)
 	httpServer.send(200, "text/html", out);
 }
 
-String HTML_steps(String lbl, String id, int val, String name)
-{
-	String out;
-	out += F("<tr><td class=\"idname\">");
-	out += lbl;
-	out += F("</td><td class=\"val_p\"><input type=\"text\" name=\"");
-	out += name;
-	out += F("\" id=\"");
-	out += id;
-	out += F("\" value=\"");
-	out += String(val);
-	out += F("\" maxlength=\"6\"/>\n<input type=\"button\" value=\"");
-	out += FLF("Test", "Тест");
-	out += F("\" onclick=\"TestPreset('");
-	out += name;
-	out += F("')\">\n<input type=\"button\" value=\"");
-	out += FLF("Here", "Тут");
-	out += F("\" onclick=\"SetPreset('");
-	out += name;
-	out += F("')\">\n</td></tr>\n");
-	return out;
-}
-
-String HTML_hint(const __FlashStringHelper* hint)
-{
-	String s;
-	s = F("<tr><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
-}
-
-String HTML_hint(const __FlashStringHelper* hint, const __FlashStringHelper* id)
-{
-	String s;
-	s = F("<tr id=\"");
-	s += id;
-	s += F("\"><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
-}
-
-String HTML_hint(const String &hint)
-{
-	String s;
-	s = F("<tr><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
-}
-
 void HTTP_saveSettings()
 {
 	char pass[max(sizeof(ini.password), sizeof(ini.mqtt_password))];
@@ -3359,7 +3346,7 @@ void HTTP_handleSettings(void)
 
 	out = HTML_header();
 
-	out.reserve(16384);
+	if (!out.reserve(20480)) Serial.println("Low mem in HandleSettings");
 
 	out += F("<section class=\"settings\" id=\"settings\">\n");
 
@@ -3440,7 +3427,7 @@ void HTTP_handleSettings(void)
 	if (MOTOR_WITH_PWM) i = 1500;
 	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(i).c_str(), 5);
 	out += F("<tr id=\"po_pwm\"><td>");
-	out += FLF("Speed:", "Скорость");
+	out += FLF("Speed:", "Скорость:");
 	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
 	i = ini.step_delay_mks;
 	if (!MOTOR_WITH_PWM) i = 100;
@@ -4392,7 +4379,7 @@ void GratuitousARP()
 }
 
 void MotorFailsafe()
-{ // Shut down motor after some time of work in case of encoder fail
+{ // Shut down motor after some time of work in case of encoder fail or stall
 	static uint32_t last_idle, last_move;
 	static int last_pos = 0;
 	if (MOTOR_WITH_ENC)

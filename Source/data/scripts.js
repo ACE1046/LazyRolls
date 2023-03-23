@@ -547,3 +547,64 @@ function OnPageLoad()
 	PinoutChange();
 	PwmChange();
 }
+
+function ip4_addr_get_byte(ip, b)
+{
+	return (ip >> (b*8)) & 0xFF;
+}
+
+function edtIP(header, id, inifield)
+{
+	var i;
+	document.write('<tr><td class="idip">');
+	document.write(header);
+	document.write(":</td><td class=\"val_ip\">");
+	for (i=0; i<4; i++)
+	{
+		document.write("<input type=\"text\" name=\"");
+		document.write(id);
+		document.write(i+1);
+		document.write("\" value=\"");
+		document.write(ip4_addr_get_byte(inifield, i));
+		document.write("\" maxlength=3\"");
+		document.write("\"/>");
+		if (i<3) document.write(" . ");
+	}
+	document.write("</td></tr>\n");
+}
+
+function edtStr(header, id, inistr, len)
+{
+	document.write("<tr><td class=\"idname\">");
+	document.write(header);
+	document.write("</td><td class=\"val\"><input type=\"text\" name=\"");
+	document.write(id);
+	document.write("\" id=\"");
+	document.write(id);
+	document.write("\" value=\"");
+	document.write(inistr);
+	document.write("\" maxlength=\"");
+	document.write(len);
+	document.write("\"/></td></tr>\n");
+}
+
+function edtSteps(lbl, id, val, name, test, here)
+{
+	document.write("<tr><td class=\"idname\">");
+	document.write(lbl);
+	document.write("</td><td class=\"val_p\"><input type=\"text\" name=\"");
+	document.write(name);
+	document.write("\" id=\"");
+	document.write(id);
+	document.write("\" value=\"");
+	document.write(val);
+	document.write("\" maxlength=\"6\"/>\n<input type=\"button\" value=\"");
+	document.write(test);
+	document.write("\" onclick=\"TestPreset('");
+	document.write(name);
+	document.write("')\">\n<input type=\"button\" value=\"");
+	document.write(here);
+	document.write("\" onclick=\"SetPreset('");
+	document.write(name);
+	document.write("')\">\n</td></tr>\n");
+}
