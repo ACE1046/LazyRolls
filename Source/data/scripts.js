@@ -124,7 +124,8 @@ function GetStatus()
 						st(this, "RSSI", 'RSSI');
 						st(this, "pos", 'Now');
 						st(this, "dest", 'Dest');
-						st(this, "switch", 'End1');
+						st(this, "end1", 'End1');
+						st(this, "end2", 'End2');
 						st(this, "mqtt", 'MQTT');
 						st(this, "voltage", 'Voltage');
 						st(this, "led_mode", 'Mode');
@@ -225,16 +226,18 @@ function PinChange()
 	var slave = document.getElementById('slave');
 	if (slave && slave.selectedIndex > 1) p[RX] = 1; // slave mode takes GPIO3 (RX)
 
+	CheckPin(p, 'end2_pin');
 	CheckPin(p, 'btn1_pin');
 	CheckPin(p, 'btn2_pin');
 	CheckPin(p, 'aux_pin');
 	CheckPin(p, 'rf_pin');
+	SetDisabled(p, 'end2_pin');
 	SetDisabled(p, 'btn1_pin');
 	SetDisabled(p, 'btn2_pin');
 	SetDisabled(p, 'aux_pin');
 	SetDisabled(p, 'rf_pin');
 	var dis = p[RX];
-	if (slave)
+	if (slave) // if RX pin busy, no slave mode allowed
 	{
 		if (slave.selectedIndex > 1) dis = false;
 		var op = document.getElementById('slave').getElementsByTagName("option");

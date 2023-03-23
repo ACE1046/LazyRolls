@@ -115,6 +115,7 @@ uint16_t def_step_delay_mks = 1500;
 #define DAY (24*60*60) // day length in seconds
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
+#define ARRAYSIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 #define MASTER (ini.slave == 255)
 #define SLAVE (ini.slave != 255 && ini.slave != 0)
 #define ADDR_MASTER 0
@@ -134,11 +135,15 @@ const uint8_t steps[3][4]={
 	{PIN_A, PIN_B, PIN_D, PIN_C},
 	{PIN_A, PIN_B, PIN_C, PIN_D}
 };
-volatile int position; // current motor steps position. 0 - at endstop
+
+const uint8_t hardware_pins[] = { 0, 0, 2, 3, 15 }; // available GPIOs, must correspond to next line
+#define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR) - Gnd\",2,\"GPIO2 (D4) - Gnd\",3,\"GPIO3 (RX) - Gnd\",4,\"GPIO15 (D8) - 3.3V\"")
+
+volatile int position; // current motor steps position. 0 - at main endstop
 volatile int roll_to; // position to go to
 uint16_t step_c[8], step_s[8]; // bitmasks for every step
 volatile uint8_t endstop_hit = 0; // endstop hit flag. Set at ISR, reset at user level
-volatile int endstop_hit_pos = 0; // position of endtop hit
+volatile int endstop_hit_pos = 0; // position of endstop hit
 volatile bool TestMode = 0; // Ignoring endstop in test mode
 bool voltage_available = 0;
 uint32_t last_network_time = 0; // last network activity time
@@ -231,6 +236,8 @@ struct {
 	uint8_t btn1_c_addr, btn2_c_addr; // Button click, master and slaves selection, bitmask
 	uint8_t btn1_l_addr, btn2_l_addr; // Long click, master and slaves selection, bitmask
 	char ap_pswd[16+1]; // Access Point password
+	uint8_t end2_pin; // second endstop pin selection
+	uint8_t switch2_reversed; // reverse second switch logic. 0 - NC, 1 - NO
 } ini;
 
 // language functions
@@ -806,7 +813,7 @@ void ProcessUART()
 	uint32_t val;
 
 	// Enable WiFi in slave mode if no ping from master for SLAVE_MAX_NO_PING_MS
-	if (SLAVE && !WiFi_AP_disabled && !WiFi_active && (millis() - lastUARTping > SLAVE_MAX_NO_PING_MS))
+	if (SLAVE && !WiFi_active && (millis() - lastUARTping > SLAVE_MAX_NO_PING_MS))
 	{
 		Serial.println(F("No ping from master, enabling WiFi"));
 		elog.Add(EI_Slave_No_Ping, EL_ERROR, 0);
@@ -956,10 +963,22 @@ void IRAM_ATTR MotorOff()
 	}
 }
 
+uint8_t IRAM_ATTR pin2hw_pin(uint8_t pin)
+{
+	if (pin >= ARRAYSIZE(hardware_pins)) return 0;
+	return hardware_pins[pin];
+}
+
 bool IRAM_ATTR IsSwitchPressed()
 {
 	// return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
 	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
+}
+
+bool IRAM_ATTR IsSwitch2Pressed()
+{
+	if (!ini.end2_pin) return 0;
+	return (((GPI >> ((pin2hw_pin(ini.end2_pin)) & 0xF)) & 1) != ini.switch2_reversed);
 }
 
 int Position2Percents(int pos)
@@ -1302,7 +1321,7 @@ void MQTT_discover()
 	cqpv("~", mqtt_topic_sub);
 	cqpc("set_pos_t", "~");
 	cqpv("pos_t", mqtt_topic_pub);
-	//cqpv("stat_t", mqtt_topic_pub);
+	cqpv("stat_t", mqtt_topic_pub);
 	cqpc("cmd_t", "~");
 	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
 	mqtt_data += id;
@@ -1575,6 +1594,15 @@ void IRAM_ATTR timer1Isr()
 		}
 	}
 
+	if (!dir_up && IsSwitch2Pressed() && !TestMode)
+	{
+		endstop_hit_pos = position;
+		endstop_hit = EL_INFO; // Set flag, will add event in Log, but not in ISR
+		roll_to = position = ini.full_length; // end point found
+		MotorOff();
+		return;
+	}
+
 	int8_t pos_change = 0;
 	switch (ini.pinout)
 	{
@@ -1784,18 +1812,6 @@ void ICACHE_RAM_ATTR btn2ISR()
 	lastState = state;
 }
 
-int pin2hw_pin(int pin)
-{
-	switch (pin)
-	{
-		case 1: return 0; break;
-		case 2: return 2; break;
-		case 3: return 3; break;
-		case 4: return 15; break;
-		default: return 0;
-	}
-}
-
 void setup_Button()
 {
 	detachInterrupt(0);
@@ -1814,6 +1830,11 @@ void setup_Button()
 		pin_btn2 = pin2hw_pin(ini.btn2_pin);
 		if (pin_btn2 != 15) pinMode(pin_btn2, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
 		attachInterrupt(digitalPinToInterrupt(pin_btn2), btn2ISR, CHANGE);
+	}
+	if (ini.end2_pin)
+	{
+		uint8_t pin_end2 = pin2hw_pin(ini.end2_pin);
+		if (pin_end2 != 15) pinMode(pin_end2, INPUT_PULLUP); // GPIO15 is inverted, no pull up needed
 	}
 
 #if MQTT
@@ -2221,6 +2242,7 @@ void setup_IP()
 
 void StartSoftAP()
 { // Lets make our own Access Point with blackjack and hookers
+	if (WiFi_AP_disabled) return;
 	Serial.print(F("Starting access point. SSID: "));
 	Serial.println(ini.hostname);
 	elog.Add(EI_Wifi_Start_AP, EL_WARN, 0);
@@ -2250,6 +2272,7 @@ void ProcessWiFi()
 			LED_Off();
 			CP_delete();
 			WiFi_AP_disabled = true; // Disabling AP mode until next reboot
+			WiFi_attempts = 0;
 		} else
 		{
 			if (last_reconnect==0) last_reconnect=millis();
@@ -2270,6 +2293,8 @@ void ProcessWiFi()
 		if (!WiFi_connected)
 		{ // Connected successfully
 			WiFi_connected = true;
+			WiFi_AP_disabled = true; // Disabling AP mode until next reboot
+			WiFi_attempts = 0;
 			WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
 			Serial.println(WiFi.localIP());
@@ -2285,7 +2310,7 @@ void ProcessWiFi()
 
 	if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS && WiFi.status() != WL_DISCONNECTED)
 	{
-		if (SSID_NOT_EMPTY && WiFi_attempts < MAX_RECONNECT_ATTEMPS)
+		if (SSID_NOT_EMPTY && (WiFi_AP_disabled || WiFi_attempts < MAX_RECONNECT_ATTEMPS))
 		{
 			WiFi.begin(ini.ssid, ini.password);
 			Serial.println(F("WiFi failed, retrying."));
@@ -2317,8 +2342,12 @@ void WiFi_On()
 		StartSoftAP();
 	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)
 	{
-		Serial.println(F("Disconnected"));
-		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
+		if (WiFi_connected)
+		{
+			WiFi_connected = false;
+			Serial.println(F("Disconnected"));
+			elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
+		}
 	});
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
 	ProcessWiFi();
@@ -2415,6 +2444,7 @@ void ValidateSettings()
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
 	if (ini.full_length<300 || ini.full_length>999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
+	if (ini.switch2_reversed>1) ini.switch2_reversed=1;
 	if (ini.switch_ignore_steps<5) ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
 	if (ini.switch_ignore_steps>65000) ini.switch_ignore_steps=65000;
 	if (ini.up_safe_limit<0) ini.up_safe_limit=DEFAULT_UP_SAFE_LIMIT;
@@ -2836,7 +2866,9 @@ String HTML_status()
 	out += HTML_section(FLF("Position", "Положение"));
 	out += HTML_tableLine(L("Now", "Сейчас"), String(position), "pos");
 	out += HTML_tableLine(L("Roll to", "Цель"), String(roll_to), "dest");
-	out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()], "switch");
+	out += HTML_tableLine(L("Switch", "Концевик"), onoff[ini.lang][IsSwitchPressed()], "end1");
+	if (ini.end2_pin)
+		out += HTML_tableLine(L("Switch 2", "Концевик 2"), onoff[ini.lang][IsSwitch2Pressed()], "end2");
 
 	out += HTML_section(FLF("Memory", "Память"));
 	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
@@ -3166,8 +3198,10 @@ void HTTP_saveSettings()
 	SaveInt(F("timezone"), &ini.timezone);
 	SaveInt(F("length"), &ini.full_length);
 	SaveInt(F("switch"), &ini.switch_reversed);
+	SaveInt(F("switch2"), &ini.switch2_reversed);
 	SaveInt(F("sw_at_bottom"), &ini.sw_at_bottom);
 	SaveInt(F("switch_ignore"), &ini.switch_ignore_steps);
+	SaveInt(F("end2_pin"), &ini.end2_pin);
 	SaveInt(F("btn1_pin"), &ini.btn1_pin);
 	SaveInt(F("btn2_pin"), &ini.btn2_pin);
 	SaveInt(F("aux_pin"), &ini.aux_pin);
@@ -3452,6 +3486,19 @@ void HTTP_handleSettings(void)
 	out += HTML_hint(FLF("(Maximum steps below zero on open, default 300. Do not change if not sure)",
 		"(Шагов в минус при открытии, до срабатывания концевика, обычно 300. Не менять, если не уверены.)"));
 
+	out += HTML_section(FLF("Endstop 2", "Концевик 2"));
+	out += F("<tr><td>");
+	out += FLF("Pin:", "Пин:");
+	out += F("</td><td><select id=\"end2_pin\" name=\"end2_pin\" onchange=\"PinChange()\">\n");
+	out += AddOptions(F("end2_pin"), F("pins"), PIN_LIST, ini.end2_pin);
+	out += F("</select></td></tr>\n");
+	out += F("<tr><td>");
+	out += FLF("Type:", "Тип:");
+	out += F("</td><td><select id=\"switch2\" name=\"switch2\">\n");
+	out += HTML_addOption(0, ini.switch2_reversed, FLF("Normal closed", "Нормально замкнут"));
+	out += HTML_addOption(1, ini.switch2_reversed, FLF("Normal open", "Нормально разомкнут"));
+	out += F("</select></td></tr>\n");
+
 #if MQTT
 	out += HTML_section(FLF("MQTT", "MQTT"));
 	String s=FLF("MQTT enabled Help:", "MQTT включен Помощь:");
@@ -3480,13 +3527,12 @@ void HTTP_handleSettings(void)
 	out += HTML_addCheckbox(L("Home Assistant MQTT discovery", "Home Assistant MQTT discovery"), "mqtt_discovery", ini.mqtt_discovery);
 #endif
 
-#define PIN_LIST F("0,\"---\",1,\"GPIO0 (D3/DTR) - Gnd\",2,\"GPIO2 (D4) - Gnd\",3,\"GPIO3 (RX) - Gnd\",4,\"GPIO15 (D8) - 3.3V\"")
 #define MASTER_AND_SLAVES FLF("'Master','S1','S2','S3','S4','S5'", "'Главный','В1','В2','В3','В4','В5'")
 	out += HTML_section(FLF("Button 1", "Кнопка 1"));
 	out += F("<tr><td>");
 	out += FLF("Pin:", "Пин:");
 	out += F("</td><td><select id=\"btn1_pin\" name=\"btn1_pin\" onchange=\"PinChange()\">\n");
-	out += AddOptions(F("btn1_pin"), F("pins"), PIN_LIST, ini.btn1_pin);
+	out += AddOptions(F("btn1_pin"), F("pins"), /*PIN_LIST,*/ ini.btn1_pin);
 	out += F("</select></td></tr>\n");
 
 	out += F("<tr><td>");
@@ -4131,6 +4177,8 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("Dest"), String(roll_to));
 	XML += MakeNode(F("Max"), String(ini.full_length));
 	XML += MakeNode(F("End1"), onoff[ini.lang][IsSwitchPressed()]);
+	if (ini.end2_pin)
+		XML += MakeNode(F("End2"), onoff[ini.lang][IsSwitch2Pressed()]);
 	XML += F("</Position><LED>");
 	XML += MakeNode(F("Mode"), LEDModeString());
 	XML += MakeNode(F("Level"), LEDLevelString());
