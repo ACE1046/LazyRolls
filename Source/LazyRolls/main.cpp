@@ -30,8 +30,8 @@ extern "C" {
 
 #define VERSION "0.14 beta 1"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
-#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
@@ -1171,6 +1171,7 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 			ToPercent(100-x, address);
 		else
 			ToPercent(x, address);
+		elog.Add(EI_Cmd_Percent, EL_INFO, ES_MQTT + (x<<8));
 	}
 	else if (strcmp(str, "on") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "off") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
@@ -2628,7 +2629,7 @@ void HTTP_handleUpdate(void);
 void HTTP_handleLog(void);
 void HTTP_redirect(String link);
 
-	volatile uint32_t i;
+	//volatile uint32_t i;
 void setup()
 {
 	rst_info *resetInfo;
@@ -3165,8 +3166,12 @@ void HTTP_handleUpdate(void)
 		out += FL(F("Choose *.1Mbyte.bin.gz.<br>"), F("Выбирайте *.1Mbyte.bin.gz.<br>"));
 	if (mem == 4*1024*1024)
 		out += FL(F("Choose *.4Mbyte.bin.gz.<br>"), F("Выбирайте *.4Mbyte.bin.gz.<br>"));
-	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin."),
-		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin"));
+	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
+		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
+	out += FLF("<p>Information:<br>", "<p>Информация:<br>");
+	out += ESP.getFullVersion();
+	out += F("<br>Free mem for firmware update: ");
+	out += ESP.getFreeSketchSpace();
 
 	out += F("</p></section>\n");
 
