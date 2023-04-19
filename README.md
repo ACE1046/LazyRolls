@@ -129,6 +129,9 @@ Board\Gerbers - gerber files для заказа плат на фабрике\
 * По MQTT отправляются статусы open / opening / close / closing / stopped для Home Assistant.
 * Добавлен gratuitous ARP. Привод постоянно сообщает свой IP в сети. Включается автоматически, если не используется MQTT. Может предотвратить некоторые случаи недоступности привода в сети.
 
+v0.14 beta 2
+* Сенсор Uptime в Home Assistant заменен на сенсор Last Restart Time. В mqtt топик info отправляются и аптайм, как раньше, и время рестарта.
+
 ### Authors
 
 * **ACE** - [e-mail](mailto:ace@imlazy.ru)

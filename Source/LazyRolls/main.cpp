@@ -534,8 +534,10 @@ const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of th
 uint8_t NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
 // Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
 const uint32_t seventyYears = 2208988800UL;
-uint32_t UNIXTime;
+uint32_t UNIXTime, last_restart_time = 0;
 WiFiUDP UDP;
+
+void UpdateMQTTInfo();
 
 void setup_NTP()
 {
@@ -576,6 +578,11 @@ void SyncNTPTime()
 		elog.Add(EI_NTP_Sync, EL_INFO, NTPTime);
 		UNIXTime = NTPTime;
 		lastSync = millis();
+		if (!last_restart_time)
+		{
+			last_restart_time = UNIXTime;
+			UpdateMQTTInfo();
+		}
 	}
 	UDP.flush();
 }
@@ -1276,6 +1283,7 @@ void MQTT_Delete_HA_Sensors()
 	MQTT_discover_delete_sensor(F("ip"));
 	MQTT_discover_delete_sensor(F("rssi"));
 	MQTT_discover_delete_sensor(F("uptime"));
+	MQTT_discover_delete_sensor(F("last_restart_time"));
 	MQTT_discover_delete_sensor(F("voltage"));
 	MQTT_discover_delete_sensor(F("aux"), true);
 }
@@ -1286,7 +1294,8 @@ void MQTT_discover_add_sensor(const char * device_id,
 	const __FlashStringHelper* dev_class,
 	const __FlashStringHelper* icon,
 	const __FlashStringHelper* unit,
-	bool binary = false)
+	bool binary = false,
+	const __FlashStringHelper* transform = NULL)
 {
 	String mqtt_topic, mqtt_data;
 
@@ -1318,6 +1327,7 @@ void MQTT_discover_add_sensor(const char * device_id,
 	if (unit) cqpv("unit_of_meas", unit);
 	mqtt_data += F("\",\"val_tpl\":\"{{value_json.");
 	mqtt_data += sensor_id;
+	if (transform) mqtt_data += transform;
 	mqtt_data += F("}}\"}");
 
 	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
@@ -1368,8 +1378,9 @@ void MQTT_discover()
 	{
 		MQTT_discover_add_sensor(id, F("IP"), F("ip"), NULL, F("mdi:ip-network-outline"), NULL);
 		MQTT_discover_add_sensor(id, F("RSSI"), F("rssi"), F("signal_strength"), NULL, F("dBm"));
-		MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
+		//MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
 		MQTT_discover_add_sensor(id, F("voltage"), F("voltage"), F("voltage"), NULL, F("V"));
+		MQTT_discover_add_sensor(id, F("Last Restart Time"), F("last_restart_time"), F("timestamp"), F("mdi:clock-time-five-outline"), NULL, false, F(" | timestamp_local | as_datetime"));
 		if (ini.aux_pin !=0)
 		{
 			MQTT_discover_add_sensor(id, F("aux"), F("aux"), F("window"), NULL, NULL, true);
@@ -1480,8 +1491,11 @@ void ProcessMQTT()
 			char buf[128];
 			IPAddress ip=WiFi.localIP();
 			last_mqtt_info=millis();
-			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\"}"),
+			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\""),
 				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str());
+			if (last_restart_time)
+				sprintf_P(buf + strlen(buf), PSTR(",\"last_restart_time\":%d"), last_restart_time);
+			sprintf_P(buf + strlen(buf), PSTR("}"));
 			mqtt->publish(mqtt_topic_inf.c_str(), buf);
 		}
 	}
