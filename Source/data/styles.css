@@ -20,11 +20,12 @@ p {
 }
 header {
 	font-size: 20px;
-	padding: 2px;
+	padding: 14px;
 	margin: 0px;
 	margin-bottom: 0px;
 	background-color: #aec0be;
 	text-align: center;
+	cursor: pointer;
 }
 section {
 	margin: 10px 0px 10px 0px;

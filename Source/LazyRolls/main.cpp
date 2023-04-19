@@ -1187,7 +1187,6 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
 	else if (strncmp(str, "report", 6) == 0) { last_mqtt = 0; last_mqtt_info = 0; }
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
-
 }
 
 String ReplaceHostname(const char *topic)
