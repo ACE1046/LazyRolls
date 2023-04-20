@@ -15,6 +15,7 @@ Automatic motorized roller blinds project.
 Home Assistant (встроенная поддержка через MQTT Discovery с версии 0.09)\
 [Homebridge](https://github.com/vitva/Lazyroll-settings-for-homebridge) (Автор Vitva)\
 [Управление с пульта ИК / RF433](https://mysku.club/blog/diy/87912.html) (Автор SamoS)
+[Карточка управления шторами для HA](https://github.com/samoswall/pic-shutter-card) (Автор SamoS)
 
 ### Структура директорий
 
@@ -122,14 +123,12 @@ Board\Gerbers - gerber files для заказа плат на фабрике\
 26.01.2023 v0.13.1
 * Добавлена единица измерения для напряжения в Home Assistant.
 
-26.03.2023 v0.14 beta 1
+20.04.2023 v0.14
 * Добавлена поддержка моторов постоянного тока, в том числе с энкодером. Подробнее [imlazy.ru/rolls/motor.html](http://imlazy.ru/rolls/motor.html).
 * Добавлен второй концевик, на противоположной стороне.
 * Добавлены команды MQTT. По команде "report" сообщает по MQTT свой статус. Командой "endstop" можно эмулировать нажатие концевика, например, zigbee датчиком открытия двери.
 * По MQTT отправляются статусы open / opening / close / closing / stopped для Home Assistant.
 * Добавлен gratuitous ARP. Привод постоянно сообщает свой IP в сети. Включается автоматически, если не используется MQTT. Может предотвратить некоторые случаи недоступности привода в сети.
-
-v0.14 beta 2
 * Сенсор Uptime в Home Assistant заменен на сенсор Last Restart Time. В mqtt топик info отправляются и аптайм, как раньше, и время рестарта.
 
 ### Authors

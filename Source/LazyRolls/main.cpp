@@ -28,10 +28,10 @@ extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
 }
 
-#define VERSION "0.14 beta 2"
+#define VERSION "0.14"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
-#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
+#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
+#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
@@ -3173,9 +3173,9 @@ void HTTP_handleUpdate(void)
 		F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
 	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br>\n");
 	if (mem == 1024*1024)
-		out += FL(F("Choose *.1Mbyte.bin.gz.<br>"), F("Выбирайте *.1Mbyte.bin.gz.<br>"));
+		out += FL(F("Choose *_1Mbyte.bin.gz.<br>"), F("Выбирайте *_1Mbyte.bin.gz.<br>"));
 	if (mem == 4*1024*1024)
-		out += FL(F("Choose *.4Mbyte.bin.gz.<br>"), F("Выбирайте *.4Mbyte.bin.gz.<br>"));
+		out += FL(F("Choose *_4Mbyte.bin.gz.<br>"), F("Выбирайте *_4Mbyte.bin.gz.<br>"));
 	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
 		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
 	out += FLF("<p>Information:<br>", "<p>Информация:<br>");
