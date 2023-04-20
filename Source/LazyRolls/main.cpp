@@ -28,7 +28,7 @@ extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
 }
 
-#define VERSION "0.14 beta 1"
+#define VERSION "0.14 beta 2"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -1351,7 +1351,7 @@ void MQTT_discover()
 	cqpv("~", mqtt_topic_sub);
 	cqpc("set_pos_t", "~");
 	cqpv("pos_t", mqtt_topic_pub);
-	cqpv("stat_t", mqtt_topic_pub);
+	cqpv("stat_t", mqtt_topic_pub + "_HA");
 	cqpc("cmd_t", "~");
 	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
 	mqtt_data += id;
@@ -1479,7 +1479,7 @@ void ProcessMQTT()
 					case stClosing: strcpy_P(buf, PSTR("closing")); break;
 					case stStopped: strcpy_P(buf, PSTR("stopped")); break;
 				}
-				mqtt->publish(mqtt_topic_pub.c_str(), buf);
+				mqtt->publish((mqtt_topic_pub + "_HA").c_str(), buf);
 			}
 		}
 	}
@@ -1491,11 +1491,8 @@ void ProcessMQTT()
 			char buf[128];
 			IPAddress ip=WiFi.localIP();
 			last_mqtt_info=millis();
-			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\""),
-				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str());
-			if (last_restart_time)
-				sprintf_P(buf + strlen(buf), PSTR(",\"last_restart_time\":%d"), last_restart_time);
-			sprintf_P(buf + strlen(buf), PSTR("}"));
+			sprintf_P(buf, PSTR("{\"ip\":\"%d.%d.%d.%d\",\"rssi\":\"%d\",\"uptime\":\"%s\",\"voltage\":\"%s\",\"aux\":\"%s\",\"last_restart_time\":%d}"),
+				ip[0], ip[1], ip[2], ip[3], WiFi.RSSI(), UptimeStr().c_str(), GetVoltageStr(), aux_state_str(), last_restart_time);
 			mqtt->publish(mqtt_topic_inf.c_str(), buf);
 		}
 	}
