@@ -1649,7 +1649,7 @@ void IRAM_ATTR timer1Isr()
 			oldA = encA;
 			oldB = encB;
 			if (ini.reversed) pos_change = 0 - pos_change;
-			skip = 1; 
+			skip = 1;
 			break;
 		case PINOUT_DC:
 		case PINOUT_DC_PWM:
