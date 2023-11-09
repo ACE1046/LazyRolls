@@ -30,7 +30,7 @@ extern "C" {
 
 #define VERSION "0.14"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
@@ -1954,12 +1954,19 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 				if (millis() - lastClick < DOUBLE_CLICK_MS)
 					open = !lastCommand; // invert direction on double click
 				else
+				{
 					open = position > ini.full_length/2;
+					if (ini.sw_at_bottom) open = !open;
+				}
 				action = (open ? BA_OPEN : BA_CLOSE);
 				lastCommand = open;
 			}
 		}
-		if (action == BA_CHANGE) action = (position > ini.full_length/2 ? BA_OPEN : BA_CLOSE);
+		if (action == BA_CHANGE) 
+			if (ini.sw_at_bottom)
+				action = (position > ini.full_length/2 ? BA_CLOSE : BA_OPEN);
+			else
+				action = (position > ini.full_length/2 ? BA_OPEN : BA_CLOSE);
 		if (action == BA_P1_P2) action = (position == ini.preset[0] ? BA_P2 : BA_P1);
 
 		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
