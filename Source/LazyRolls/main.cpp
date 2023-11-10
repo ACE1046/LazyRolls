@@ -160,6 +160,7 @@ bool mem_problem = 0; // memory error flag, incorrect compile settings
 volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
 uint16_t pwm_phase_low_ticks, pwm_phase_high_ticks;
 volatile bool virtual_endstop_hit = 0;
+uint16_t ticks_per_step = 4; // timer ticks per motor step, used for soft start
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -1548,12 +1549,12 @@ int8_t IRAM_ATTR getEncoder()
 	return pos_change;
 }
 
-#define MAX_SPEED 500
+#define MAX_SPEED 1000
 void IRAM_ATTR timer1Isr()
 {
 	static uint8_t step=0;
 	static uint16_t speed=0;
-	static uint8_t skip=0;
+	static uint16_t skip=0;
 	bool dir_up;
 
 	if (pwm_LED)
@@ -1667,26 +1668,18 @@ void IRAM_ATTR timer1Isr()
 		default: // all steppers
 			if (dir_up)
 			{
-				if (step == 0)
-				{
-					step = 8;
-					pos_change--;
-				}
-				step--;
+				if (step == 0) pos_change--;
+				step = (step - 1) & 0x07;
 			} else
 			{
-				step++;
-				if (step == 8)
-				{
-					step = 0;
-					pos_change++;
-				}
+				step = (step + 1) & 0x07;
+				if (step == 0) pos_change++;
 			}
 			if (speed < MAX_SPEED)
 			{
-				skip = 4 + ((MAX_SPEED-speed) / 100);
-				speed++;
-			} else skip=3;
+				skip = ticks_per_step - 1 + 3 * ticks_per_step * (MAX_SPEED - speed) / MAX_SPEED;
+				speed += (MAX_SPEED - speed) / 200 + 1;
+			} else skip = ticks_per_step - 1;
 	}
 	if (!dir_up && pos_change !=0 && switch_ignore_steps>0) switch_ignore_steps--;
 	position += pos_change;
@@ -1738,7 +1731,12 @@ void AdjustTimerInterval()
 		timer1_write((uint32_t)50*TIMER1_TICKS_PER_US); // 20 kHz
 	}
 	else
-		timer1_write((uint32_t)ini.step_delay_mks*TIMER1_TICKS_PER_US/4); // 4 interrupts per step
+	{
+		ticks_per_step = (uint32_t)ini.step_delay_mks / 25;
+		if (ticks_per_step < 4) ticks_per_step = 4; // at least 4 timer ticks per step
+		if (ticks_per_step > 40) ticks_per_step = 40; // at max 40
+		timer1_write((uint32_t)ini.step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step);
+	}
 
 	if (MOTOR_WITH_PWM)
 	{
@@ -1962,11 +1960,13 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 				lastCommand = open;
 			}
 		}
-		if (action == BA_CHANGE) 
+		if (action == BA_CHANGE)
+		{
 			if (ini.sw_at_bottom)
 				action = (position > ini.full_length/2 ? BA_CLOSE : BA_OPEN);
 			else
 				action = (position > ini.full_length/2 ? BA_OPEN : BA_CLOSE);
+		}
 		if (action == BA_P1_P2) action = (position == ini.preset[0] ? BA_P2 : BA_P1);
 
 		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
