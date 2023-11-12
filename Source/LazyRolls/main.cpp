@@ -28,13 +28,29 @@ extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
 }
 
-#define VERSION "0.14"
+#define VERSION "0.14 ++"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
+
+#if FLASH_MAP_SUPPORT
+#define AUTOMEMSIZE
+#include <flash_hal.h>
+// Custom memory map, 128K SPIFFS for 1MB modules
+#define FLASH_MAP_LAZYROLL \
+    { \
+        { .eeprom_start = 0x402fb000, .fs_start = 0x402db000, .fs_end = 0x402fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 1024 }, \
+        { .eeprom_start = 0x403fb000, .fs_start = 0x403c0000, .fs_end = 0x403fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 2048 }, \
+        { .eeprom_start = 0x405fb000, .fs_start = 0x40500000, .fs_end = 0x405fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 4096 }, \
+        { .eeprom_start = 0x409fb000, .fs_start = 0x40400000, .fs_end = 0x409fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 8192 }, \
+        { .eeprom_start = 0x411fb000, .fs_start = 0x40400000, .fs_end = 0x411fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 16384 }, \
+        { .eeprom_start = 0x4027b000, .fs_start = 0x40273000, .fs_end = 0x4027b000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 512 }, \
+    }
+  FLASH_MAP_SETUP_CONFIG(FLASH_MAP_LAZYROLL);
+#endif
 
 #include "spiff_files.h"
 
@@ -2587,6 +2603,9 @@ void print_SPIFFS_info()
 
 void setup_SPIFFS()
 {
+	DEBUGV("Chip size %d\n", flashchip->chip_size);
+	DEBUGV("Real Chip size %d\n", ESP.getFlashChipRealSize());
+	flashchip->chip_size = ESP.getFlashChipRealSize();
 	if (SPIFFS.begin())
 	{
 		Serial.println(F("SPIFFS Active"));
@@ -3180,14 +3199,17 @@ void HTTP_handleUpdate(void)
 		F("Выберите файл прошивки (Choose File) для обновления.<br/>Новые прошивки можно скачать тут: "));
 	out += F("<a href=\"https://github.com/ACE1046/LazyRolls/tree/master/Firmware\">Github</a>.<br>\n");
 	if (mem == 1024*1024)
-		out += FL(F("Choose *_1Mbyte.bin.gz.<br>"), F("Выбирайте *_1Mbyte.bin.gz.<br>"));
+		out += FL(F("Choose *_1"), F("Выбирайте *_1"));
 	if (mem == 4*1024*1024)
-		out += FL(F("Choose *_4Mbyte.bin.gz.<br>"), F("Выбирайте *_4Mbyte.bin.gz.<br>"));
-	out += FL(F("\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
+		out += FL(F("Choose *_4"), F("Выбирайте *_4"));
+	out += FL(F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
 		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
 	out += FLF("<p>Information:<br>", "<p>Информация:<br>");
 	out += ESP.getFullVersion();
-	out += F("<br>Free mem for firmware update: ");
+	#ifdef AUTOMEMSIZE
+	out += F("</p><p>Auto memory size build");
+	#endif
+	out += F("</p><p>Free mem for firmware update: ");
 	out += ESP.getFreeSketchSpace();
 
 	out += F("</p></section>\n");
