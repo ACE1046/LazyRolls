@@ -1284,16 +1284,10 @@ void MQTT_connect()
 
 void MQTT_discover_delete_sensor(const __FlashStringHelper* sensor_id, bool binary = false)
 {
-	String mqtt_topic;
-	if (binary)
-		mqtt_topic = F("homeassistant/binary_sensor/");
-	else
-		mqtt_topic = F("homeassistant/sensor/");
-	mqtt_topic += ini.hostname;
-	mqtt_topic += F("/");
-	mqtt_topic += sensor_id;
-	mqtt_topic += F("/config");
-	mqtt->publish(mqtt_topic.c_str(), "", false);
+	char topic[100];
+
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), ini.hostname, sensor_id);
+	mqtt->publish(topic, PSTR(""), false);
 }
 
 void MQTT_Delete_HA_Sensors()
