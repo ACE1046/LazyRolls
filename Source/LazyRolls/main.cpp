@@ -13,7 +13,8 @@ http://imlazy.ru/rolls/
 05.08.2021 v0.11
 27.01.2022 v0.12
 09.12.2022 v0.13
-26.03.2022 v0.14 beta
+20.04.2023 v0.14
+12.11.2023 v0.15
 
 */
 #include <ESP8266WiFi.h>
@@ -39,7 +40,7 @@ extern "C" {
 #if FLASH_MAP_SUPPORT
 #define AUTOMEMSIZE
 #include <flash_hal.h>
-// Custom memory map, 128K SPIFFS for 1MB modules
+// Custom memory map, 128K SPIFFS for 1MB modules, 1M for 4MB
 #define FLASH_MAP_LAZYROLL \
     { \
         { .eeprom_start = 0x402fb000, .fs_start = 0x402db000, .fs_end = 0x402fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 1024 }, \
@@ -1305,6 +1306,32 @@ void MQTT_Delete_HA_Sensors()
 	MQTT_discover_delete_sensor(F("aux"), true);
 }
 
+void make_pair_f(char *buf, size_t strSize, const char *name, const __FlashStringHelper* val)
+{
+	buf[0] = 0;
+	if (val)
+	{
+		if (name)
+			snprintf_P(buf, strSize, PSTR("'%s':'%s',"), name, val);
+		else
+			snprintf_P(buf, strSize, PSTR("%s"), val);
+	}
+}
+
+void make_pair_f(char *buf, size_t strSize, const char *name, const char *val)
+{
+	buf[0] = 0;
+	snprintf_P(buf, strSize, PSTR("'%s':'%s',"), name, val);
+}
+#define make_pair(buf, size, name, val) char buf[size]; make_pair_f(buf, sizeof(buf), name, val);
+
+void ChangeQuoteSymbol(char *buf)
+// changes all ' to "
+{
+	int i=-1;
+	while (buf[++i]) if (buf[i] == '\'') buf[i] = '\"';
+}
+
 void MQTT_discover_add_sensor(const char * device_id,
 	const __FlashStringHelper* name,
 	const __FlashStringHelper* sensor_id,
@@ -1312,102 +1339,76 @@ void MQTT_discover_add_sensor(const char * device_id,
 	const __FlashStringHelper* icon,
 	const __FlashStringHelper* unit,
 	bool binary = false,
-	const __FlashStringHelper* transform = NULL)
+	const __FlashStringHelper* transform = NULL,
+	bool remove = false)
 {
-	String mqtt_topic, mqtt_data;
+	char topic[100];
+	char data[640];
 
-#define qpv(a, b) { mqtt_data += F("\"" a "\":\""); mqtt_data += b; } // "a":"b (b - string)
-#define qpc(a, b) { mqtt_data += F("\"" a "\":\"" b); } // "a":"b (b - const)
-#define cqpv(a, b) { mqtt_data += F("\",\"" a "\":\""); mqtt_data += b; } // ", "a":"b (b - string)
-#define cqpc(a, b) { mqtt_data += F("\",\"" a "\":\"" b); } // ", "a":"b (b - const)
-#define sqpv(a, b) { mqtt_data = F("{\"" a "\":\""); mqtt_data += b;} // {"a":"b
-	if (binary)
-		mqtt_topic = F("homeassistant/binary_sensor/");
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), ini.hostname, sensor_id);
+
+	if (remove) data[0] = 0;
 	else
-		mqtt_topic = F("homeassistant/sensor/");
-	mqtt_topic += String(ini.hostname)+"/"+sensor_id+"/config";
-	sqpv("name", ini.hostname);
-	mqtt_data += " ";
-	mqtt_data += name;
-	cqpv("stat_t", mqtt_topic_inf);
-	cqpc("entity_category", "diagnostic");
-	if (dev_class) cqpv("dev_cla", dev_class);
-	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
-	mqtt_data += device_id;
-	mqtt_data += "\"]},";
-	qpv("unique_id", device_id);
-	mqtt_data += "_";
-	mqtt_data += sensor_id;
-	if (icon) cqpv("ic", icon);
-	if (mqtt_topic_lwt != "-")
-		cqpv("avty_t", mqtt_topic_lwt);
-	if (unit) cqpv("unit_of_meas", unit);
-	mqtt_data += F("\",\"val_tpl\":\"{{value_json.");
-	mqtt_data += sensor_id;
-	if (transform) mqtt_data += transform;
-	mqtt_data += F("}}\"}");
+	{
+		make_pair(dc, 30, PSTR("dev_cla"), dev_class);
+		make_pair(ic, 36, PSTR("ic"), icon);
+		make_pair(um, 30, PSTR("unit_of_meas"), unit);
+		make_pair(tr, 36, NULL, transform);
+		make_pair(av, 140, PSTR("avty_t"), mqtt_topic_lwt.c_str());
+		if (mqtt_topic_lwt == "-") av[0] = 0;
+		snprintf_P(data, sizeof(data), 
+			PSTR("{'name':'%s','stat_t':'%s','entity_category':'diagnostic',%s'dev':{'ids':['%s']},'unique_id':'%s_%s',%s%s%s'val_tpl':'{{value_json.%s%s}}'}"), 
+			name, mqtt_topic_inf.c_str(), dc, device_id, device_id, sensor_id, ic, av, um, sensor_id, tr);
+		ChangeQuoteSymbol(data);
+	}
 
-	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+	//Serial.println(data);
+	mqtt->publish(topic, data, true);
 }
 
-void MQTT_discover()
+void MQTT_discover_device(char *id)
 {
-	String mqtt_topic, mqtt_data;
-	char id[17];
+	char ip[20];
+	char topic[60];
+	char data[640];
 
 	if (!ini.mqtt_enabled) return;
 	if (!mqtt->connected()) return;
 
-	snprintf_P(id, 17, PSTR("lazyroll%08X"), ESP.getChipId());
-	mqtt_topic = F("homeassistant/cover/");
-	mqtt_topic += ini.hostname;
-	mqtt_topic += F("/config");
-	sqpv("name", ini.hostname);
-	cqpv("unique_id", id);
-	mqtt_data += F("_blind");
-	cqpv("~", mqtt_topic_sub);
-	cqpc("set_pos_t", "~");
-	cqpv("pos_t", mqtt_topic_pub);
-	cqpv("stat_t", mqtt_topic_pub + "_HA");
-	cqpc("cmd_t", "~");
-	mqtt_data += F("\",\"dev\":{\"ids\":[\"");
-	mqtt_data += id;
-	mqtt_data += "\"],";
-	qpv("name", ini.hostname);
-	cqpc("mdl", "LazyRoll [");
-	mqtt_data += WiFi.localIP().toString();
-	mqtt_data += F("]");
-	cqpc("mf", "imlazy.ru");
-	cqpv("cu", "http://" + WiFi.localIP().toString() + F("/settings"));
-	cqpc("sw", VERSION "\"},");
-	qpc("dev_cla", "blind");
-	if (mqtt_topic_lwt != "-")
-			cqpv("avty_t", mqtt_topic_lwt);
-	if (ini.mqtt_invert)
-		mqtt_data+=F("\",\"pos_clsd\":0,\"pos_open\":100}");
-	else
-		mqtt_data+=F("\",\"pos_clsd\":100,\"pos_open\":0}");
+	strncpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip));
 
-	mqtt->publish(mqtt_topic.c_str(), mqtt_data.c_str(), true);
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/cover/%s/config"), ini.hostname);
+
+	int clsd;
+	make_pair(av, 140, PSTR("avty_t"), mqtt_topic_lwt.c_str());
+	if (mqtt_topic_lwt == "-") av[0] = 0;
+	if (ini.mqtt_invert) clsd = 0; else clsd = 100;
+	snprintf_P(data, sizeof(data), 
+		PSTR("{'name':'%s','unique_id':'%s_blind','~':'%s','set_pos_t':'~','pos_t':'%s','stat_t':'%s_HA','cmd_t':'~','dev':{'ids':['%s'],'name':'%s'," \
+		"'mdl':'LazyRoll [%s]','mf':'imlazy.ru','cu':'http://%s/settings','sw':'" VERSION "'},'dev_cla':'blind',%s'pos_clsd':%i,'pos_open':%i}"), 
+		ini.hostname, id, mqtt_topic_sub.c_str(), mqtt_topic_pub.c_str(), mqtt_topic_pub.c_str(), id, ini.hostname, ip, ip, av, clsd, 100 - clsd);
+	ChangeQuoteSymbol(data);
+	
+	//Serial.println(data);
+	mqtt->publish(topic, data, true);
+}
+
+void MQTT_discover()
+{
+	char id[17];
+
+	snprintf_P(id, sizeof(id), PSTR("lazyroll%08X"), ESP.getChipId());
+	MQTT_discover_device(id);
 
 	// Additional HA sensors
 	if (mqtt_topic_inf != "-")
 	{
 		MQTT_discover_add_sensor(id, F("IP"), F("ip"), NULL, F("mdi:ip-network-outline"), NULL);
 		MQTT_discover_add_sensor(id, F("RSSI"), F("rssi"), F("signal_strength"), NULL, F("dBm"));
-		//MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
 		MQTT_discover_add_sensor(id, F("voltage"), F("voltage"), F("voltage"), NULL, F("V"));
 		MQTT_discover_add_sensor(id, F("Last Restart Time"), F("last_restart_time"), F("timestamp"), F("mdi:clock-time-five-outline"), NULL, false, F(" | timestamp_local | as_datetime"));
-		if (ini.aux_pin !=0)
-		{
-			MQTT_discover_add_sensor(id, F("aux"), F("aux"), F("window"), NULL, NULL, true);
-		} else
-		{
-			mqtt_topic = F("homeassistant/binary_sensor/");
-			mqtt_topic += ini.hostname;
-			mqtt_topic += F("/aux/config");
-			mqtt->publish(mqtt_topic.c_str(), "", true);
-		}
+		MQTT_discover_add_sensor(id, F("aux"), F("aux"), F("window"), NULL, NULL, true, NULL, ini.aux_pin==0);
+		//MQTT_discover_add_sensor(id, F("uptime"), F("uptime"), NULL, F("mdi:clock-time-five-outline"), NULL);
 		last_mqtt_info=0;
 	}
 	else
@@ -2095,7 +2096,7 @@ void ProcessRF()
 
 		if (code == 0)
 		{
-			Serial.printf("Unknown encoding");
+			Serial.print("Unknown encoding");
 		} else {
 			if (code != last_rf_code || millis()-last_rf > RF_DELAY)
 			{
@@ -3203,7 +3204,7 @@ void HTTP_handleUpdate(void)
 	if (mem == 4*1024*1024)
 		out += FL(F("Choose *_4"), F("Выбирайте *_4"));
 	out += FL(F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
-		F("\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
+		F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
 	out += FLF("<p>Information:<br>", "<p>Информация:<br>");
 	out += ESP.getFullVersion();
 	#ifdef AUTOMEMSIZE
