@@ -1036,11 +1036,16 @@ int Position2Percents(int pos)
 	return percent;
 }
 
+void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
+{
+	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, val);
+}
+
 void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 {
 	if ((pos<0) || (pos>100)) return;
 
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, pos);
+	IfMasterSendUART(UART_CMD_PERCENT, address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (ini.sw_at_bottom) pos=100-pos;
@@ -1055,7 +1060,7 @@ void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 
 void ToPosition(int pos, uint8_t address=ADDR_ALL)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_POSITION, address, pos);
+	IfMasterSendUART(UART_CMD_POSITION, address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (pos<0 || pos>ini.full_length) return;
@@ -1066,7 +1071,7 @@ void ToPosition(int pos, uint8_t address=ADDR_ALL)
 
 void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PRESET, address, preset);
+	IfMasterSendUART(UART_CMD_PRESET, address, preset);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (preset==0 || preset > MAX_PRESETS) return;
@@ -1077,19 +1082,19 @@ void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
 
 void Open(uint8_t address=ADDR_ALL)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_OPEN, address);
+	IfMasterSendUART(UART_CMD_OPEN, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER);
 }
 
 void Close(uint8_t address=ADDR_ALL)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_CLOSE, address);
+	IfMasterSendUART(UART_CMD_CLOSE, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER);
 }
 
 void Stop(uint8_t address=ADDR_ALL)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_STOP, address);
+	IfMasterSendUART(UART_CMD_STOP, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		roll_to=position;
@@ -1117,14 +1122,9 @@ const char * GetVoltageStr()
 {
 	static char buf[5];
 	uint32_t v;
-	uint8_t n=0;
 
-	v=GetVoltage();
-	if (v>10000) buf[n++]=v/10000%10+'0';
-	buf[n++]=v/1000%10+'0';
-	buf[n++]='.';
-	buf[n++]=v/100%10+'0';
-	buf[n++]=0;
+	v = GetVoltage();
+	snprintf_P(buf, sizeof(buf), "%d.%01d", v/1000, v/100%10);
 	return buf;
 }
 
@@ -2169,13 +2169,13 @@ void RF_saveSettings()
 
 String RF_save()
 {
-	String out;
-	out += F("<tr class=\"sect_name\"><td colspan=\"2\">\n<input id=\"save\" type=\"submit\" name=\"save\" value=\"");
-	out += FLF("Save", "Сохранить");
-	out += F("\">\n<input id=\"cancel\" type=\"button\" name=\"cancel\" onclick=\"RFCancel();\" value=\"");
-	out += FLF("Cancel", "Отмена");
-	out += F("\">\n</td></tr>\n");
-	return out;
+	char buf[250];
+	snprintf_P(buf, sizeof(buf),
+		PSTR("<tr class='sect_name'><td colspan='2'>\n<input id='save' type='submit' name='save' value='%s'\n>" \
+		"<input id='cancel' type='button' name='cancel' onclick='RFCancel();' value='%s'>\n</td></tr>\n"),
+		FLF("Save", "Сохранить"), FLF("Cancel", "Отмена"));
+	ChangeQuoteSymbol(buf);
+	return String(buf);
 }
 
 String HTML_header();
@@ -2819,105 +2819,61 @@ String HTML_addCheckbox(const char* text, const char* id, bool checked)
 
 String HTML_editString(const __FlashStringHelper *header, const __FlashStringHelper *id, const char *inistr, int len)
 {
-	String out;
-
-	out=F("<script>edtStr(\"");
-	out += header;
-	out += F("\",\"");
-	out += id;
-	out += F("\",\"");
-	out += inistr;
-	out += F("\",");
-	out += len;
-	out += F(");</script>\n");
-
-	return out;
+	char buf[250];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>edtStr('%s','%s','%s',%d);</script>\n"), header, id, inistr, len);
+	return buf;
 }
 
 String HTML_editIP(const __FlashStringHelper* header, const __FlashStringHelper* id, ip4_addr* inifield)
 {
-	String out;
-
-	out=F("<script>edtIP(\"");
-	out += header;
-	out += F("\",\"");
-	out += id;
-	out += F("\",");
-	out += inifield->addr;
-	out += F(");</script>\n");
-
-	return out;
+	char buf[100];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>edtIP('%s','%s',%d);</script>\n"), header, id, inifield->addr);
+	return buf;
 }
 
 String HTML_steps(String lbl, String id, int val, String name)
 {
-	String out;
-	out += F("<script>edtSteps(\"");
-	out += lbl;
-	out += F("\",\"");
-	out += id;
-	out += F("\",");
-	out += String(val);
-	out += F(",\"");
-	out += name;
-	out += F("\",\"");
-	out += FLF("Test", "Тест");
-	out += F("\",\"");
-	out += FLF("Here", "Тут");
-	out += F("\");</script>\n");
-	return out;
+	char buf[100];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>edtSteps('%s','%s',%d,'%s','%s','%s');</script>\n"),
+		lbl.c_str(), id.c_str(), val, name.c_str(), FLF("Test", "Тест"), FLF("Here", "Тут"));
+	return buf;
 }
 
 String HTML_hint(const __FlashStringHelper* hint)
 {
-	String s;
-	s = F("<tr><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
+	char buf[200];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td></td><td>%s</td></tr>\n"), hint);
+	return buf;
 }
 
 String HTML_hint(const __FlashStringHelper* hint, const __FlashStringHelper* id)
 {
-	String s;
-	s = F("<tr id=\"");
-	s += id;
-	s += F("\"><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
+	char buf[200];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr id=\"%s\"><td></td><td>%s</td></tr>\n"), id, hint);
+	return buf;
 }
 
 String HTML_hint(const String &hint)
 {
-	String s;
-	s = F("<tr><td></td><td>");
-	s += hint;
-	s += F("</td></tr>\n");
-	return s;
+	char buf[200];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td></td><td>%s</td></tr>\n"), hint.c_str());
+	return buf;
 }
 
 String HTML_addOption(int value, int selected, const __FlashStringHelper *text, const char *id = NULL)
 {
-	String s;
-	s = F("<option value=\"");
-	s += String(value);
-	s += F("\"");
-	s += (selected==value ? F(" selected=\"selected\"") : F(""));
-	if (id) { s += F(" id=\""); s += id; s += F("\""); };
-	s += F(">");
-	s += text;
-	s += F("</option>\n");
-	return s;
+	char ids[20] = "";
+	char buf[200];
+	if (id) snprintf_P(ids, sizeof(ids), PSTR(" id=\"%s\""), id);
+	snprintf_P(buf, sizeof(buf), PSTR("<option value=\"%d\"%s%s>%s</option>\n"), value, (selected==value ? F(" selected=\"selected\"") : F("")), ids, text);
+	return buf;
 }
 
 String HTML_section(const __FlashStringHelper* section)
 {
-	String out;
-	out = F("<tr class=\"sect_name\"><td colspan=\"2\">");
-	out += section;
-	out += F("</td></tr>\n");
-	return out;
+	char buf[100];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr class=\"sect_name\"><td colspan=\"2\">%s</td></tr>\n"), section);
+	return buf;
 }
 
 String MemSize2Str(uint32_t mem)
@@ -3329,62 +3285,30 @@ void HTTP_saveSettings()
 
 String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
 {
-	String out;
-	out = F("<script>const ");
-	out += var;
-	out += F("=[");
-	out += arr;
-	out += F("];AddOption('");
-	out += id;
-	out += F("', ");
-	out += var;
-	out += F(", ");
-	out += val;
-	out += F(");</script>\n");
-	return out;
+	char buf[300];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>const %s=[%s];AddOption('%s', %s, %d);</script>\n"), var, arr, id, var, val);
+	return buf;
 }
 
 String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var, int val)
 {
-	String out;
-	out = F("<script>AddOption('");
-	out += id;
-	out += F("', ");
-	out += var;
-	out += F(", ");
-	out += val;
-	out += F(");</script>\n");
-	return out;
+	char buf[100];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>AddOption('%s', %s, %d);</script>\n"), id, var, val);
+	return buf;
 }
 
 String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
 {
-	String out;
-	out = F("<script>const ");
-	out += var;
-	out += F("=[");
-	out += arr;
-	out += F("];AddMasterSlave('");
-	out += id;
-	out += F("', ");
-	out += var;
-	out += F(", ");
-	out += val;
-	out += F(");</script>\n");
-	return out;
+	char buf[300];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>const %s=[%s];AddMasterSlave('%s', %s, %d);</script>\n"), var, arr, id, var, val);
+	return buf;
 }
 
 String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, int val)
 {
-	String out;
-	out = F("<script>AddMasterSlave('");
-	out += id;
-	out += F("', ");
-	out += var;
-	out += F(", ");
-	out += val;
-	out += F(");</script>\n");
-	return out;
+	char buf[100];
+	snprintf_P(buf, sizeof(buf), PSTR("<script>AddMasterSlave('%s', %s, %d);</script>\n"), id, var, val);
+	return buf;
 }
 
 void HTTP_handleSettings(void)
@@ -3645,8 +3569,8 @@ void HTTP_handleSettings(void)
 	out += F("</select></td></tr>\n");
 	out += AddOptions(F("aux_pin"), F("pins"), /*PIN_LIST,*/ ini.aux_pin);
 	out += HTML_editString(FLF("MQTT topic:", "MQTT топик:"), F("mqtt_topic_aux"), ini.mqtt_topic_aux, sizeof(ini.mqtt_topic_aux)-1);
-	out += HTML_hint(FLF("(Auxiliary input. Connect to Gnd and selected pin. Will send \"ON/OFF\" payloads to selected topic on change)",
-		"(Доп. вход. Подключать к Gnd и выбраному пину. При изменении будет отправлять \"ON/OFF\" в указанный топик)"));
+	out += HTML_hint(FLF("(Auxiliary input. Connect to selected pins. Will send \"ON/OFF\" payloads to selected topic on change)",
+		"(Доп. вход. Подключать к выбраным пинам. При изменении будет отправлять \"ON/OFF\" в указанный топик)"));
 #endif
 
 	out += HTML_section(FLF("Master/slave", "Главный/ведомый"));
