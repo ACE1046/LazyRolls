@@ -2895,6 +2895,30 @@ String HTML_hint(const String &hint)
 	return buf;
 }
 
+String HTML_test(const __FlashStringHelper* name, int n)
+{
+	char buf[300];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td>%s</td><td>\n" \
+		"<input id='btn_up%i' type='button' name='up' value='%s' onclick='TestUp(%i);'>\n" \
+		"<input id='btn_dn%i' type='button' name='down' value='%s' onclick='TestDown(%i);'>\n</td></tr>\n"),
+		name,
+		n, FLF("Test up", "Тест вверх"), n,
+		n, FLF("Test down", "Тест вниз"), n);
+	ChangeQuoteSymbol(buf);
+	return buf;
+}
+
+String HTML_speed(const char* n1, const char* n2, int i)
+{
+	char buf[300];
+	snprintf_P(buf, sizeof(buf),
+		PSTR("<tr id='po_pwm%s'><td>%s%s:</td><td><input type='range' min='0' max='100' value='%i' class='slider' id='pwm%s' name='pwm%s' onchange='PwmChange();'>" \
+			"<label id='pwm_num%s'>100%</label></td></tr>\n"),
+		n2, FLF("Speed", "Скорость"), n1, i, n2, n2, n2);
+	ChangeQuoteSymbol(buf);
+	return buf;
+}
+
 String HTML_addOption(int value, int selected, const __FlashStringHelper *text, const char *id = NULL)
 {
 	char ids[20] = "";
@@ -3451,37 +3475,15 @@ void HTTP_handleSettings(void)
 	i = ini.step_delay_mks;
 	i2 = ini.step_delay_mks2;
 	if (!MOTOR_WITH_PWM) i = i2 = 100;
-	out += F("<tr id=\"po_pwm\"><td>");
-	out += FLF("Speed:", "Скорость:");
-	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
-	out += i;
-	out += F("\" class=\"slider\" id=\"pwm\" name=\"pwm\" onchange=\"PwmChange();\">");
-	out += F("<label id=\"pwm_num\">100%</label></td></tr>\n");
-	out += F("<tr id=\"po_pwm2\"><td>");
-	out += FLF("Speed 2:", "Скорость 2:");
-	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
-	out += i2;
-	out += F("\" class=\"slider\" id=\"pwm2\" name=\"pwm2\" onchange=\"PwmChange();\">");
-	out += F("<label id=\"pwm_num2\">100%</label></td></tr>\n");
+
+	out += HTML_speed(PSTR(""), PSTR(""), i);
+	out += HTML_speed(PSTR(" 2"), PSTR("2"), i2);
+
 	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"), F("po_step"));
 	out += HTML_hint(FLF("(step = 1 millisecond)", "(шаг = 1 миллисекунда)"), F("po_ms"));
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/motor.html\">imlazy.ru/rolls/motor.html</a>");
-	char buf[300];
-	const char *tr_test = PSTR("<tr><td>%s</td><td>\n" \
-		"<input id='btn_up%i' type='button' name='up' value='%s' onclick='TestUp(%i);'>\n" \
-		"<input id='btn_dn%i' type='button' name='down' value='%s' onclick='TestDown(%i);'>\n</td></tr>\n");
-	snprintf_P(buf, sizeof(buf), tr_test,
-		FLF("Normal", "Обычная"),
-		1, FLF("Test up", "Тест вверх"), 1,
-		1, FLF("Test down", "Тест вниз"), 1);
-	ChangeQuoteSymbol(buf);
-	out += buf;
-	snprintf_P(buf, sizeof(buf), tr_test,
-		FLF("Speed 2", "Скорость 2"),
-		2, FLF("Test up", "Тест вверх"), 2,
-		2, FLF("Test down", "Тест вниз"), 2);
-	ChangeQuoteSymbol(buf);
-	out += buf;
+	out += HTML_test(FLF("Normal", "Обычная"), 1);
+	out += HTML_test(FLF("Speed 2", "Скорость 2"), 2);
 
 	out += HTML_section(FLF("Curtain", "Штора"));
 	out += HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
