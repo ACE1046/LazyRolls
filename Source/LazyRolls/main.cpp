@@ -1134,7 +1134,7 @@ const char * GetVoltageStr()
 
 uint8_t pin_aux, aux_state;
 uint32_t last_mqtt=0, last_mqtt_info=0;
-String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf;
+String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf, mqtt_node_id;
 
 WiFiClient espClient;
 PubSubClient *mqtt = NULL;
@@ -1219,7 +1219,27 @@ String ReplaceHostname(const char *topic)
 	String s;
 	s = String(topic);
 	s.replace("%HOSTNAME%", String(ini.hostname));
+	s.replace("$", "_");
+	s.replace("*", "_");
+	s.replace("+", "_");
+	s.replace("#", "_");
 	return s;
+}
+
+void MakeMQTTNodeId()
+{
+	char s[sizeof(ini.hostname)];
+	for (unsigned int i=0; i<sizeof(ini.hostname); i++)
+	{
+		s[i] = ini.hostname[i];
+		if (ini.hostname[i] == 0) break;
+		if ((s[i] >= 'a' && s[i] <= 'z') ||
+			(s[i] >= 'A' && s[i] <= 'Z') ||
+			(s[i] >= '0' && s[i] <= '9') ||
+			(s[i] == '-')) ;
+		else s[i] = '_';
+	}
+	mqtt_node_id = String(s);
 }
 
 void setup_MQTT()
@@ -1229,6 +1249,7 @@ void setup_MQTT()
 	mqtt_topic_lwt = ReplaceHostname(ini.mqtt_topic_alive);
 	mqtt_topic_aux = ReplaceHostname(ini.mqtt_topic_aux);
 	mqtt_topic_inf = ReplaceHostname(ini.mqtt_topic_info);
+	MakeMQTTNodeId();
 	if (mqtt)
 	{
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "offline", true);
@@ -1274,9 +1295,12 @@ void MQTT_connect()
 		Serial.println(F("MQTT Connected!"));
 		elog.Add(EI_MQTT_Connect, EL_INFO, 0);
 		last_reconnect=0;
-		last_mqtt=last_mqtt_info=0;
+		last_mqtt = last_mqtt_info = millis() - 3000;
 		if (mqtt_topic_sub != "-")
+		{
+			mqtt->publish(mqtt_topic_sub.c_str(), "", true); // delete retained command
 			mqtt->subscribe(mqtt_topic_sub.c_str());
+		}
 		if (ini.mqtt_discovery) MQTT_discover();
 		if (mqtt_topic_lwt != "-") mqtt->publish(mqtt_topic_lwt.c_str(), "online", true);
 	}
@@ -1286,7 +1310,7 @@ void MQTT_discover_delete_sensor(const __FlashStringHelper* sensor_id, bool bina
 {
 	char topic[100];
 
-	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), ini.hostname, sensor_id);
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), mqtt_node_id.c_str(), sensor_id);
 	mqtt->publish(topic, PSTR(""), false);
 }
 
@@ -1339,7 +1363,7 @@ void MQTT_discover_add_sensor(const char * device_id,
 	char topic[100];
 	char data[640];
 
-	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), ini.hostname, sensor_id);
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/%ssensor/%s/%s/config"), (binary ? F("binary_") : F("")), mqtt_node_id.c_str(), sensor_id);
 
 	if (remove) data[0] = 0;
 	else
@@ -1356,6 +1380,7 @@ void MQTT_discover_add_sensor(const char * device_id,
 		ChangeQuoteSymbol(data);
 	}
 
+	//Serial.println(topic);
 	//Serial.println(data);
 	mqtt->publish(topic, data, true);
 }
@@ -1371,16 +1396,16 @@ void MQTT_discover_device(char *id)
 
 	strncpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip));
 
-	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/cover/%s/config"), ini.hostname);
+	snprintf_P(topic, sizeof(topic), PSTR("homeassistant/cover/%s/config"), mqtt_node_id.c_str());
 
 	int clsd;
 	make_pair(av, 140, PSTR("avty_t"), mqtt_topic_lwt.c_str());
 	if (mqtt_topic_lwt == "-") av[0] = 0;
 	if (ini.mqtt_invert) clsd = 0; else clsd = 100;
 	snprintf_P(data, sizeof(data), 
-		PSTR("{'name':'%s','unique_id':'%s_blind','~':'%s','set_pos_t':'~','pos_t':'%s','stat_t':'%s_HA','cmd_t':'~','dev':{'ids':['%s'],'name':'%s'," \
+		PSTR("{'name':'LazyRoll','unique_id':'%s_blind','~':'%s','set_pos_t':'~','pos_t':'%s','stat_t':'%s_HA','cmd_t':'~','dev':{'ids':['%s'],'name':'%s'," \
 		"'mdl':'LazyRoll [%s]','mf':'imlazy.ru','cu':'http://%s/settings','sw':'" VERSION "'},'dev_cla':'blind',%s'pos_clsd':%i,'pos_open':%i}"), 
-		ini.hostname, id, mqtt_topic_sub.c_str(), mqtt_topic_pub.c_str(), mqtt_topic_pub.c_str(), id, ini.hostname, ip, ip, av, clsd, 100 - clsd);
+		/*ini.hostname,*/ id, mqtt_topic_sub.c_str(), mqtt_topic_pub.c_str(), mqtt_topic_pub.c_str(), id, (ini.name[0] ? ini.name : ini.hostname), ip, ip, av, clsd, 100 - clsd);
 	ChangeQuoteSymbol(data);
 	
 	//Serial.println(data);
@@ -2504,6 +2529,7 @@ void ValidateSettings()
 	if (ini.mqtt_topic_alive[0] == 0) strcpy_P(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 	if (ini.mqtt_topic_aux[0] == 0) strcpy_P(ini.mqtt_topic_aux, def_mqtt_topic_aux);
 	if (ini.mqtt_topic_info[0] == 0) strcpy_P(ini.mqtt_topic_info, def_mqtt_topic_info);
+	if (ini.hostname[0] == 0) sprintf_P(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode=0;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level=0;
