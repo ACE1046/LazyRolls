@@ -1132,7 +1132,8 @@ const char * GetVoltageStr()
 
 #if MQTT
 
-uint8_t pin_aux, aux_state;
+uint8_t pin_aux;
+volatile uint8_t aux_state;
 uint32_t last_mqtt=0, last_mqtt_info=0;
 String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf, mqtt_node_id;
 
@@ -2056,11 +2057,10 @@ void process_Button()
 void process_Aux()
 {
 #if MQTT
-	bool on;
-	if (aux_state == AUX_NONE) return;
-	on = (aux_state == AUX_ON);
-	aux_state = AUX_NONE;
-	MQTT_ReportAux(on);
+	static uint8_t last_aux_state = AUX_NONE;
+	if (aux_state == last_aux_state) return;
+	last_aux_state = aux_state;
+	MQTT_ReportAux(aux_state == AUX_ON);
 #endif
 }
 
@@ -4149,8 +4149,18 @@ void HTTP_handleXML(void)
 	if (voltage_available)
 		XML += MakeNode(F("Voltage"), GetVoltageStr() + SL("V", "В"));
 	XML += MakeNode(F("Log"), String(elog.Count()));
+	XML += MakeNode(F("Master"), (MASTER ? "yes" : "no"));
 //XML += MakeNode(F("Debug"), payload);
 	XML += F("</Info>");
+
+	XML += F("<Presets>");
+	for (int i=1; i<=MAX_PRESETS; i++)
+	{
+		char buf[30];
+		snprintf_P(buf, sizeof(buf), "<Preset%i>%i</Preset%i>", i, ini.preset[i-1], i);
+		XML += String(buf);
+	}
+	XML += F("</Presets>");
 
 	XML += F("<ChipInfo>");
 	XML += MakeNode(F("ID"), String(ESP.getChipId(), HEX));
@@ -4173,6 +4183,10 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("End1"), onoff[ini.lang][IsSwitchPressed()]);
 	if (ini.end2_pin)
 		XML += MakeNode(F("End2"), onoff[ini.lang][IsSwitch2Pressed()]);
+#if MQTT
+	if (ini.aux_pin)
+		XML += MakeNode(F("Aux"), onoff[ini.lang][aux_state == AUX_ON]);
+#endif
 	XML += F("</Position><LED>");
 	XML += MakeNode(F("Mode"), LEDModeString());
 	XML += MakeNode(F("Level"), LEDLevelString());
