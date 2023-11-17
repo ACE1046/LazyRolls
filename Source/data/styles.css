@@ -53,7 +53,7 @@ section.main {
 .settings td, .alarms td, .log .sect_name td {
 	padding: 5px;
 }
-.alarms td.narrow { width:30%; white-space:nowrap; }
+.alarms td.narrow { width:50%; white-space:nowrap; }
 .alarms td.en { white-space:nowrap; width:1%;}
 .alarms .days label { white-space:nowrap; width:1%;}
 .alarms tr { vertical-align: top; }

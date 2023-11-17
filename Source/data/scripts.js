@@ -171,14 +171,17 @@ function StopA() { Call("stop?d" + addr_str()); return false; }
 function TestPreset(p) { var s=document.getElementById(p).value;var m=document.getElementById("length").value;if (Number(s)>Number(m)) { s=m; document.getElementById(p).value=s; } StepsOvr(s); return false; }
 function SetPreset(p) { document.getElementById(p).value = document.getElementById("pos").innerHTML; }
 
-function Test(dir)
+function Test(dir, speed)
 {
-	document.getElementById("btn_up").disabled=true;
-	document.getElementById("btn_dn").disabled=true;
+	if (speed == 2) speed = '2'; else speed = '';
+	document.getElementById("btn_up1").disabled=true;
+	document.getElementById("btn_dn1").disabled=true;
+	document.getElementById("btn_up2").disabled=true;
+	document.getElementById("btn_dn2").disabled=true;
 	pinout=document.getElementById("pinout").value;
 	reversed=document.getElementById("reversed").value;
-	delay=document.getElementById("delay").value;
-	pwm=document.getElementById("pwm").value;
+	delay=document.getElementById("delay" + speed).value;
+	pwm=document.getElementById("pwm" + speed).value;
 	var xhttp = new XMLHttpRequest();
 	xhttp.onreadystatechange = function() 
 	{
@@ -189,8 +192,10 @@ function Test(dir)
 				document.getElementById("pos").innerHTML=this.responseText;
 				document.getElementById("dest").innerHTML=this.responseText;
 			}
-			document.getElementById("btn_up").disabled=false;
-			document.getElementById("btn_dn").disabled=false;
+			document.getElementById("btn_up1").disabled=false;
+			document.getElementById("btn_dn1").disabled=false;
+			document.getElementById("btn_up2").disabled=false;
+			document.getElementById("btn_dn2").disabled=false;
 		}
 	};
 	url="test?pinout="+pinout+"&reversed="+reversed+"&delay="+delay+"&pwm="+pwm;
@@ -199,8 +204,8 @@ function Test(dir)
 	xhttp.send();
 }
 
-function TestUp() { Test(1); }
-function TestDown() { Test(0); }
+function TestUp(n) { Test(1, n); }
+function TestDown(n) { Test(0, n); }
 
 function CheckPin(p, id)
 {
@@ -216,6 +221,13 @@ function SetDisabled(p, id)
 	if (!pin) return;
 	var op = pin.getElementsByTagName("option");
 	for (var i = 1; i < op.length; i++) op[i].disabled = p[i] && (pin.selectedIndex != i);
+}
+
+function SetChecked(id, ch)
+{
+	var cb = document.getElementById(id);
+	if (!cb) return;
+	cb.checked = ch;
 }
 
 function PinChange()
@@ -460,13 +472,36 @@ function AlarmRadio(n, l, v)
 	a_ch(n);
 }
 
-function SetAlarm(n, v1, v2, v3, v4, ms)
+function SetAlarm(n, v1, v2, v3, v4, v5, ms, en, time)
 {
 	AddOption('dest'+n, sh_a, v1);
 	AddWeek('d'+n, dow, v2);
 	AlarmRadio(n, a_srs, v3);
 	AddOption('sunh'+n, a_shs, v4);
+	AddOption('spd'+n, a_spd, v5);
 	AddMasterSlave("ms"+n, m_s, ms);
+	SetChecked('en'+n, en);
+	SetVal('time'+n, time);
+}
+
+function AddAlarms(ALARMS, en, time, height, action, speed, repeat, master)
+{
+	for (n=0; n<ALARMS; n++)
+	{
+		document.write('<tr><td colspan="3"><hr/></td></tr>\n<tr><td class="en"><label for="en' + n + '">\n');
+		document.write('<input type="checkbox" id="en' + n + '" name="en' + n + '"/>' + en + '</label></td>\n');
+		//out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
+		document.write('<td colspan="2" id="a_sel' + n + '" class="a_radio"></td></tr>\n<tr><td></td><td class="narrow">\n<span id="a_st' + n +'">');
+		document.write('<label for="time' + n + '">' + time + '</label> <br/><input type="time" id="time' + n + '" name="time' + n + '" value="00:00" required></span>\n');
+		document.write('<span id="a_ss' + n + '"><label for="sunh' + n + '">' + height + '</label> <br/><select id="sunh' + n + '" name="sunh' + n + '"></select></span>\n</td>\n');
+
+		document.write('</tr><tr><td></td><td><label for="dest' + n + '"> ' + action + '</label> <br/><select id="dest' + n + '" name="dest' + n + '">\n</select>\n</td>');
+		document.write('<td><label for="spd' + n + '"> ' + speed + '</label> <br/><select id="spd' + n + '" name="spd' + n + '">\n</select>\n</td></tr>');
+		document.write('<tr><td>' + repeat + '</td><td colspan="2" class="days" id="d' + n + '">\n</td></tr>\n');
+
+		if (master)
+			document.write('<tr><td></td><td colspan="2" class="m_s" id="ms' + n + '"></td></tr>\n');
+	}
 }
 
 function EnableClass(id, classname, enabled)
@@ -511,8 +546,25 @@ function PinoutChange()
 	var i = pinout.selectedIndex;
 	if (i<4) ShowEl('po_step'); else HideEl('po_step');
 	if (i==4 || i==5) ShowEl('po_ms'); else HideEl('po_ms');
-	if (i==5 || i==7) ShowEl('po_pwm'); else HideEl('po_pwm');
+	if (i==5 || i==7)
+	{
+		ShowEl('po_pwm');
+		ShowEl('po_pwm2');
+	} else
+	{
+		HideEl('po_pwm');
+		HideEl('po_pwm2');
+	}
 	var st_time = document.getElementById('delay');
+	if (st_time)
+	{
+		st_time = st_time.parentElement.parentElement;
+		if (i<4)
+			st_time.style.display = '';
+		else
+			st_time.style.display = 'none';
+	}
+	st_time = document.getElementById('delay2');
 	if (st_time)
 	{
 		st_time = st_time.parentElement.parentElement;
@@ -523,11 +575,11 @@ function PinoutChange()
 	}
 }
 
-function PwmChange()
+function PwmChangeN(n)
 {
-	var pwm = document.getElementById('pwm');
+	var pwm = document.getElementById('pwm'+n);
 	if (!pwm) return;
-	var pwm_num = document.getElementById('pwm_num');
+	var pwm_num = document.getElementById('pwm_num'+n);
 	if (!pwm_num) return;
 
 	var i = pwm.value;
@@ -535,6 +587,12 @@ function PwmChange()
 	if (i > 90) i = 100;
 	pwm.value = i;
 	pwm_num.innerText = '  ' + i + '%';
+}
+
+function PwmChange()
+{
+	PwmChangeN('');
+	PwmChangeN('2');
 }
 
 function OnPageLoad()

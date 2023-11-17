@@ -190,9 +190,10 @@ typedef struct {
 	uint8_t m_s; // master / slaves bitmask
 	uint32_t reserved;
 } alarm_type;
-#define ALARM_FLAG_ENABLED 0x0001
-#define ALARM_FLAG_SUNRISE 0x0002
-#define ALARM_FLAG_SUNSET  0x0004
+#define ALARM_FLAG_ENABLED 0x01
+#define ALARM_FLAG_SUNRISE 0x02
+#define ALARM_FLAG_SUNSET  0x04
+#define ALARM_FLAG_SLOW    0x08
 
 typedef struct {
 	uint32_t code;
@@ -257,6 +258,7 @@ struct {
 	char ap_pswd[16+1]; // Access Point password
 	uint8_t end2_pin; // second endstop pin selection
 	uint8_t switch2_reversed; // reverse second switch logic. 0 - NC, 1 - NO
+	uint16_t step_delay_mks2; // delay (mks) for each step of motor, 2nd speed
 } ini;
 
 // language functions
@@ -284,11 +286,11 @@ void NetworkActivity(void)
 	last_network_time = millis();
 }
 
-void ToPercent(uint8_t pos, uint8_t address);
-void ToPosition(int pos, uint8_t address);
-void ToPreset(uint8_t preset, uint8_t address);
-void Open(uint8_t address);
-void Close(uint8_t address);
+void ToPercent(uint8_t pos, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
+void ToPosition(int pos, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
+void ToPreset(uint8_t preset, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
+void Open(uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
+void Close(uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
 void Stop(uint8_t address);
 void ButtonClick(uint8_t btnnumber, uint8_t address);
 void ButtonLongClick(uint8_t btnnumber, uint8_t address);
@@ -298,6 +300,7 @@ uint32_t getTime();
 uint32_t getTimeUTC();
 String MakeNode(const __FlashStringHelper *name, String val);
 void CalcAlarmTimes();
+void AdjustTimerInterval(uint16_t step_delay_mks = 0);
 
 //===================== Event Logger ===================================
 
@@ -728,12 +731,9 @@ String PrintSunriseTable()
 	{
 		out += ("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
-		if (i > 0) out += "+";
-		if (i != 0)
-		{
-			out += i;
-			out += ("&deg;");
-		}
+		if (i > 0) out += "+" + String(i);
+		if (i < 0) out += "−" + String(-i);
+		if (i != 0) out += ("&deg;");
 		out += F("</td><td>");
 		out += TimeToStr(GetSunTime(i, 1));
 		out += ("</td><td>");
@@ -1041,7 +1041,7 @@ void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, val);
 }
 
-void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
+void ToPercent(uint8_t pos, uint8_t address, uint16_t step_delay)
 {
 	if ((pos<0) || (pos>100)) return;
 
@@ -1051,6 +1051,7 @@ void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 		if (ini.sw_at_bottom) pos=100-pos;
 
 		if (position<0) position=0;
+		AdjustTimerInterval(step_delay);
 		if (pos == 0)
 			roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
 		else
@@ -1058,41 +1059,43 @@ void ToPercent(uint8_t pos, uint8_t address=ADDR_ALL)
 	}
 }
 
-void ToPosition(int pos, uint8_t address=ADDR_ALL)
+void ToPosition(int pos, uint8_t address, uint16_t step_delay)
 {
 	IfMasterSendUART(UART_CMD_POSITION, address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (pos<0 || pos>ini.full_length) return;
 		if (position<0) position=0;
+		AdjustTimerInterval(step_delay);
 		roll_to=pos;
 	}
 }
 
-void ToPreset(uint8_t preset, uint8_t address=ADDR_ALL)
+void ToPreset(uint8_t preset, uint8_t address, uint16_t step_delay)
 {
 	IfMasterSendUART(UART_CMD_PRESET, address, preset);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (preset==0 || preset > MAX_PRESETS) return;
 		if (position<0) position=0;
+		AdjustTimerInterval(step_delay);
 		roll_to=ini.preset[preset-1];
 	}
 }
 
-void Open(uint8_t address=ADDR_ALL)
+void Open(uint8_t address /*= ADDR_ALL*/, uint16_t step_delay /*= 0*/)
 {
 	IfMasterSendUART(UART_CMD_OPEN, address);
-	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER);
+	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER, step_delay);
 }
 
-void Close(uint8_t address=ADDR_ALL)
+void Close(uint8_t address /*= ADDR_ALL*/, uint16_t step_delay /*= 0*/)
 {
 	IfMasterSendUART(UART_CMD_CLOSE, address);
-	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER);
+	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER, step_delay);
 }
 
-void Stop(uint8_t address=ADDR_ALL)
+void Stop(uint8_t address = ADDR_ALL)
 {
 	IfMasterSendUART(UART_CMD_STOP, address);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
@@ -1757,11 +1760,13 @@ void IRAM_ATTR timer1Isr()
 }
 
 #define TIMER1_TICKS_PER_US (APB_CLK_FREQ / 1000000L / 16)
-#define pwm_ticks 3300 // 3300 gives ~20 kHz frequency
-void AdjustTimerInterval()
+#define pwm_ticks 3500 // 3500 gives ~20 kHz frequency
+void AdjustTimerInterval(uint16_t step_delay_mks /*= 0*/)
 {
 	uint16_t l, h;
 	uint32_t s;
+
+	if (!step_delay_mks) step_delay_mks = ini.step_delay_mks;
 
 	if (MOTOR_TYPE_DC)
 	{ // Motor without feedback. Step = millisecond
@@ -1769,15 +1774,15 @@ void AdjustTimerInterval()
 	}
 	else
 	{
-		ticks_per_step = (uint32_t)ini.step_delay_mks / 25;
+		ticks_per_step = (uint32_t)step_delay_mks / 25;
 		if (ticks_per_step < 4) ticks_per_step = 4; // at least 4 timer ticks per step
 		if (ticks_per_step > 40) ticks_per_step = 40; // at max 40
-		timer1_write((uint32_t)ini.step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step);
+		timer1_write((uint32_t)step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step);
 	}
 
 	if (MOTOR_WITH_PWM)
 	{
-		s = ini.step_delay_mks;
+		s = step_delay_mks;
 		if (s >= 100) s = 100;
 
 		if (s > 0 && s < 10) s = 10; // not less 10% or 0%
@@ -1922,10 +1927,10 @@ void setup_Button()
 #endif
 }
 
-#define BTN_ACTIONS FLF("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Change/stop/reverse', \
-	9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'", \
-	"1,'Открыть',2,'Открыть/стоп',3,'Закрыть',4,'Закрыть/стоп',5,'Наоборот',6,'Наоборот/стоп',7,'Стоп',8,'Наоборот/стоп/обратно', \
-	9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
+#define BTN_ACTIONS FLF("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Change/stop/reverse'," \
+	"9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'", \
+	"1,'Открыть',2,'Открыть/стоп',3,'Закрыть',4,'Закрыть/стоп',5,'Наоборот',6,'Наоборот/стоп',7,'Стоп',8,'Наоборот/стоп/обратно'," \
+	"9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
 enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2 };
 
 void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool longclick)
@@ -2507,11 +2512,14 @@ void ValidateSettings()
 	if (MOTOR_WITH_PWM)
 	{
 		if (ini.step_delay_mks > 100) ini.step_delay_mks = 100;
+		if (ini.step_delay_mks2> 100) ini.step_delay_mks2= 100;
 	}
 	else
 	{
 		if (ini.step_delay_mks < MIN_STEP_DELAY) ini.step_delay_mks = MIN_STEP_DELAY;
+		if (ini.step_delay_mks2< MIN_STEP_DELAY) ini.step_delay_mks2= MIN_STEP_DELAY;
 		if (ini.step_delay_mks >= 65000) ini.step_delay_mks = def_step_delay_mks;
+		if (ini.step_delay_mks2>= 65000) ini.step_delay_mks2= def_step_delay_mks;
 	}
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
 	if (ini.full_length<300 || ini.full_length>999999) ini.full_length=10000;
@@ -2568,6 +2576,7 @@ void setup_Settings(void)
 		ini.pinout=2;
 		ini.reversed=false;
 		ini.step_delay_mks=def_step_delay_mks;
+		ini.step_delay_mks2=def_step_delay_mks;
 		ini.timezone=3*60; // Default City time zone by default :)
 		ini.full_length=11300;
 		ini.spiffs_time=0;
@@ -3218,9 +3227,13 @@ void HTTP_saveSettings()
 	SaveInt(F("pinout"), &ini.pinout);
 	SaveInt(F("reversed"), &ini.reversed);
 	if (MOTOR_WITH_PWM)
+	{
 		SaveInt(F("pwm"), &ini.step_delay_mks);
-	else
+		SaveInt(F("pwm2"), &ini.step_delay_mks2);
+	} else {
 		SaveInt(F("delay"), &ini.step_delay_mks);
+		SaveInt(F("delay2"), &ini.step_delay_mks2);
+	}
 	SaveInt(F("timezone"), &ini.timezone);
 	SaveInt(F("length"), &ini.full_length);
 	SaveInt(F("switch"), &ini.switch_reversed);
@@ -3311,7 +3324,7 @@ void HTTP_saveSettings()
 
 String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
 {
-	char buf[300];
+	char buf[500];
 	snprintf_P(buf, sizeof(buf), PSTR("<script>const %s=[%s];AddOption('%s', %s, %d);</script>\n"), var, arr, id, var, val);
 	return buf;
 }
@@ -3340,7 +3353,7 @@ String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *
 void HTTP_handleSettings(void)
 {
 	String out;
-	int i;
+	int i, i2;
 
 	HTTP_Activity();
 
@@ -3431,27 +3444,44 @@ void HTTP_handleSettings(void)
 	out += HTML_addOption(0, ini.reversed, FLF("Reversed", "Обратное"));
 	out += F("</select></td></tr>\n");
 	i = ini.step_delay_mks;
-	if (MOTOR_WITH_PWM) i = 1500;
+	i2 = ini.step_delay_mks2;
+	if (MOTOR_WITH_PWM) i = i2 = 1500;
 	out += HTML_editString(FLF("Step delay:", "Время шага:"), F("delay"), String(i).c_str(), 5);
+	out += HTML_editString(FLF("Step delay 2:", "Время шага 2:"), F("delay2"), String(i2).c_str(), 5);
+	i = ini.step_delay_mks;
+	i2 = ini.step_delay_mks2;
+	if (!MOTOR_WITH_PWM) i = i2 = 100;
 	out += F("<tr id=\"po_pwm\"><td>");
 	out += FLF("Speed:", "Скорость:");
 	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
-	i = ini.step_delay_mks;
-	if (!MOTOR_WITH_PWM) i = 100;
 	out += i;
 	out += F("\" class=\"slider\" id=\"pwm\" name=\"pwm\" onchange=\"PwmChange();\">");
 	out += F("<label id=\"pwm_num\">100%</label></td></tr>\n");
+	out += F("<tr id=\"po_pwm2\"><td>");
+	out += FLF("Speed 2:", "Скорость 2:");
+	out += F("</td><td><input type=\"range\" min=\"0\" max=\"100\" value=\"");
+	out += i2;
+	out += F("\" class=\"slider\" id=\"pwm2\" name=\"pwm2\" onchange=\"PwmChange();\">");
+	out += F("<label id=\"pwm_num2\">100%</label></td></tr>\n");
 	out += HTML_hint(FLF("(microsecs, " TOSTRING(MIN_STEP_DELAY) "-65000, default 1500)", "(в мкс, " TOSTRING(MIN_STEP_DELAY) "-65000, обычно 1500)"), F("po_step"));
 	out += HTML_hint(FLF("(step = 1 millisecond)", "(шаг = 1 миллисекунда)"), F("po_ms"));
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/motor.html\">imlazy.ru/rolls/motor.html</a>");
-	out += F("<tr><td colspan=\"2\">\n" \
-	"<input id=\"btn_up\" type=\"button\" name=\"up\" value=\"");
-	out += FLF("Test up", "Тест вверх");
-	out += F("\" onclick=\"TestUp()\">\n" \
-	"<input id=\"btn_dn\" type=\"button\" name=\"down\" value=\"");
-	out += FLF("Test down", "Тест вниз");
-	out += F("\" onclick=\"TestDown()\">\n" \
-	"</td></tr>\n");
+	char buf[300];
+	const char *tr_test = PSTR("<tr><td>%s</td><td>\n" \
+		"<input id='btn_up%i' type='button' name='up' value='%s' onclick='TestUp(%i);'>\n" \
+		"<input id='btn_dn%i' type='button' name='down' value='%s' onclick='TestDown(%i);'>\n</td></tr>\n");
+	snprintf_P(buf, sizeof(buf), tr_test,
+		FLF("Normal", "Обычная"),
+		1, FLF("Test up", "Тест вверх"), 1,
+		1, FLF("Test down", "Тест вниз"), 1);
+	ChangeQuoteSymbol(buf);
+	out += buf;
+	snprintf_P(buf, sizeof(buf), tr_test,
+		FLF("Speed 2", "Скорость 2"),
+		2, FLF("Test up", "Тест вверх"), 2,
+		2, FLF("Test down", "Тест вниз"), 2);
+	ChangeQuoteSymbol(buf);
+	out += buf;
 
 	out += HTML_section(FLF("Curtain", "Штора"));
 	out += HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
@@ -3716,6 +3746,14 @@ void HTTP_handleAlarms(void)
 					ini.alarms[a].percent_open = 100;
 			}
 
+			if (httpServer.hasArg("spd" + n))
+			{
+				if (atoi(httpServer.arg("spd" + n).c_str()))
+					ini.alarms[a].flags |= ALARM_FLAG_SLOW;
+				else 
+					ini.alarms[a].flags &= ~ALARM_FLAG_SLOW;
+			}
+
 			uint8_t b = 0;
 			for (int d = 6; d >= 0; d--)
 			{
@@ -3733,7 +3771,7 @@ void HTTP_handleAlarms(void)
 
 	out=HTML_header();
 
-	out.reserve(16384);
+	out.reserve(10240);
 
 	out += F("<section class=\"alarms\" id=\"alarms\">\n"
 		"<form method=\"post\" action=\"/alarms\">\n"
@@ -3784,111 +3822,53 @@ void HTTP_handleAlarms(void)
 		actions += "\",";
 	}
 
-	for (int a=0; a<ALARMS; a++)
-	{
-		String n=String(a);
-		out += F("<tr><td colspan=\"3\"><hr/></td></tr>\n"
-			"<tr><td class=\"en\"><label for=\"en");
-		out += n;
-		out += F("\">\n");
-		out += F("<input type=\"checkbox\" id=\"en");
-		out += n;
-		out += F("\" name=\"en");
-		out += n;
-		out += F("\"");
-		out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
-		out += F("/>\n");
-		out += FLF("Enable", "Вкл.");
-		out += F("</label></td>\n<td colspan=\"2\" id=\"a_sel");
-		out += n;
-		out += F("\" class=\"a_radio\"></td></tr>\n<tr><td></td>");
-
-		out += F("<td class=\"narrow\">\n<span id=\"a_st");
-		out += n;
-		out += F("\"><label for=\"time");
-		out += n;
-		out += F("\">");
-		out += FLF("Time:", "Время:");
-		out += F("</label> <br/><input type=\"time\" id=\"time");
-		out += n;
-		out += F("\" name=\"time");
-		out += n;
-		out += F("\" value=\"");
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET)
-			out += TimeToStr(0);
-		else
-			out += TimeToStr(ini.alarms[a].time);
-		out += F("\" required></span>\n");
-		out += F("<span id=\"a_ss");
-		out += n;
-		out += F("\"><label for=\"sunh");
-		out += n;
-		out += F("\">");
-		out += FLF("Height:", "Высота:");
-		out += F("</label> <br/><select id=\"sunh");
-		out += n;
-		out += F("\" name=\"sunh");
-		out += n;
-		out += F("\"></select></span>\n</td>\n");
-
-		out += F("<td><label for=\"dest");
-		out += n;
-		out += F("\"> ");
-		out += FLF("Action:", "Действие:");
-		out += F("</label> <br/><select id=\"dest");
-		out += n;
-		out += F("\" name=\"dest");
-		out += n;
-		out += F("\">\n");
-		out += F("</select>\n");
-
-		out += F("</td></tr><tr><td>");
-		out += FLF("Repeat:", "Повтор:");
-		out += F("</td><td colspan=\"2\" class=\"days\" id=\"d");
-		out += n;
-		out += F("\">\n");
-
-		if (MASTER)
-		{
-			out += F("</td></tr><tr><td></td><td colspan=\"2\" class=\"m_s\" id=\"ms"); // master/slaves
-			out += n;
-			out += F("\">\n");
-		}
-
-		out += F("</td></tr>\n");
-	}
-
+	char buf[700];
 	out += F("<script>\n");
-	out += F("const sh_a=[");
-	out += actions;
-	out += F("];\na_shs=[5,\"+5&deg;\",4,\"+4&deg;\",3,\"+3&deg;\",2,\"+2&deg;\",1,\"+1&deg;\",0,\"&nbsp;&nbsp;0&deg;\",-1,\"-1&deg;\",-2,\"-2&deg;\",-3,\"-3&deg;\",-4,\"-4&deg;\",-5, \"-5&deg;\"];\na_srs=[");
-	out += FLF("\"clock\", \"sunrise\", \"sunset\"", "\"часы\", \"восход\", \"закат\"");
-	out += F("];\nconst dow=[");
-	out += FLF("'Mo','Tu','We','Th','Fr','Sa','Su'", "'Пн','Вт','Ср','Чт','Пт','Сб','Вс'");
-	out += F("];\nconst m_s=[");
-	out += MASTER_AND_SLAVES;
-	out += F("];\n");
+	snprintf_P(buf, sizeof(buf), PSTR("AddAlarms(%i,'%s','%s','%s','%s','%s','%s',%s);\n"),
+		ALARMS,
+		FLF("Enable", "Вкл."),
+		FLF("Time:", "Время:"),
+		FLF("Height:", "Высота:"),
+		FLF("Action:", "Действие:"),
+		FLF("Speed:", "Скорость:"),
+		FLF("Repeat:", "Повтор:"),
+		(MASTER ? F("true") : F("false")));
+	ChangeQuoteSymbol(buf);
+	out += buf;
+
+	snprintf_P(buf, sizeof(buf),
+		PSTR("const sh_a=[%s];\n" \
+			"a_shs=[5,'+5&deg;',4,'+4&deg;',3,'+3&deg;',2,'+2&deg;',1,'+1&deg;',0,'&nbsp;&nbsp;0&deg;',-1,'−1&deg;',-2,'−2&deg;',-3,'−3&deg;',-4,'−4&deg;',-5,'−5&deg;'];\n" \
+			"a_srs=[%s];\n" \
+			"const dow=[%s];\n" \
+			"const a_spd=[0,'1',1,'2'];\n" \
+			"const m_s=[%s];\n"),
+		actions.c_str(),
+		FLF("'clock', 'sunrise', 'sunset'", "'часы', 'восход', 'закат'"),
+		FLF("'Mo','Tu','We','Th','Fr','Sa','Su'", "'Пн','Вт','Ср','Чт','Пт','Сб','Вс'"),
+		MASTER_AND_SLAVES);
+	ChangeQuoteSymbol(buf);
+	out += buf;
 
 	for (int a=0; a<ALARMS; a++)
 	{
-		out += F("SetAlarm(");
-		out += a;
-		out += F(",");
-		out += ini.alarms[a].percent_open;
-		out += F(",");
-		out += ini.alarms[a].day_of_week;
-		out += F(",");
-		int r=0;
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) r=1;
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET) r=2;
-		out += r;
-		out += F(",");
-		r=0;
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET) r = ini.alarms[a].time - 10;
-		out += r;
-		out += F(",");
-		out += ini.alarms[a].m_s;
-		out += F(");\n");
+		int r = 0, t = 0;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) r = 1;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET) r = 2;
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET) t = ini.alarms[a].time - 10;
+		snprintf_P(buf, sizeof(buf),
+			PSTR("SetAlarm(%i,%i,%i,%i,%i,%i,%i,%i,'%s');\n"),
+			a,
+			ini.alarms[a].percent_open,
+			ini.alarms[a].day_of_week,
+			r,
+			t,
+			(ini.alarms[a].flags & ALARM_FLAG_SLOW ? 1 : 0),
+			ini.alarms[a].m_s,
+			ini.alarms[a].flags & ALARM_FLAG_ENABLED,
+			(ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET ? PSTR("00:00") : TimeToStr(ini.alarms[a].time).c_str()));
+		ChangeQuoteSymbol(buf);
+		out += buf;
 	}
 	out += F("</script>\n");
 
@@ -3935,23 +3915,25 @@ void Return200()
 
 void HTTP_handleOpen(void)
 {
+	uint16_t step_delay = 0;
+	uint8_t addr = ADDR_ALL;
 	HTTP_Activity();
 	elog.Add(EI_Cmd_Open, EL_INFO, ES_HTTP);
-	if (httpServer.hasArg("addr"))
-		Open(atoi(httpServer.arg("addr").c_str()));
-	else
-		Open();
+	if (httpServer.hasArg("speed")) step_delay = atoi(httpServer.arg("speed").c_str());
+	if (httpServer.hasArg("addr")) addr = atoi(httpServer.arg("addr").c_str());
+	Open(addr, step_delay);
 	Return200();
 }
 
 void HTTP_handleClose(void)
 {
+	uint16_t step_delay = 0;
+	uint8_t addr = ADDR_ALL;
 	HTTP_Activity();
 	elog.Add(EI_Cmd_Close, EL_INFO, ES_HTTP);
-	if (httpServer.hasArg("addr"))
-		Close(atoi(httpServer.arg("addr").c_str()));
-	else
-		Close();
+	if (httpServer.hasArg("speed")) step_delay = atoi(httpServer.arg("speed").c_str());
+	if (httpServer.hasArg("addr")) addr = atoi(httpServer.arg("addr").c_str());
+	Close(addr, step_delay);
 	Return200();
 }
 
@@ -4372,13 +4354,13 @@ void Scheduler()
 			p = ini.alarms[a].percent_open;
 			elog.Add(EI_Cmd_Percent, EL_INFO, ES_SCHEDULE + (p << 8));
 			for (uint8_t address=0; address <= MAX_SLAVE; address++)
-				if (slave[address])	ToPercent(p, address);
+				if (slave[address])	ToPercent(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? ini.step_delay_mks2 : 0));
 		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
 		{ // preset
 			p = ini.alarms[a].percent_open-100;
 			elog.Add(EI_Cmd_Preset, EL_INFO, ES_SCHEDULE + (p << 8));
 			for (uint8_t address=0; address <= MAX_SLAVE; address++)
-				if (slave[address])	ToPreset(p, address);
+				if (slave[address])	ToPreset(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? ini.step_delay_mks2 : 0));
 		}
 	}
 	dumb=0;
