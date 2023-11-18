@@ -42,14 +42,14 @@ extern "C" {
 #include <flash_hal.h>
 // Custom memory map, 128K SPIFFS for 1MB modules, 1M for 4MB
 #define FLASH_MAP_LAZYROLL \
-    { \
-        { .eeprom_start = 0x402fb000, .fs_start = 0x402db000, .fs_end = 0x402fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 1024 }, \
-        { .eeprom_start = 0x403fb000, .fs_start = 0x403c0000, .fs_end = 0x403fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 2048 }, \
-        { .eeprom_start = 0x405fb000, .fs_start = 0x40500000, .fs_end = 0x405fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 4096 }, \
-        { .eeprom_start = 0x409fb000, .fs_start = 0x40400000, .fs_end = 0x409fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 8192 }, \
-        { .eeprom_start = 0x411fb000, .fs_start = 0x40400000, .fs_end = 0x411fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 16384 }, \
-        { .eeprom_start = 0x4027b000, .fs_start = 0x40273000, .fs_end = 0x4027b000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 512 }, \
-    }
+	{ \
+		{ .eeprom_start = 0x402fb000, .fs_start = 0x402db000, .fs_end = 0x402fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 1024 }, \
+		{ .eeprom_start = 0x403fb000, .fs_start = 0x403c0000, .fs_end = 0x403fb000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 2048 }, \
+		{ .eeprom_start = 0x405fb000, .fs_start = 0x40500000, .fs_end = 0x405fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 4096 }, \
+		{ .eeprom_start = 0x409fb000, .fs_start = 0x40400000, .fs_end = 0x409fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 8192 }, \
+		{ .eeprom_start = 0x411fb000, .fs_start = 0x40400000, .fs_end = 0x411fa000, .fs_block_size = 0x2000, .fs_page_size = 0x100, .flash_size_kb = 16384 }, \
+		{ .eeprom_start = 0x4027b000, .fs_start = 0x40273000, .fs_end = 0x4027b000, .fs_block_size = 0x1000, .fs_page_size = 0x100, .flash_size_kb = 512 }, \
+	}
   FLASH_MAP_SETUP_CONFIG(FLASH_MAP_LAZYROLL);
 #endif
 
@@ -1396,8 +1396,8 @@ void MQTT_discover_add_sensor(const char * device_id,
 		make_pair(tr, 36, NULL, transform);
 		make_pair(av, 140, PSTR("avty_t"), mqtt_topic_lwt.c_str());
 		if (mqtt_topic_lwt == "-") av[0] = 0;
-		snprintf_P(data, sizeof(data), 
-			PSTR("{'name':'%s','stat_t':'%s','entity_category':'diagnostic',%s'dev':{'ids':['%s']},'unique_id':'%s_%s',%s%s%s'val_tpl':'{{value_json.%s%s}}'}"), 
+		snprintf_P(data, sizeof(data),
+			PSTR("{'name':'%s','stat_t':'%s','entity_category':'diagnostic',%s'dev':{'ids':['%s']},'unique_id':'%s_%s',%s%s%s'val_tpl':'{{value_json.%s%s}}'}"),
 			name, mqtt_topic_inf.c_str(), dc, device_id, device_id, sensor_id, ic, av, um, sensor_id, tr);
 		ChangeQuoteSymbol(data);
 	}
@@ -1424,12 +1424,12 @@ void MQTT_discover_device(char *id)
 	make_pair(av, 140, PSTR("avty_t"), mqtt_topic_lwt.c_str());
 	if (mqtt_topic_lwt == "-") av[0] = 0;
 	if (ini.mqtt_invert) clsd = 0; else clsd = 100;
-	snprintf_P(data, sizeof(data), 
+	snprintf_P(data, sizeof(data),
 		PSTR("{'name':'LazyRoll','unique_id':'%s_blind','~':'%s','set_pos_t':'~','pos_t':'%s','stat_t':'%s_HA','cmd_t':'~','dev':{'ids':['%s'],'name':'%s'," \
-		"'mdl':'LazyRoll [%s]','mf':'imlazy.ru','cu':'http://%s/settings','sw':'" VERSION "'},'dev_cla':'blind',%s'pos_clsd':%i,'pos_open':%i}"), 
+		"'mdl':'LazyRoll [%s]','mf':'imlazy.ru','cu':'http://%s/settings','sw':'" VERSION "'},'dev_cla':'blind',%s'pos_clsd':%i,'pos_open':%i}"),
 		/*ini.hostname,*/ id, mqtt_topic_sub.c_str(), mqtt_topic_pub.c_str(), mqtt_topic_pub.c_str(), id, (ini.name[0] ? ini.name : ini.hostname), ip, ip, av, clsd, 100 - clsd);
 	ChangeQuoteSymbol(data);
-	
+
 	//Serial.println(data);
 	mqtt->publish(topic, data, true);
 }
@@ -3257,7 +3257,7 @@ void HTTP_uploadCfg()
 		buf = (uint8_t*)malloc(sizeof(ini));
 		memset(buf, 0, sizeof(ini));
 		pos = 0;
-	} 
+	}
 	else if (upload.status == UPLOAD_FILE_WRITE)
 	{
 		if (buf)
@@ -3849,7 +3849,7 @@ void HTTP_handleAlarms(void)
 			{
 				if (atoi(httpServer.arg("spd" + n).c_str()))
 					ini.alarms[a].flags |= ALARM_FLAG_SLOW;
-				else 
+				else
 					ini.alarms[a].flags &= ~ALARM_FLAG_SLOW;
 			}
 
