@@ -2090,6 +2090,8 @@ void process_Aux()
 #endif
 }
 
+#define BTN_SPEED FLF("0,'Default',1,'Speed 2'", "0,'Обычная',1,'Скорость 2'")
+
 // ===================== RF remote =============================
 
 #if RF
@@ -2216,7 +2218,10 @@ void RF_saveSettings()
 			//ini.rf_cmd[c].code = strtoul(httpServer.arg("rfc"+n).c_str(), NULL, 10); // for 32 rf codes, adding 400 bytes of code
 
 		if (httpServer.hasArg("rfa"+n))
-			ini.rf_cmd[c].action = atoi(httpServer.arg("rfa"+n).c_str());
+		{
+			ini.rf_cmd[c].action = atoi(httpServer.arg("rfa"+n).c_str()) & 0x7F;
+			if (atoi(httpServer.arg("rfw"+n).c_str())) ini.rf_cmd[c].action |= 0x80;
+		}
 	}
 
 	SaveSettings(&ini, sizeof(ini));
@@ -2301,18 +2306,31 @@ void RF_handleHTTP()
 		out += i;
 		out += FLF("\">Stop on 2nd click", "\">Стоп по 2му клику");
 		out += F("</label></span>\n</td>\n</tr>");
+		out += F("<tr><td></td><td>\n<select id=\"rfw");
+		out += i;
+		out += F("\" name=\"rfw");
+		out += i;
+		out += F("\"></select></td></tr>\n");
 	}
-	out += F("<script>const opts1 = ");
+
+	out += F("<script>\nconst opts1 = ");
 	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5'," \
 		"102,'Open/Close',103,'Stop',104,'Blink',105,'Button 1',106,'Button 2',107,'Button 1 Long',108,'Button 2 Long'];\n",
 			   "[0,'Нет',101,'Открыть',20,'20%',40,'40%',60,'60%',80,'80%',100,'Закрыть',111,'Пресет 1',112,'Пресет 2',113,'Пресет 3',114,'Пресет 4',115,'Пресет 5'," \
 		"102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть',105,'Кнопка 1',106,'Кнопка 2',107,'Кнопка 1 длинное',108,'Кнопка 2 длинное'];\n");
+	out += F("const spds = [");
+	out += BTN_SPEED;
+	out += F("];\n");
 	for (int i=0; i < MAX_RF_CMDS; i++)
 	{
 		out += F("AddOption('rfa");
 		out += i;
 		out += F("', opts1, ");
-		out += ini.rf_cmd[i].action;
+		out += ini.rf_cmd[i].action & 0x7f;
+		out += F(");AddOption('rfw");
+		out += i;
+		out += F("', spds, ");
+		out += (ini.rf_cmd[i].action >= 0x80 ? F("1") : F("0"));
 		out += F(");\n");
 	}
 
