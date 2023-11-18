@@ -2737,6 +2737,8 @@ void HTTP_handleSet(void);
 void HTTP_handleUpdate(void);
 void HTTP_handleLog(void);
 void HTTP_redirect(String link);
+void HTTP_downloadCfg();
+void HTTP_uploadCfg();
 
 	//volatile uint32_t i;
 void setup()
@@ -2786,6 +2788,8 @@ void setup()
 	httpServer.on("/set",      HTTP_handleSet);
 	httpServer.on("/update",   HTTP_handleUpdate);
 	httpServer.on("/log",      HTTP_handleLog);
+	httpServer.on("/lazy.cfg", HTTP_GET, HTTP_downloadCfg);
+	httpServer.on("/lazy.cfg", HTTP_POST, [](){ httpServer.send(200); }, HTTP_uploadCfg);
 #if RF
 	httpServer.on("/rf",       RF_handleHTTP);
 #endif
@@ -3241,6 +3245,61 @@ void SaveMasterSlave(String id, uint8_t *ini_btn_addr)
 	*ini_btn_addr = b;
 }
 
+void HTTP_uploadCfg()
+{
+	static uint8_t *buf = 0;
+	static unsigned int pos = 0;
+
+	HTTPUpload& upload = httpServer.upload();
+	if(upload.status == UPLOAD_FILE_START)
+	{
+		Serial.println(upload.filename);
+		buf = (uint8_t*)malloc(sizeof(ini));
+		memset(buf, 0, sizeof(ini));
+		pos = 0;
+	} 
+	else if (upload.status == UPLOAD_FILE_WRITE)
+	{
+		if (buf)
+		{
+			if (pos < sizeof(ini))
+				memcpy(&(buf[pos]), upload.buf, min((unsigned int)upload.currentSize, (unsigned int)sizeof(ini) - pos));
+			pos += upload.currentSize;
+		}
+	}
+	else if (upload.status == UPLOAD_FILE_END)
+	{
+		if (buf)
+		{
+			uint8_t buf2[sizeof(ini.password)];
+			Serial.println(pos);
+			memcpy(buf2, ini.password, sizeof(ini.password)); // saving current wifi password
+			memcpy(&ini, buf, min((unsigned int)sizeof(ini), pos));
+			memcpy(ini.password, buf2, sizeof(ini.password)); // restoring current wifi password
+			free(buf);
+		}
+		buf = 0;
+		httpServer.sendHeader("Location", "/settings");
+		httpServer.send(303);
+	}
+	else if (upload.status == UPLOAD_FILE_ABORTED)
+	{
+		if (buf) free(buf);
+		buf = 0;
+		httpServer.sendHeader("Location", "/update");
+		httpServer.send(303);
+	}
+}
+
+void HTTP_downloadCfg()
+{
+	uint8_t buf[sizeof(ini.password)];
+	memcpy(buf, ini.password, sizeof(ini.password));
+	memset(ini.password, 0, sizeof(ini.password));
+	httpServer.send(200, "application/force-download", (uint8_t*)&ini, sizeof(ini));
+	memcpy(ini.password, buf, sizeof(ini.password));
+}
+
 void HTTP_handleUpdate(void)
 {
 	String out;
@@ -3265,7 +3324,7 @@ void HTTP_handleUpdate(void)
 		out += FL(F("Choose *_4"), F("Выбирайте *_4"));
 	out += FL(F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
 		F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
-	out += FLF("<p>Information:<br>", "<p>Информация:<br>");
+	out += FLF("<hr><p>Information:<br>", "<hr><p>Информация:<br>");
 	out += ESP.getFullVersion();
 	#ifdef AUTOMEMSIZE
 	out += F("</p><p>Auto memory size build");
@@ -3273,6 +3332,13 @@ void HTTP_handleUpdate(void)
 	out += F("</p><p>Free mem for firmware update: ");
 	out += ESP.getFreeSketchSpace();
 
+	out += F("</p><hr><p><a href=\"/lazy.cfg\">");
+	out += FLF("Download config", "Скачать настройки");
+	out += F("</a></p><p><form method='POST' action='/lazy.cfg' enctype='multipart/form-data'><input type='file' accept='.cfg' name='config'><input type='submit' value='");
+	out += FLF("Load config", "Загрузить настройки");
+	out += F("'></form><br>\n");
+	out += FLF("After load, check settings and press 'Save'.<br>Wi-Fi password will not be saved/loaded.",
+		"После загрузки, проверьте настройки и нажмите 'Сохранить'.<br>Пароль Wi-Fi не сохраняется и не загружается.");
 	out += F("</p></section>\n");
 
 	out += HTML_footer();
