@@ -286,11 +286,12 @@ void NetworkActivity(void)
 	last_network_time = millis();
 }
 
-void ToPercent(uint8_t pos, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
-void ToPosition(int pos, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
-void ToPreset(uint8_t preset, uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
-void Open(uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
-void Close(uint8_t address = ADDR_ALL, uint16_t step_delay = 0);
+#define SPEED2 (-1)
+void ToPercent(uint8_t pos, uint8_t address = ADDR_ALL, int step_delay = 0);
+void ToPosition(int pos, uint8_t address = ADDR_ALL, int step_delay = 0);
+void ToPreset(uint8_t preset, uint8_t address = ADDR_ALL, int step_delay = 0);
+void Open(uint8_t address = ADDR_ALL, int step_delay = 0);
+void Close(uint8_t address = ADDR_ALL, int step_delay = 0);
 void Stop(uint8_t address);
 void ButtonClick(uint8_t btnnumber, uint8_t address);
 void ButtonLongClick(uint8_t btnnumber, uint8_t address);
@@ -300,7 +301,7 @@ uint32_t getTime();
 uint32_t getTimeUTC();
 String MakeNode(const __FlashStringHelper *name, String val);
 void CalcAlarmTimes();
-void AdjustTimerInterval(uint16_t step_delay_mks = 0);
+void AdjustTimerInterval(int step_delay_mks = 0); // 0 - default, -1 - 2nd speed
 
 //===================== Event Logger ===================================
 
@@ -858,18 +859,21 @@ void ProcessUART()
 			{ // valid command
 				if (buf[1] == '*' || buf[1]-'0' == ini.slave)
 				{ // our address
-					if (buf[2] == UART_CMD_PING)
+					char cmd = buf[2] & 0x7F;
+					int speed = 0;
+					if (buf[2] > 0x80) speed = SPEED2; // 2nd speed
+					if (cmd == UART_CMD_PING)
 						val = ((uint32_t)buf[3] << 24) + ((uint32_t)buf[4] << 16) + ((uint32_t)buf[5] << 8) + buf[6];
 					else
 						val = (buf[3]-'0')*10000 + (buf[4]-'0')*1000 + (buf[5]-'0')*100 + (buf[6]-'0')*10 + (buf[7]-'0');
-					switch (buf[2])
+					switch (cmd)
 					{
-						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY); break;
-						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY); break;
+						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY, speed); break;
+						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY, speed); break;
 						case UART_CMD_STOP: Stop(ADDR_SELF_ONLY); break;
-						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY); break;
-						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY); break;
-						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY); break;
+						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY, speed); break;
+						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY, speed); break;
+						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY, speed); break;
 						case UART_CMD_WAKE: WiFi_On(); break;
 						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
 						case UART_CMD_PING: UARTPingReceived(val); break;
@@ -1038,14 +1042,19 @@ int Position2Percents(int pos)
 
 void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 {
-	if (MASTER && (address != ADDR_MASTER)) SendUART(UART_CMD_PERCENT, address, val);
+	if (MASTER && (address != ADDR_MASTER)) SendUART(cmd, address, val);
 }
 
-void ToPercent(uint8_t pos, uint8_t address, uint16_t step_delay)
+uint8_t speed2(int step_delay)
+{
+	if (step_delay == -1) return 0x80; else return 0;
+}
+
+void ToPercent(uint8_t pos, uint8_t address, int step_delay)
 {
 	if ((pos<0) || (pos>100)) return;
 
-	IfMasterSendUART(UART_CMD_PERCENT, address, pos);
+	IfMasterSendUART(UART_CMD_PERCENT + speed2(step_delay), address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (ini.sw_at_bottom) pos=100-pos;
@@ -1059,9 +1068,9 @@ void ToPercent(uint8_t pos, uint8_t address, uint16_t step_delay)
 	}
 }
 
-void ToPosition(int pos, uint8_t address, uint16_t step_delay)
+void ToPosition(int pos, uint8_t address, int step_delay)
 {
-	IfMasterSendUART(UART_CMD_POSITION, address, pos);
+	IfMasterSendUART(UART_CMD_POSITION + speed2(step_delay), address, pos);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (pos<0 || pos>ini.full_length) return;
@@ -1071,9 +1080,9 @@ void ToPosition(int pos, uint8_t address, uint16_t step_delay)
 	}
 }
 
-void ToPreset(uint8_t preset, uint8_t address, uint16_t step_delay)
+void ToPreset(uint8_t preset, uint8_t address, int step_delay)
 {
-	IfMasterSendUART(UART_CMD_PRESET, address, preset);
+	IfMasterSendUART(UART_CMD_PRESET + speed2(step_delay), address, preset);
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		if (preset==0 || preset > MAX_PRESETS) return;
@@ -1083,15 +1092,15 @@ void ToPreset(uint8_t preset, uint8_t address, uint16_t step_delay)
 	}
 }
 
-void Open(uint8_t address /*= ADDR_ALL*/, uint16_t step_delay /*= 0*/)
+void Open(uint8_t address /*= ADDR_ALL*/, int step_delay /*= 0*/)
 {
-	IfMasterSendUART(UART_CMD_OPEN, address);
+	IfMasterSendUART((uint8_t)UART_CMD_OPEN + speed2(step_delay), address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(0, ADDR_MASTER, step_delay);
 }
 
-void Close(uint8_t address /*= ADDR_ALL*/, uint16_t step_delay /*= 0*/)
+void Close(uint8_t address /*= ADDR_ALL*/, int step_delay /*= 0*/)
 {
-	IfMasterSendUART(UART_CMD_CLOSE, address);
+	IfMasterSendUART(UART_CMD_CLOSE + speed2(step_delay), address);
 	if (address == ADDR_MASTER || address == ADDR_ALL) ToPercent(100, ADDR_MASTER, step_delay);
 }
 
@@ -1173,7 +1182,7 @@ void MQTT_discover();
 
 void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 {
-	int x, p;
+	int x, p, speed;
 	uint8_t address;
 	char *str=(char*)payload;
 	if (len==0) return;
@@ -1184,6 +1193,14 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 		if (str[1] >= '0' && str[1] <='9') address = str[1]-'0';
 		str+=2;
 		len-=2;
+	}
+
+	speed = 0;
+	if (len>1 && str[0]=='!') // second speed
+	{
+		speed = SPEED2;
+		str++;
+		len--;
 	}
 
 	if (led_mode == LED_MQTT || led_mode == LED_MQTT_HTTP) LED_Blink();
@@ -1197,23 +1214,24 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	if ((x>0 && x<=100) || strcmp(str, "0") == 0)
 	{
 		if (ini.mqtt_invert)
-			ToPercent(100-x, address);
+			ToPercent(100-x, address, speed);
 		else
-			ToPercent(x, address);
+			ToPercent(x, address, speed);
 		elog.Add(EI_Cmd_Percent, EL_INFO, ES_MQTT + (x<<8));
 	}
 	else if (strcmp(str, "on") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "off") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
-	else if (strcmp(str, "open") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
-	else if (strcmp(str, "close") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "open") == 0) { Open(address, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "close") == 0) { Close(address, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "click") == 0) { ButtonClick(1, address); elog.Add(EI_Cmd_Click, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "longclick") == 0) { ButtonLongClick(1, address); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "click2") == 0) { ButtonClick(2, address); elog.Add(EI_Cmd_Click2, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "longclick2") == 0) { ButtonLongClick(2, address); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "stop") == 0) { Stop(address); elog.Add(EI_Cmd_Stop, EL_INFO, ES_MQTT); last_mqtt=0; } // report current position after stop command
 	else if (strncmp(str, "led_", 4) == 0) LED_Command(str+4); // starts with "led_"
-	else if (strncmp(str, "=", 1) == 0) { p=strtol(str+1, NULL, 10); ToPosition(p, address); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MQTT + (p<<8)); }
-	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
+	else if (strncmp(str, "=", 1) == 0) { p=strtol(str+1, NULL, 10); ToPosition(p, address, speed); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MQTT + (p<<8)); }
+	else if (strncmp(str, "%", 1) == 0) { p=strtol(str+1, NULL, 10); ToPercent(p, address, speed); elog.Add(EI_Cmd_Percent, EL_INFO, ES_MQTT + (p<<8)); }
+	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
 	else if (strncmp(str, "report", 6) == 0) { last_mqtt = 0; last_mqtt_info = 0; }
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
 }
@@ -1761,12 +1779,13 @@ void IRAM_ATTR timer1Isr()
 
 #define TIMER1_TICKS_PER_US (APB_CLK_FREQ / 1000000L / 16)
 #define pwm_ticks 3500 // 3500 gives ~20 kHz frequency
-void AdjustTimerInterval(uint16_t step_delay_mks /*= 0*/)
+void AdjustTimerInterval(int step_delay_mks /*= 0*/)
 {
 	uint16_t l, h;
 	uint32_t s;
 
-	if (!step_delay_mks) step_delay_mks = ini.step_delay_mks;
+	if (step_delay_mks == 0) step_delay_mks = ini.step_delay_mks;
+	if (step_delay_mks == SPEED2) step_delay_mks = ini.step_delay_mks2;
 
 	if (MOTOR_TYPE_DC)
 	{ // Motor without feedback. Step = millisecond
@@ -1933,7 +1952,7 @@ void setup_Button()
 	"9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
 enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2 };
 
-void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool longclick)
+void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool longclick, bool speed2)
 {
 	static uint32_t lastClick = 0;
 	static uint8_t lastCommand = 0;
@@ -2013,14 +2032,16 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 
 		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
 		{
-			if (action == BA_OPEN) { Open(address); } else
-			if (action == BA_CLOSE) { Close(address); } else
+			int spd = 0;
+			if (speed2) spd = SPEED2;
+			if (action == BA_OPEN) { Open(address, spd); } else
+			if (action == BA_CLOSE) { Close(address, spd); } else
 			if (action == BA_STOP) { Stop(address); } else
-			if (action == BA_P1) { ToPreset(1, address); } else
-			if (action == BA_P2) { ToPreset(2, address); } else
-			if (action == BA_P3) { ToPreset(3, address); } else
-			if (action == BA_P4) { ToPreset(4, address); } else
-			if (action == BA_P5) { ToPreset(5, address); }
+			if (action == BA_P1) { ToPreset(1, address, spd); } else
+			if (action == BA_P2) { ToPreset(2, address, spd); } else
+			if (action == BA_P3) { ToPreset(3, address, spd); } else
+			if (action == BA_P4) { ToPreset(4, address, spd); } else
+			if (action == BA_P5) { ToPreset(5, address, spd); }
 		}
 	}
 }
@@ -2028,17 +2049,17 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 void ButtonClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
 {
 	if (btnnumber == 1)
-		ButtonAction(ini.btn1_click, ini.btn1_c_addr, address, 0);
+		ButtonAction(ini.btn1_click & 0x7F, ini.btn1_c_addr, address, 0, ini.btn1_click >= 0x80);
 	else
-		ButtonAction(ini.btn2_click, ini.btn2_c_addr, address, 0);
+		ButtonAction(ini.btn2_click & 0x7F, ini.btn2_c_addr, address, 0, ini.btn1_click >= 0x80);
 }
 
 void ButtonLongClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
 {
 	if (btnnumber == 1)
-		ButtonAction(ini.btn1_long, ini.btn1_l_addr, address, 1);
+		ButtonAction(ini.btn1_long & 0x7F, ini.btn1_l_addr, address, 1, ini.btn1_long >= 0x80);
 	else
-		ButtonAction(ini.btn2_long, ini.btn2_l_addr, address, 1);
+		ButtonAction(ini.btn2_long & 0x7F, ini.btn2_l_addr, address, 1, ini.btn2_long >= 0x80);
 }
 
 void process_Button()
@@ -2081,6 +2102,7 @@ bool rf_repeat = 0;
 
 void RF_Action(uint8_t action, uint8_t flags)
 {
+	int speed;
 	if (!action) return;
 	if (roll_to != position && rf_repeat && (flags & RF_FLAG_STOP2ND))
 	{ // stop on second click
@@ -2088,17 +2110,20 @@ void RF_Action(uint8_t action, uint8_t flags)
 		elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF);
 		return;
 	}
-	if (action == 101) { Open(ADDR_ALL); elog.Add(EI_Cmd_Open, EL_INFO, ES_RF); } else
-	if (action == 100) { Close(ADDR_ALL); elog.Add(EI_Cmd_Close, EL_INFO, ES_RF); } else
-	if (action == 102) { ButtonAction(BA_AUTO, 0, ADDR_ALL, 0); elog.Add(EI_Auto, EL_INFO, ES_RF); } else
+	speed = 0;
+	if (action >= 0x80) speed = SPEED2;
+	action = action & 0x7F;
+	if (action == 101) { Open(ADDR_ALL, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_RF); } else
+	if (action == 100) { Close(ADDR_ALL, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_RF); } else
+	if (action == 102) { ButtonAction(BA_AUTO, 0, ADDR_ALL, 0, speed); elog.Add(EI_Auto, EL_INFO, ES_RF); } else
 	if (action == 105) { ButtonClick(1, ADDR_DEFAULT); elog.Add(EI_Cmd_Click, EL_INFO, ES_RF); } else
 	if (action == 106) { ButtonClick(2, ADDR_DEFAULT); elog.Add(EI_Cmd_Click2, EL_INFO, ES_RF); } else
 	if (action == 107) { ButtonLongClick(1, ADDR_DEFAULT); elog.Add(EI_Cmd_LClick, EL_INFO, ES_RF); } else
 	if (action == 108) { ButtonLongClick(2, ADDR_DEFAULT); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_RF); } else
 	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
-	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
-	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-110, ADDR_ALL); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
+	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL, speed); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
+	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-110, ADDR_ALL, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
 }
 
 void RF_Keypress(uint32_t code)
@@ -2898,7 +2923,7 @@ String HTML_hint(const String &hint)
 String HTML_test(const __FlashStringHelper* name, int n)
 {
 	char buf[300];
-	snprintf_P(buf, sizeof(buf), PSTR("<tr><td>%s</td><td>\n" \
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td>%s:</td><td>\n" \
 		"<input id='btn_up%i' type='button' name='up' value='%s' onclick='TestUp(%i);'>\n" \
 		"<input id='btn_dn%i' type='button' name='down' value='%s' onclick='TestDown(%i);'>\n</td></tr>\n"),
 		name,
@@ -3165,6 +3190,14 @@ void SaveInt(const __FlashStringHelper *id, bool *iniint)
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
 
+void SaveIntAndBit(const __FlashStringHelper *id, const __FlashStringHelper *id2, uint8_t *iniint)
+{
+	if (!httpServer.hasArg(id)) return;
+	*iniint = atoi(httpServer.arg(id).c_str());
+	if (!httpServer.hasArg(id2)) return;
+	if (atoi(httpServer.arg(id2).c_str())) *iniint = *iniint + 0x80;
+}
+
 void SaveIP(const __FlashStringHelper *id1, const __FlashStringHelper *id2, const __FlashStringHelper *id3, const __FlashStringHelper *id4, ip4_addr *iniip)
 {
 	if (!httpServer.hasArg(id1)) return;
@@ -3296,10 +3329,10 @@ void HTTP_saveSettings()
 	SaveInt(F("slave"), &ini.slave);
 	SaveInt(F("lat"), &ini.lat);
 	SaveInt(F("lng"), &ini.lng);
-	SaveInt(F("btn1_click"), &ini.btn1_click);
-	SaveInt(F("btn1_long"), &ini.btn1_long);
-	SaveInt(F("btn2_click"), &ini.btn2_click);
-	SaveInt(F("btn2_long"), &ini.btn2_long);
+	SaveIntAndBit(F("btn1_click"), F("btn1_c_spd"), &ini.btn1_click);
+	SaveIntAndBit(F("btn1_long"), F("btn1_l_spd"), &ini.btn1_long);
+	SaveIntAndBit(F("btn2_click"), F("btn2_c_spd"), &ini.btn2_click);
+	SaveIntAndBit(F("btn2_long"), F("btn2_l_spd"), &ini.btn2_long);
 	if (MASTER)
 	{
 		SaveMasterSlave(F("b1c_"), &ini.btn1_c_addr);
@@ -3363,15 +3396,30 @@ String AddOptions(const __FlashStringHelper *id, const __FlashStringHelper *var,
 String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
 {
 	char buf[300];
-	snprintf_P(buf, sizeof(buf), PSTR("<script>const %s=[%s];AddMasterSlave('%s', %s, %d);</script>\n"), var, arr, id, var, val);
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td></td><td id='%s' class='%s'>\n<script>const %s=[%s];AddMasterSlave('%s', %s, %d);</script>\n</td></tr>\n"), id, var, var, arr, id, var, val);
 	return buf;
 }
 
 String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *var, int val)
 {
 	char buf[100];
-	snprintf_P(buf, sizeof(buf), PSTR("<script>AddMasterSlave('%s', %s, %d);</script>\n"), id, var, val);
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td></td><td id='%s' class='%s'>\n<script>AddMasterSlave('%s', %s, %d);</script>\n</td></tr>\n"), id, var, id, var, val);
 	return buf;
+}
+
+String HTML_Options(const __FlashStringHelper *name, const __FlashStringHelper *id, const __FlashStringHelper *attr, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
+{
+	String out;
+	char buf[500];
+	snprintf_P(buf, sizeof(buf), PSTR("<tr><td>%s</td><td><select id='%s' name='%s'%s>\n"), name, id, id, attr);
+	out = buf;
+
+	if (arr)
+		out += AddOptions(id, var, arr, val);
+	else
+		out += AddOptions(id, var, val);
+	out += F("</select></td></tr>\n");
+	return out;
 }
 
 void HTTP_handleSettings(void)
@@ -3554,59 +3602,24 @@ void HTTP_handleSettings(void)
 #endif
 
 #define MASTER_AND_SLAVES FLF("'Master','S1','S2','S3','S4','S5'", "'Главный','В1','В2','В3','В4','В5'")
+#define BTN_SPEED FLF("0,'Default',1,'Speed 2'", "0,'Обычная',1,'Скорость 2'")
 	out += HTML_section(FLF("Button 1", "Кнопка 1"));
-	out += F("<tr><td>");
-	out += FLF("Pin:", "Пин:");
-	out += F("</td><td><select id=\"btn1_pin\" name=\"btn1_pin\" onchange=\"PinChange()\">\n");
-	out += AddOptions(F("btn1_pin"), F("pins"), /*PIN_LIST,*/ ini.btn1_pin);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td>");
-	out += FLF("Click:", "Клик:");
-	out += F("</td><td><select id=\"btn1_click\" name=\"btn1_click\">\n");
-	out += AddOptions(F("btn1_click"), F("act"), BTN_ACTIONS, ini.btn1_click);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td></td><td id=\"b1c\" class=\"m_s\">\n");
+	out += HTML_Options(FLF("Pin:", "Пин:"), F("btn1_pin"), F(" onchange='PinChange()'"), F("pins"), NULL, ini.btn1_pin);
+	out += HTML_Options(FLF("Click:", "Клик:"), F("btn1_click"), F(""), F("act"), BTN_ACTIONS, ini.btn1_click & 0x7F);
+	out += HTML_Options(F(""), F("btn1_c_spd"), F(""), F("spd"), BTN_SPEED, ini.btn1_click >= 0x80);
 	out += AddMasterSlave(F("b1c"), F("m_s"), MASTER_AND_SLAVES, ini.btn1_c_addr);
-	out += F("</td></tr>\n");
-
-	out += F("<tr><td>");
-	out += FLF("Long:", "Долгий:");
-	out += F("</td><td><select id=\"btn1_long\" name=\"btn1_long\">\n");
-	out += AddOptions(F("btn1_long"), F("act"), /*BTN_ACTIONS,*/ ini.btn1_long);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td></td><td id=\"b1l\" class=\"m_s\">\n");
+	out += HTML_Options(FLF("Long:", "Долгий:"), F("btn1_long"), F(""), F("act"), NULL, ini.btn1_long & 0x7F);
+	out += HTML_Options(F(""), F("btn1_l_spd"), F(""), F("spd"), NULL, ini.btn1_long >= 0x80);
 	out += AddMasterSlave(F("b1l"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn1_l_addr);
-	out += F("</td></tr>\n");
 
 	out += HTML_section(FLF("Button 2", "Кнопка 2"));
-	out += F("<tr><td>");
-	out += FLF("Pin:", "Пин:");
-	out += F("</td><td><select id=\"btn2_pin\" name=\"btn2_pin\" onchange=\"PinChange()\">\n");
-	out += AddOptions(F("btn2_pin"), F("pins"), /*PIN_LIST,*/ ini.btn2_pin);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td>");
-	out += FLF("Click:", "Клик:");
-	out += F("</td><td><select id=\"btn2_click\" name=\"btn2_click\">\n");
-	out += AddOptions(F("btn2_click"), F("act"), /*BTN_ACTIONS,*/ ini.btn2_click);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td></td><td id=\"b2c\" class=\"m_s\">\n");
+	out += HTML_Options(FLF("Pin:", "Пин:"), F("btn2_pin"), F(" onchange='PinChange()'"), F("pins"), NULL, ini.btn2_pin);
+	out += HTML_Options(FLF("Click:", "Клик:"), F("btn2_click"), F(""), F("act"), NULL, ini.btn2_click & 0x7F);
+	out += HTML_Options(F(""), F("btn2_c_spd"), F(""), F("spd"), NULL, ini.btn2_click >= 0x80);
 	out += AddMasterSlave(F("b2c"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn2_c_addr);
-	out += F("</td></tr>\n");
-
-	out += F("<tr><td>");
-	out += FLF("Long:", "Долгий:");
-	out += F("</td><td><select id=\"btn2_long\" name=\"btn2_long\">\n");
-	out += AddOptions(F("btn2_long"), F("act"), /*BTN_ACTIONS,*/ ini.btn2_long);
-	out += F("</select></td></tr>\n");
-
-	out += F("<tr><td></td><td id=\"b2l\" class=\"m_s\">\n");
+	out += HTML_Options(FLF("Long:", "Долгий:"), F("btn2_long"), F(""), F("act"), NULL, ini.btn2_long & 0x7F);
+	out += HTML_Options(F(""), F("btn2_l_spd"), F(""), F("spd"), NULL, ini.btn2_long >= 0x80);
 	out += AddMasterSlave(F("b2l"), F("m_s"), /*MASTER_AND_SLAVES,*/ ini.btn2_l_addr);
-	out += F("</td></tr>\n");
 
 #if RF
 	out += HTML_section(FLF("RF remote", "Радио пульт"));
@@ -3917,7 +3930,7 @@ void Return200()
 
 void HTTP_handleOpen(void)
 {
-	uint16_t step_delay = 0;
+	int step_delay = 0;
 	uint8_t addr = ADDR_ALL;
 	HTTP_Activity();
 	elog.Add(EI_Cmd_Open, EL_INFO, ES_HTTP);
@@ -3929,7 +3942,7 @@ void HTTP_handleOpen(void)
 
 void HTTP_handleClose(void)
 {
-	uint16_t step_delay = 0;
+	int step_delay = 0;
 	uint8_t addr = ADDR_ALL;
 	HTTP_Activity();
 	elog.Add(EI_Cmd_Close, EL_INFO, ES_HTTP);
@@ -4356,13 +4369,13 @@ void Scheduler()
 			p = ini.alarms[a].percent_open;
 			elog.Add(EI_Cmd_Percent, EL_INFO, ES_SCHEDULE + (p << 8));
 			for (uint8_t address=0; address <= MAX_SLAVE; address++)
-				if (slave[address])	ToPercent(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? ini.step_delay_mks2 : 0));
+				if (slave[address])	ToPercent(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? SPEED2 : 0));
 		} else if (ini.alarms[a].percent_open <= 100+MAX_PRESETS)
 		{ // preset
 			p = ini.alarms[a].percent_open-100;
 			elog.Add(EI_Cmd_Preset, EL_INFO, ES_SCHEDULE + (p << 8));
 			for (uint8_t address=0; address <= MAX_SLAVE; address++)
-				if (slave[address])	ToPreset(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? ini.step_delay_mks2 : 0));
+				if (slave[address])	ToPreset(p, address, (ini.alarms[a].flags & ALARM_FLAG_SLOW ? SPEED2 : 0));
 		}
 	}
 	dumb=0;
