@@ -335,6 +335,7 @@ const char ET_MQTT_Connecting[] PROGMEM = "Connecting to MQTT... ";
 const char ET_Started[] PROGMEM = "Started";
 const char ET_Stall[] PROGMEM = "Motor stalled";
 const char ET_Auto[] PROGMEM = "Open/Close";
+const char ET_Cmd_Zero[] PROGMEM = "Zero reset";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
@@ -346,10 +347,10 @@ const char EQ_RF[] PROGMEM = "Src: RF";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close,
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect,
-	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto };
+	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto, EI_Cmd_Zero };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
-	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto };
+	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto, ET_Cmd_Zero };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
@@ -1140,6 +1141,15 @@ const char * GetVoltageStr()
 	return buf;
 }
 
+void ResetZero()
+{
+	// start position is twice as fully open. So on first close we will go up till home position
+	position = ini.full_length*2 + ini.up_safe_limit;
+	if (IsSwitchPressed()) position = 0; // Fully open, if switch is pressed
+	if (ini.end2_pin && IsSwitch2Pressed()) position = ini.full_length; // Fully closed, if switch 2 is pressed
+	roll_to = position;
+}
+
 //===================== MQTT ===========================================
 
 #if MQTT
@@ -1234,6 +1244,8 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
 	else if (strncmp(str, "report", 6) == 0) { last_mqtt = 0; last_mqtt_info = 0; }
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
+	else if (strncmp(str, "reboot", 6) == 0) { ESP.reset(); }
+	else if (strncmp(str, "zero", 4) == 0) { ResetZero(); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
 }
 
 String ReplaceHostname(const char *topic)
@@ -2813,11 +2825,7 @@ void setup()
 	setup_NTP();
 	setup_MQTT();
 
-	// start position is twice as fully open. So on first close we will go up till home position
-	position=ini.full_length*2+ini.up_safe_limit;
-	if (IsSwitchPressed()) position=0; // Fully open, if switch is pressed
-	if (ini.end2_pin && IsSwitch2Pressed()) position=ini.full_length; // Fully closed, if switch 2 is pressed
-	roll_to=position;
+	ResetZero();
 
 	FillStepsTable();
 
@@ -4123,6 +4131,12 @@ void HTTP_handleSet(void)
 	else if (httpServer.hasArg("blink"))
 	{
 		SendUART(UART_CMD_BLINK, addr);
+		Return200();
+	}
+	else if (httpServer.hasArg("zero"))
+	{
+		elog.Add(EI_Cmd_Zero, EL_INFO, ES_HTTP);
+		ResetZero();
 		Return200();
 	}
 	else
