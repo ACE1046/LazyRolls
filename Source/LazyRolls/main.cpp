@@ -26,7 +26,8 @@ http://imlazy.ru/rolls/
 #include <DNSServer.h>
 #include "settings.h"
 extern "C" {
-#include "lwip/etharp.h" // gratuitous arp
+#include <lwip/etharp.h> // gratuitous arp
+#include <ping.h>
 }
 
 #define VERSION "0.14 ++"
@@ -129,6 +130,9 @@ uint16_t def_step_delay_mks = 1500;
 #define UART_PING_INTERVAL_MS (30*1000) // Master ping slaves every 30 seconds
 #define SLAVE_MAX_NO_PING_MS (70*1000) // Enable WiFi in slave mode if no ping from master
 #define SLAVE_SLEEP_TIMEOUT_MS (180*1000) // Disable WiFi in slave mode after network idle
+#define PINGER_WARN 2 // Log 2 ping fails
+#define PINGER_ACTION 5 // Action (log/reconnect/reboot) after 5 ping fails
+#define PINGER_INTERVAL_S 60 // Ping interval, seconds
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
 #define STRINGIFY(x) #x
@@ -259,6 +263,9 @@ struct {
 	uint8_t end2_pin; // second endstop pin selection
 	uint8_t switch2_reversed; // reverse second switch logic. 0 - NC, 1 - NO
 	uint16_t step_delay_mks2; // delay (mks) for each step of motor, 2nd speed
+	uint8_t ping_enabled; // pinger watchdog enabled
+	uint8_t ping_act; // action on no ping response
+	ip4_addr ping_ip; // ip address for pinger
 } ini;
 
 // language functions
@@ -336,6 +343,8 @@ const char ET_Started[] PROGMEM = "Started";
 const char ET_Stall[] PROGMEM = "Motor stalled";
 const char ET_Auto[] PROGMEM = "Open/Close";
 const char ET_Cmd_Zero[] PROGMEM = "Zero reset";
+const char ET_Pingfail[] PROGMEM = "Ping failed ";
+const char ET_Cmd_Wakeup[] PROGMEM = "Wake up";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
@@ -347,10 +356,12 @@ const char EQ_RF[] PROGMEM = "Src: RF";
 enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close,
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect,
-	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto, EI_Cmd_Zero };
+	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto,
+	EI_Cmd_Zero, EI_Pingfail, EI_Cmd_Wakeup };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
-	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto, ET_Cmd_Zero };
+	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto,
+	ET_Cmd_Zero, ET_Pingfail, ET_Cmd_Wakeup };
 
 enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
 const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
@@ -770,6 +781,8 @@ uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 #define UART_CMD_BLINK 'b' // blink led
 #define UART_CMD_CLICK 'k' // button klick
 #define UART_CMD_LONGCLICK 'K' // button long press
+#define UART_CMD_CLICK2 'l' // button 2 click
+#define UART_CMD_LONGCLICK2 'L' // button 2 long press
 #define CRC_INIT 0xEA // just a random nonzero number for checksum
 
 uint32_t lastUARTping = 0;
@@ -869,17 +882,19 @@ void ProcessUART()
 						val = (buf[3]-'0')*10000 + (buf[4]-'0')*1000 + (buf[5]-'0')*100 + (buf[6]-'0')*10 + (buf[7]-'0');
 					switch (cmd)
 					{
-						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY, speed); break;
-						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY, speed); break;
-						case UART_CMD_STOP: Stop(ADDR_SELF_ONLY); break;
-						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY, speed); break;
-						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY, speed); break;
-						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY, speed); break;
-						case UART_CMD_WAKE: WiFi_On(); break;
+						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_MASTER);  break;
+						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_MASTER); break;
+						case UART_CMD_STOP: Stop(ADDR_SELF_ONLY); elog.Add(EI_Cmd_Stop, EL_INFO, ES_MASTER); break;
+						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Percent, EL_INFO, ES_MASTER + (val<<8)); break;
+						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MASTER + (val<<8)); break;
+						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MASTER + (val<<8)); break;
+						case UART_CMD_WAKE: WiFi_On(); elog.Add(EI_Cmd_Wakeup, EL_INFO, ES_MASTER); break;
 						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
 						case UART_CMD_PING: UARTPingReceived(val); break;
-						case UART_CMD_CLICK: ButtonClick(1, ADDR_SELF_ONLY); break;
-						case UART_CMD_LONGCLICK: ButtonLongClick(1, ADDR_SELF_ONLY); break;
+						case UART_CMD_CLICK: ButtonClick(1, ADDR_SELF_ONLY); elog.Add(EI_Cmd_Click, EL_INFO, ES_MASTER); break;
+						case UART_CMD_LONGCLICK: ButtonLongClick(1, ADDR_SELF_ONLY); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MASTER); break;
+						case UART_CMD_CLICK2: ButtonClick(2, ADDR_SELF_ONLY); elog.Add(EI_Cmd_Click, EL_INFO, ES_MASTER); break;
+						case UART_CMD_LONGCLICK2: ButtonLongClick(2, ADDR_SELF_ONLY); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MASTER); break;
 					}
 				}
 				inbuf=0;
@@ -1150,6 +1165,72 @@ void ResetZero()
 	roll_to = position;
 }
 
+//===================== Pinger =========================================
+uint8_t ping_fails = 0, ping_reply = 0;
+uint32_t last_ping = 0;
+
+void ICACHE_FLASH_ATTR user_ping_recv(void *arg, void *pdata)
+{
+    struct ping_resp *ping_res = (ping_resp*)pdata;
+
+    if (ping_res->ping_err == -1)
+        ping_fails++;
+    else
+		ping_fails = 0;
+	ping_reply = 1;
+}
+
+void ICACHE_FLASH_ATTR
+user_ping_sent(void *arg, void *pdata)
+{
+    ;
+}
+
+ping_option po;
+void ping()
+{
+ 	po.count = 1;
+	
+	if (ini.ping_ip.addr) po.ip = ini.ping_ip.addr; else po.ip = WiFi.gatewayIP();
+	po.coarse_time = 1;
+	po.recv_function = user_ping_recv;
+	po.sent_function = user_ping_sent;
+	po.reverse = NULL;
+	ping_start(&po);
+}
+
+void ProcessPing()
+{
+	if (!ini.ping_enabled) return;
+	if (SLAVE && !WiFi_active) return;
+	if (!WiFi_connected) return;
+
+	if (ping_reply)
+	{
+		if (ping_fails == PINGER_WARN) elog.Add(EI_Pingfail, EL_WARN, PINGER_WARN);
+		if (ping_fails == PINGER_ACTION)
+		{
+			elog.Add(EI_Pingfail, EL_ERROR, PINGER_ACTION);
+			if (ini.ping_act == 1) // reconnect
+			{
+				Serial.println("Ping failed. Reconnecting");
+				WiFi.disconnect();
+			}
+			if (ini.ping_act == 2) // reboot
+			{
+				Serial.println("Ping failed. Rebooting");
+				ESP.reset();
+			}
+		}
+		ping_reply = 0;
+	}
+	if (millis() - last_ping > PINGER_INTERVAL_S * 1000)
+	{
+		last_ping = millis();
+		ping();
+	}
+}
+
 //===================== MQTT ===========================================
 
 #if MQTT
@@ -1229,8 +1310,8 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 			ToPercent(x, address, speed);
 		elog.Add(EI_Cmd_Percent, EL_INFO, ES_MQTT + (x<<8));
 	}
-	else if (strcmp(str, "on") == 0) { Open(address); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
-	else if (strcmp(str, "off") == 0) { Close(address); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "on") == 0) { Open(address, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
+	else if (strcmp(str, "off") == 0) { Close(address, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "open") == 0) { Open(address, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "close") == 0) { Close(address, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_MQTT); }
 	else if (strcmp(str, "click") == 0) { ButtonClick(1, address); elog.Add(EI_Cmd_Click, EL_INFO, ES_MQTT); }
@@ -1964,7 +2045,7 @@ void setup_Button()
 	"9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
 enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2 };
 
-void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool longclick, bool speed2)
+void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, uint8_t uart_cmd, bool speed2)
 {
 	static uint32_t lastClick = 0;
 	static uint8_t lastCommand = 0;
@@ -1993,12 +2074,7 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 	{ // if master is not selected, we cannot dublicate action to slaves. We will send click/dblclick
 		for (address=1; address <= MAX_SLAVE; address++)
 			if (slave[address])
-			{
-				if (longclick)
-					SendUART(UART_CMD_LONGCLICK, address);
-				else
-					SendUART(UART_CMD_CLICK, address);
-			}
+				SendUART(uart_cmd, address);
 	} else
 	{
 		bool in_motion = roll_to != position;
@@ -2061,17 +2137,17 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, bool lon
 void ButtonClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
 {
 	if (btnnumber == 1)
-		ButtonAction(ini.btn1_click & 0x7F, ini.btn1_c_addr, address, 0, ini.btn1_click >= 0x80);
+		ButtonAction(ini.btn1_click & 0x7F, ini.btn1_c_addr, address, UART_CMD_CLICK, ini.btn1_click >= 0x80);
 	else
-		ButtonAction(ini.btn2_click & 0x7F, ini.btn2_c_addr, address, 0, ini.btn1_click >= 0x80);
+		ButtonAction(ini.btn2_click & 0x7F, ini.btn2_c_addr, address, UART_CMD_CLICK2, ini.btn1_click >= 0x80);
 }
 
 void ButtonLongClick(uint8_t btnnumber=1, uint8_t address=ADDR_DEFAULT)
 {
 	if (btnnumber == 1)
-		ButtonAction(ini.btn1_long & 0x7F, ini.btn1_l_addr, address, 1, ini.btn1_long >= 0x80);
+		ButtonAction(ini.btn1_long & 0x7F, ini.btn1_l_addr, address, UART_CMD_LONGCLICK, ini.btn1_long >= 0x80);
 	else
-		ButtonAction(ini.btn2_long & 0x7F, ini.btn2_l_addr, address, 1, ini.btn2_long >= 0x80);
+		ButtonAction(ini.btn2_long & 0x7F, ini.btn2_l_addr, address, UART_CMD_LONGCLICK2, ini.btn2_long >= 0x80);
 }
 
 void process_Button()
@@ -2400,6 +2476,7 @@ void ProcessWiFi()
 			WiFi.softAPdisconnect(true);
 			WiFi.mode(WIFI_STA);
 			Serial.println(WiFi.localIP());
+			ping_fails = 0;
 			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
 			LED_Off();
 			CP_delete();
@@ -2430,6 +2507,7 @@ void ProcessWiFi()
 			WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
 			Serial.println(WiFi.localIP());
+			ping_fails = 0;
 			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
 
 #if MDNSC
@@ -2465,6 +2543,7 @@ void WiFi_On()
 	last_network_time = millis();
 	WiFi_active = true;
 	WiFi_attempts = 0;
+	ping_fails = 0;
 	WiFi.mode(WIFI_STA);
 	WiFi.hostname(ini.hostname);
 	setup_IP();
@@ -2479,6 +2558,9 @@ void WiFi_On()
 			WiFi_connected = false;
 			Serial.println(F("Disconnected"));
 			elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
+			//delay(500);
+			//WiFi_On();
+			if (WiFi_active) WiFi.begin(ini.ssid, ini.password);
 		}
 	});
 	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
@@ -2709,6 +2791,7 @@ void setup_OTA()
 	});
 	ArduinoOTA.onEnd([]() {
 		Serial.println(F("\nEnd"));
+		WiFi_connected = false;
 	});
 	ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 		Serial.print(".");
@@ -3433,11 +3516,16 @@ void HTTP_saveSettings()
 		SaveMasterSlave(F("b2l_"), &ini.btn2_l_addr);
 	}
 	SaveString(F("ap_pswd"), ini.ap_pswd, sizeof(ini.ap_pswd));
+	ini.ping_enabled = httpServer.hasArg("ping_en");
+	SaveIP(IP_ID("ping_ip"),  &ini.ping_ip);
+	SaveInt(F("ping_act"), &ini.ping_act);
 
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
 
 	ValidateSettings();
+
+	ping_fails = 0;
 
 	SaveSettings(&ini, sizeof(ini));
 	elog.Add(EI_Settings_Saved, EL_WARN, 0);
@@ -3563,20 +3651,17 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("AP pswd:", "Пароль AP:"),   F("ap_pswd"),  ini.ap_pswd,  sizeof(ini.ap_pswd)-1);
 	out += HTML_hint(FLF("Access point password, 8 chars minimum or blank", "Пароль режима точки доступа, 8 символов минимум или пусто"));
 
+	out += HTML_section(FLF("Pinger", "Пингер"));
+	out += HTML_addCheckbox(L("Ping IP (0.0.0.0 - gateway)", "Пинговать IP (0.0.0.0 - шлюз)"), "ping_en", ini.ping_enabled);
+	out += HTML_editIP(F("IP"), F("ping_ip"), &ini.ping_ip);
+	out += HTML_Options(FLF("Action:", "Действие:"), F("ping_act"), F(""), F("p_act"), 
+		FLF("0,'Log',1,'Reconnect',2,'Reboot'", "0,'Лог',1,'Переподключение',2,'Перезагрузка'"), ini.ping_act);
+
 	out += HTML_section(FLF("Time", "Время"));
 	out += HTML_editString(FLF("NTP-server:", "NTP-сервер:"),F("ntp"),     ini.ntpserver,sizeof(ini.ntpserver)-1);
 	out += F("<tr><td>");
 	out += FLF("Timezone: ", "Пояс: ");
 	out += F("</td><td><select id=\"timezone\" name=\"timezone\">\n");
-	// for (int i=-11*60; i<=14*60; i+=30) // timezones from -11:00 to +14:00 every 30 min
-	// {
-	// 	char b[7];
-	// 	sprintf_P(b, PSTR("%+d:%02d"), i/60, abs(i%60));
-	// 	if (i<0) b[0]='-';
-	// 	out += "<option value=\""+String(i)+"\"";
-	// 	if (i==ini.timezone) out += " selected=\"selected\"";
-	// 	out += +">UTC"+String(b)+"</option>\n";
-	// }
 	out += F("</select></td></tr>\n");
 	out += F("<script>AddOption('timezone', tzs, ");
 	out += ini.timezone;
@@ -3586,10 +3671,6 @@ void HTTP_handleSettings(void)
 	out += F("<tr><td>");
 	out += FLF("Pinout:", "Подключение:");
 	out += F("</td><td><select id=\"pinout\" name=\"pinout\" onchange=\"PinoutChange();\">\n");
-	// out += HTML_addOption(2, ini.pinout, F("A-B-C-D"));
-	// out += HTML_addOption(0, ini.pinout, F("A-C-B-D"));
-	// out += HTML_addOption(1, ini.pinout, F("A-B-D-C"));
-	// out += HTML_addOption(3, ini.pinout, F("Step/Dir"));
 	out += F("</select></td></tr>\n");
 	out += AddOptions(F("pinout"), F("po"), F(
 		"2,\"A-B-C-D\"," \
@@ -4370,6 +4451,7 @@ void HTTP_handleLog(void)
 				case EI_Cmd_Close:
 				case EI_Cmd_Click:
 				case EI_Cmd_LClick:
+				case EI_Cmd_Zero:
 					out += FPSTR((char*)pgm_read_dword(&(event_src_txt[e->val & 0xFF]))); break;
 				case EI_Wifi_Got_IP:
 					out += IPAddress(e->val).toString(); break;
@@ -4391,6 +4473,10 @@ void HTTP_handleLog(void)
 						case REASON_EXT_SYS_RST: out += F("external reset"); break;
 						default: out += F("Unknown"); break;
 					}
+					break;
+				case EI_Pingfail:
+					out += (int32_t)e->val;
+					out += F(" times");
 					break;
 				default: break;//out += e->val; break;
 			}
@@ -4538,6 +4624,7 @@ void loop(void)
 	if (MASTER) SendUARTPing();
 	if (SLAVE) ProcessUART();
 	MotorFailsafe();
+	ProcessPing();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
