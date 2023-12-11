@@ -130,9 +130,10 @@ uint16_t def_step_delay_mks = 1500;
 #define UART_PING_INTERVAL_MS (30*1000) // Master ping slaves every 30 seconds
 #define SLAVE_MAX_NO_PING_MS (70*1000) // Enable WiFi in slave mode if no ping from master
 #define SLAVE_SLEEP_TIMEOUT_MS (180*1000) // Disable WiFi in slave mode after network idle
-#define PINGER_WARN 2 // Log 2 ping fails
-#define PINGER_ACTION 5 // Action (log/reconnect/reboot) after 5 ping fails
+#define PINGER_WARN 4 // Log sfter N ping fails
+#define PINGER_ACTION 7 // Action (log/reconnect/reboot) after N ping fails
 #define PINGER_INTERVAL_S 60 // Ping interval, seconds
+#define PINGER_REPEAT_INTERVAL_S 10 // Ping interval after ping fail, seconds
 #define ALARMS 10
 #define DAY (24*60*60) // day length in seconds
 #define STRINGIFY(x) #x
@@ -1210,6 +1211,7 @@ void ProcessPing()
 		if (ping_fails == PINGER_WARN) elog.Add(EI_Pingfail, EL_WARN, PINGER_WARN);
 		if (ping_fails == PINGER_ACTION)
 		{
+			ping_fails = 0;
 			elog.Add(EI_Pingfail, EL_ERROR, PINGER_ACTION);
 			if (ini.ping_act == 1) // reconnect
 			{
@@ -1224,7 +1226,9 @@ void ProcessPing()
 		}
 		ping_reply = 0;
 	}
-	if (millis() - last_ping > PINGER_INTERVAL_S * 1000)
+	uint32_t interval = PINGER_INTERVAL_S * 1000;
+	if (ping_fails > 0) interval = PINGER_REPEAT_INTERVAL_S * 1000; // faster ping repeat after first ping fail
+	if (millis() - last_ping > interval)
 	{
 		last_ping = millis();
 		ping();
