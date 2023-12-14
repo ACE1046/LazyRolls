@@ -208,7 +208,14 @@ typedef struct {
 } rf_cmd_type;
 #define RF_FLAG_STOP2ND 0x01
 
+typedef struct {
+	uint8_t num; // slave group number
+	uint8_t ip4; // ip address last byte, 0 = empty 
+	uint16_t reserved;
+} ip_slave_type;
+
 #define MAX_SLAVE 5
+#define MAX_IP_SLAVE 10
 #define MAX_PRESETS 5
 #define MAX_RF_CMDS 10
 struct {
@@ -267,6 +274,7 @@ struct {
 	uint8_t ping_enabled; // pinger watchdog enabled
 	uint8_t ping_act; // action on no ping response
 	ip4_addr ping_ip; // ip address for pinger
+	ip_slave_type ip_slaves[MAX_IP_SLAVE]; // ip slaves list
 } ini;
 
 // language functions
@@ -3591,6 +3599,23 @@ String AddMasterSlave(const __FlashStringHelper *id, const __FlashStringHelper *
 	return buf;
 }
 
+String AddIPSlaves()
+{
+	char buf[160], buf2[100];
+	int p, p2;
+	buf2[0] = 0;
+	p = 0;
+	for (int i=0; i<MAX_IP_SLAVE; i++)
+	{
+		if (i > 0) buf2[p++] = ',';
+		p2 = snprintf_P(buf2+p, sizeof(buf2)-p, PSTR("%d,%d"), 200+i /*ini.ip_slaves[i].ip4*/, ini.ip_slaves[i].num);
+		if (p2 > 0) p += p2;
+	}
+	snprintf_P(buf, sizeof(buf), PSTR("<script>SetIPSlaves([%s]);self_ip='%s';ShowIPSlaves();</script>\n"), buf2, WiFi.localIP().toString());
+	return buf;
+
+}
+
 String HTML_Options(const __FlashStringHelper *name, const __FlashStringHelper *id, const __FlashStringHelper *attr, const __FlashStringHelper *var, const __FlashStringHelper *arr, int val)
 {
 	String out;
@@ -3823,20 +3848,18 @@ void HTTP_handleSettings(void)
 
 	out += HTML_section(FLF("Master/slave", "Главный/ведомый"));
 	out += F("<tr><td>");
-	out += FLF("Role:", "Роль:");
+	out += FLF("Wired:", "Провод:");
 	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange();MSChange();\">\n");
-	// out += HTML_addOption(0, ini.slave, FLF("Standalone", "Независимый"));
-	// out += HTML_addOption(255, ini.slave, FLF("Master", "Главный"));
-	// out += HTML_addOption(1, ini.slave, FLF("Slave 1", "Ведомый 1"));
-	// out += HTML_addOption(2, ini.slave, FLF("Slave 2", "Ведомый 2"));
-	// out += HTML_addOption(3, ini.slave, FLF("Slave 3", "Ведомый 3"));
-	// out += HTML_addOption(4, ini.slave, FLF("Slave 4", "Ведомый 4"));
-	// out += HTML_addOption(5, ini.slave, FLF("Slave 5", "Ведомый 5"));
 	out += F("</select></td></tr>\n");
 	out += AddOptions(F("slave"), F("mss"),
 		FLF("0,\"Standalone\",255,\"Master\",1,\"Slave 1\",2,\"Slave 2\",3,\"Slave 3\",4,\"Slave 4\",5,\"Slave 5\"",
 			"0,\"Независимый\",255,\"Главный\",1,\"Ведомый 1\",2,\"Ведомый 2\",3,\"Ведомый 3\",4,\"Ведомый 4\",5,\"Ведомый 5\""),
 		ini.slave);
+
+	out += F("<tr><td>");
+	out += F("WiFi:");
+	out += F("</td><td><div id=\"ip_slaves\"></div><div id=\"ip_slave_add\"></div></td></tr>\n");
+	out += AddIPSlaves();
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");
 
 #if DAYLIGHT
