@@ -3315,6 +3315,14 @@ void SaveInt(const __FlashStringHelper *id, bool *iniint)
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
 
+void SaveIntA(const __FlashStringHelper *id, uint8_t n, uint8_t *iniint)
+{
+	String s = id;
+	s += String(n);
+	if (!httpServer.hasArg(s)) return;
+	*iniint=atoi(httpServer.arg(s).c_str());
+}
+
 void SaveIntAndBit(const __FlashStringHelper *id, const __FlashStringHelper *id2, uint8_t *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
@@ -3532,6 +3540,12 @@ void HTTP_saveSettings()
 	SaveIP(IP_ID("ping_ip"),  &ini.ping_ip);
 	SaveInt(F("ping_act"), &ini.ping_act);
 
+	for (int i=0; i < MAX_IP_SLAVE; i++)
+	{
+		SaveIntA(F("sip"), i, &ini.ip_slaves[i].ip4);
+		SaveIntA(F("snm"), i, &ini.ip_slaves[i].num);
+	}
+
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
 
@@ -3608,10 +3622,10 @@ String AddIPSlaves()
 	for (int i=0; i<MAX_IP_SLAVE; i++)
 	{
 		if (i > 0) buf2[p++] = ',';
-		p2 = snprintf_P(buf2+p, sizeof(buf2)-p, PSTR("%d,%d"), 200+i /*ini.ip_slaves[i].ip4*/, ini.ip_slaves[i].num);
+		p2 = snprintf_P(buf2+p, sizeof(buf2)-p, PSTR("%d,%d"), ini.ip_slaves[i].ip4, ini.ip_slaves[i].num);
 		if (p2 > 0) p += p2;
 	}
-	snprintf_P(buf, sizeof(buf), PSTR("<script>SetIPSlaves([%s]);self_ip='%s';ShowIPSlaves();</script>\n"), buf2, WiFi.localIP().toString());
+	snprintf_P(buf, sizeof(buf), PSTR("<script>self_ip='%s';SetIPSlaves([%s]);ShowIPSlaves();</script>\n"), WiFi.localIP().toString(), buf2);
 	return buf;
 
 }
@@ -3856,8 +3870,8 @@ void HTTP_handleSettings(void)
 			"0,\"Независимый\",255,\"Главный\",1,\"Ведомый 1\",2,\"Ведомый 2\",3,\"Ведомый 3\",4,\"Ведомый 4\",5,\"Ведомый 5\""),
 		ini.slave);
 
-	out += F("<tr><td>");
-	out += F("WiFi:");
+	out += F("<tr id=\"tr_ips\"><td>");
+	out += FLF("WiFi slaves:", "WiFi ведомые:");
 	out += F("</td><td><div id=\"ip_slaves\"></div><div id=\"ip_slave_add\"></div></td></tr>\n");
 	out += AddIPSlaves();
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/master.html\">imlazy.ru/rolls/master.html</a>");

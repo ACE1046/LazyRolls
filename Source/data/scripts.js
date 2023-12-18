@@ -287,8 +287,10 @@ function AddEventHandler(id)
 function MSChange()
 {
 	var master = false;
+	var standalone = false;
 	var slave = document.getElementById('slave');
 	if (slave && slave.selectedIndex == 1) master = true;
+	if (slave && slave.selectedIndex == 0) standalone = true;
 
 	SetMSEnabled('b1c', master);
 	SetMSEnabled('b1l', master);
@@ -302,6 +304,10 @@ function MSChange()
 	AddEventHandler('b1l_0');
 	AddEventHandler('b2c_0');
 	AddEventHandler('b2l_0');
+	if (master || standalone)
+		ShowEl('tr_ips');
+	else
+		HideEl('tr_ips');
 }
 
 function AddOption(sel_id, opts, selected)
@@ -677,8 +683,13 @@ function edtSteps(lbl, id, val, name, test, here)
 
 var subnet;
 var IPSlaves = [];
+var MaxIPSlaves = 10;
 function SetIPSlaves(ip_slaves)
 {
+	var ip = self_ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if(!ip) return;
+	subnet = ip[1] + '.' + ip[2] + '.' + ip[3] + '.';
+
 	for (var i = 0; i<ip_slaves.length/2; i++)
 	{
 		if (ip_slaves[i*2] == 0) continue;
@@ -692,6 +703,23 @@ function SetIPSlaves(ip_slaves)
 	btn.id = 'btn_scan';
 	btn.setAttribute("onClick", 'SearchIPSlaves();');
 	id.appendChild(btn);
+
+	// manual add IP
+	id.appendChild(document.createElement('br'));
+	id.appendChild(document.createTextNode(subnet));
+	var edt = document.createElement('input');
+	edt.type = 'edit';
+	edt.innerHTML = '0';
+	edt.id = 'edt_ip';
+	edt.maxLength = 3;
+	id.appendChild(edt);
+	id.appendChild(document.createTextNode(' '));
+	var btn2 = document.createElement('button');
+	btn2.type = 'button';
+	btn2.innerHTML = '+';
+	btn2.id = 'btn_add_ip';
+	btn2.setAttribute("onClick", 'AddIP();');
+	id.appendChild(btn2);
 }
 
 function ShowIPSlaves()
@@ -699,29 +727,62 @@ function ShowIPSlaves()
 	var id = document.getElementById('ip_slaves');
 	if (!id) return;
 	while (id.firstChild) id.removeChild(id.lastChild);
-	var ip = self_ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-    if(!ip) return;
-	subnet = ip[1] + '.' + ip[2] + '.' + ip[3] + '.';
+	var table = document.createElement('table');
+	table.classList.add("slave_ips");
+	id.appendChild(table);
 	for (var i = 0; i<IPSlaves.length; i++)
 	{
-		var sel = document.createElement('select');
+		let tr = document.createElement('tr');
+		table.appendChild(tr);
+		let sel = document.createElement('select');
 		sel.id = "ip_sl" + i;
+		sel.name = 'snm' + i;
 		sel.setAttribute("onChange", 'SetIPSlaveGr(' + i +');');
-		id.appendChild(sel);
+		let td = document.createElement('td');
+		tr.appendChild(td);
+		td.appendChild(sel);
 		AddOption(sel.id, [0,'1',1,'2',2,'3',3,'4',4,'5'], IPSlaves[i].num);
 		var lbl = document.createElement('label');
 		lbl.htmlFor = sel.id;
+		if (i >= MaxIPSlaves) lbl.classList.add("limit");
 		lbl.innerHTML = ' ' + subnet + IPSlaves[i].ip + ' ';
-		id.appendChild(lbl);
+		td = document.createElement('td');
+		tr.appendChild(td);
+		td.appendChild(lbl);
 
-		var btn = document.createElement('button');
+		let btn = document.createElement('button');
 		btn.innerHTML = '−';
 		btn.setAttribute("onClick", 'DelIPSlave(' + i + ');');
-		id.appendChild(btn);
-		var hn = document.createElement('span');
+		td = document.createElement('td');
+		tr.appendChild(td);
+		td.appendChild(btn);
+
+		let hn = document.createElement('span');
 		hn.innerHTML = ' ' + IPSlaves[i].hostname;
-		id.appendChild(hn);
-		id.appendChild(document.createElement('br'));
+		td = document.createElement('td');
+		tr.appendChild(td);
+		td.appendChild(hn);
+		
+		hn.innerHTML = ' ' + IPSlaves[i].hostname;
+		td = document.createElement('td');
+		tr.appendChild(td);
+		td.appendChild(hn);
+		
+	}
+	for (var i = 0; i<MaxIPSlaves; i++)
+	{
+		let he = document.createElement('input');
+		he.type = 'hidden';
+		he.name = 'sip' + i;
+		if (i < IPSlaves.length) he.value = IPSlaves[i].ip; else he.value = 0;
+		id.appendChild(he);
+	}
+	if (IPSlaves.length > MaxIPSlaves)
+	{
+		var mx = document.createElement('span');
+		mx.innerHTML = 'Max ' + MaxIPSlaves + ' IPs';
+		mx.classList.add("maxIPsWarn");
+		id.appendChild(mx);
 	}
 }
 
@@ -796,10 +857,26 @@ function AddNewIPSlave(ip, hostname)
 {
 	var ips = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
     if(!ips) return;
+	if (ip == self_ip) return;
 
 	for (var i = 0; i<IPSlaves.length; i++)
-		if (IPSlaves[i].ip == ips[4]) return; // already exists
-
+		if (IPSlaves[i].ip == ips[4])
+		{
+			IPSlaves[i].hostname = hostname;
+			ShowIPSlaves();
+			return; // already exists
+		}
 	IPSlaves.push({ ip: ips[4], num: 0, hostname: hostname});
 	ShowIPSlaves();
+}
+
+function AddIP()
+{
+	var sel = document.getElementById('edt_ip');
+	if (!sel) return;
+	ip = Number(sel.value);
+	if (isNaN(ip)) return;
+	if (ip <= 0 || ip >= 255) return;
+	if (subnet + ip == self_ip) return;
+	AddNewIPSlave(subnet + ip, '');
 }
