@@ -255,7 +255,7 @@ background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.
 @media (min-width: 640px) { 
 #wrapper {min-width: 710px;}
 .info.hide, .info.show { width: 240px; float: left; display: block; margin-top:0px;} 
-select, input { font-size: 16px; }
+select, input, button { font-size: 16px; }
 section.settings, section.alarms, section.main, section.log {
 	max-width: 560px;
 	display: block;
@@ -295,4 +295,5 @@ section.info {
 .limit { color: #b82027; }
 #edt_ip { width: 45px; }
 .slave_ips td { padding: 0px; padding-right: 5px; }
-#tr_ips td { vertical-align: top; }
+#tr_ips td, #tr_sl_ips td { vertical-align: top; }
+#wake_btns button { margin-right: 5px; }

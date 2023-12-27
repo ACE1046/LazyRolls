@@ -184,6 +184,8 @@ volatile uint8_t pwm_LED = 0; // software LED PWM. 0 - disabled
 uint16_t pwm_phase_low_ticks, pwm_phase_high_ticks;
 volatile bool virtual_endstop_hit = 0;
 uint16_t ticks_per_step = 4; // timer ticks per motor step, used for soft start
+uint8_t Master_IP = 0; // Master's IP, last byte. Slaves report to it after wakeup
+uint8_t Slaves_IP[6]; // IPs of slaves after they woke up
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -212,7 +214,7 @@ typedef struct {
 
 typedef struct {
 	uint8_t num; // slave group number
-	uint8_t ip4; // ip address last byte, 0 = empty 
+	uint8_t ip4; // ip address last byte, 0 = empty
 	uint16_t reserved;
 } ip_slave_type;
 
@@ -797,9 +799,31 @@ uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 #define UART_CMD_CLICK2 'l' // button 2 click
 #define UART_CMD_LONGCLICK2 'L' // button 2 long press
 #define CRC_INIT 0xEA // just a random nonzero number for checksum
+#define WIFI_SLAVE_ATTEMPTS 2 // http commands send attempts
 
 uint32_t lastUARTping = 0;
 char const *int2hex="0123456789ABCDEF";
+
+void ReportToMaster()
+{
+	if (Master_IP == 0) return;
+
+	HTTPClient http;
+	char url[50];
+
+	int httpResponseCode;
+	snprintf_P(url, sizeof(url), PSTR("http://10.0.2.%d/set?slave_ip=%d"), Master_IP, WiFi.localIP()[3]);
+	for (int r=0; r<WIFI_SLAVE_ATTEMPTS; r++)
+	{
+		http.setTimeout(1000);
+		http.begin(espClient, url);
+		httpResponseCode = http.GET();
+		if (httpResponseCode == 200) break; // OK
+	}
+	if (httpResponseCode != 200)
+		elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + Master_IP);
+	http.end();
+}
 
 void SendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 {
@@ -860,6 +884,16 @@ void UARTPingReceived(uint32_t time)
 	//	Serial.println(TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]");
 }
 
+void WakeUp(uint32_t val)
+{
+	if (!SLAVE || val > 255) return;
+	Master_IP = val;
+	if (WiFi_connected)
+		ReportToMaster();
+	else
+		WiFi_On();
+}
+
 void ExecuteSlaveCommand(char cmd, uint32_t val, EVENT_SRC src = ES_UART_MASTER)
 {
 	int speed = 0;
@@ -872,9 +906,9 @@ void ExecuteSlaveCommand(char cmd, uint32_t val, EVENT_SRC src = ES_UART_MASTER)
 		case UART_CMD_PERCENT:    ToPercent(val, ADDR_SELF_ONLY, speed);  elog.Add(EI_Cmd_Percent, EL_INFO, src + (val<<8)); break;
 		case UART_CMD_POSITION:   ToPosition(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Steps,   EL_INFO, src + (val<<8)); break;
 		case UART_CMD_PRESET:     ToPreset(val, ADDR_SELF_ONLY, speed);   elog.Add(EI_Cmd_Preset,  EL_INFO, src + (val<<8)); break;
-		//case UART_CMD_WAKE:       WiFi_On();                              elog.Add(EI_Cmd_Wakeup,  EL_INFO, src); break;
+		case UART_CMD_WAKE:       WakeUp(val);                            elog.Add(EI_Cmd_Wakeup,  EL_INFO, src); break;
 		case UART_CMD_BLINK:      LED_Blink(LED_HIGH); break;
-		//case UART_CMD_PING:       UARTPingReceived(val); break;
+		case UART_CMD_PING:       UARTPingReceived(val); break;
 		case UART_CMD_CLICK:      ButtonClick(1, ADDR_SELF_ONLY);         elog.Add(EI_Cmd_Click,   EL_INFO, src); break;
 		case UART_CMD_LONGCLICK:  ButtonLongClick(1, ADDR_SELF_ONLY);     elog.Add(EI_Cmd_LClick,  EL_INFO, src); break;
 		case UART_CMD_CLICK2:     ButtonClick(2, ADDR_SELF_ONLY);         elog.Add(EI_Cmd_Click,   EL_INFO, src); break;
@@ -933,7 +967,6 @@ void ProcessUART()
 	}
 }
 
-#define WIFI_SLAVE_ATTEMPTS 2
 void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 {
 	// UART slaves
@@ -959,11 +992,10 @@ void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 				if (httpResponseCode == 200) break; // OK
 			}
 			if (httpResponseCode != 200)
-				elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + ip); 
+				elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + ip);
 		}
 	}
-      // Free resources
-      http.end();
+	http.end();
 }
 
 bool IsIPMaster()
@@ -1228,11 +1260,11 @@ uint32_t last_ping = 0;
 
 void ICACHE_FLASH_ATTR user_ping_recv(void *arg, void *pdata)
 {
-    struct ping_resp *ping_res = (ping_resp*)pdata;
+	struct ping_resp *ping_res = (ping_resp*)pdata;
 
-    if (ping_res->ping_err == -1)
-        ping_fails++;
-    else
+	if (ping_res->ping_err == -1)
+		ping_fails++;
+	else
 		ping_fails = 0;
 	ping_reply = 1;
 }
@@ -1240,14 +1272,14 @@ void ICACHE_FLASH_ATTR user_ping_recv(void *arg, void *pdata)
 void ICACHE_FLASH_ATTR
 user_ping_sent(void *arg, void *pdata)
 {
-    ;
+	;
 }
 
 ping_option po;
 void ping()
 {
- 	po.count = 1;
-	
+	po.count = 1;
+
 	if (ini.ping_ip.addr) po.ip = ini.ping_ip.addr; else po.ip = WiFi.gatewayIP();
 	po.coarse_time = 1;
 	po.recv_function = user_ping_recv;
@@ -2568,6 +2600,7 @@ void ProcessWiFi()
 			Serial.println(WiFi.localIP());
 			ping_fails = 0;
 			elog.Add(EI_Wifi_Got_IP, EL_INFO, (uint32_t)WiFi.localIP());
+			if (Master_IP) ReportToMaster();
 
 #if MDNSC
 			if (!MDNS.begin(ini.hostname)) Serial.println(F("Error setting up MDNS responder!"));
@@ -3744,7 +3777,7 @@ void HTTP_handleSettings(void)
 	out += HTML_section(FLF("Pinger", "Пингер"));
 	out += HTML_addCheckbox(L("Ping IP (0.0.0.0 - gateway)", "Пинговать IP (0.0.0.0 - шлюз)"), "ping_en", ini.ping_enabled);
 	out += HTML_editIP(F("IP"), F("ping_ip"), &ini.ping_ip);
-	out += HTML_Options(FLF("Action:", "Действие:"), F("ping_act"), F(""), F("p_act"), 
+	out += HTML_Options(FLF("Action:", "Действие:"), F("ping_act"), F(""), F("p_act"),
 		FLF("0,'Log',1,'Reconnect',2,'Reboot'", "0,'Лог',1,'Переподключение',2,'Перезагрузка'"), ini.ping_act);
 
 	out += HTML_section(FLF("Time", "Время"));
@@ -3916,6 +3949,10 @@ void HTTP_handleSettings(void)
 		FLF("0,\"Standalone\",255,\"Master\",1,\"Slave 1\",2,\"Slave 2\",3,\"Slave 3\",4,\"Slave 4\",5,\"Slave 5\"",
 			"0,\"Независимый\",255,\"Главный\",1,\"Ведомый 1\",2,\"Ведомый 2\",3,\"Ведомый 3\",4,\"Ведомый 4\",5,\"Ведомый 5\""),
 		ini.slave);
+	out += F("<tr id=\"tr_sl_ips\"><td>");
+	out += FLF("Wake up:", "Разбудить:");
+	out += F("</td><td><div id=\"wake_btns\"></div><div id=\"ip_tx_slaves\"></div></td></tr>\n");
+	out += F("<script>AddWakeUp();</script>\n");
 
 	out += F("<tr id=\"tr_ips\"><td>");
 	out += FLF("WiFi slaves:", "WiFi ведомые:");
@@ -4270,7 +4307,8 @@ void HTTP_handleSet(void)
 	}
 	else if (httpServer.hasArg("wake"))
 	{
-		SendUART(UART_CMD_WAKE, addr);
+		memset(Slaves_IP, 0, sizeof(Slaves_IP));
+		SendUART(UART_CMD_WAKE, addr, WiFi.localIP()[3]);
 		Return200();
 	}
 	else if (httpServer.hasArg("click"))
@@ -4314,6 +4352,13 @@ void HTTP_handleSet(void)
 		char cmd = atoi(httpServer.arg("slave").c_str());
 		if (httpServer.hasArg("val")) val = atoi(httpServer.arg("val").c_str());
 		ExecuteSlaveCommand(cmd, val, ES_HTTP_MASTER);
+		Return200();
+	}
+	else if (httpServer.hasArg("slave_ip"))
+	{
+		char ip = atoi(httpServer.arg("slave_ip").c_str());
+		for (unsigned int i=0; i<ARRAYSIZE(Slaves_IP); i++)
+			if (Slaves_IP[i] == 0 || Slaves_IP[i] == ip) { Slaves_IP[i] = ip; break; }
 		Return200();
 	}
 	else
@@ -4423,6 +4468,11 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("Log"), String(elog.Count()));
 	XML += MakeNode(F("Master"), (MASTER ? "yes" : "no"));
 //XML += MakeNode(F("Debug"), payload);
+	s = "";
+	for (unsigned int i=0; i<ARRAYSIZE(Slaves_IP); i++)
+		if (Slaves_IP[i]) { if (s != "") s += ","; s += String(Slaves_IP[i]); }
+	if (s != "")
+		XML += MakeNode(F("Slaves"), s);
 	XML += F("</Info>");
 
 	XML += F("<Presets>");

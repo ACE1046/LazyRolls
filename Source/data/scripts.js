@@ -100,9 +100,35 @@ function UpdateLog()
 
 function st(t, id, tag)
 {
-	f=t.responseXML.getElementsByTagName(tag)[0]; 
-	h = document.getElementById(id);
-	if(f && h) h.innerHTML = f.childNodes[0].nodeValue; 
+	var f=t.responseXML.getElementsByTagName(tag)[0];
+	var h = document.getElementById(id);
+	if(f && h) h.innerHTML = f.childNodes[0].nodeValue;
+}
+
+var last_slaves = "";
+
+function slaves(t)
+{
+	var f=t.responseXML.getElementsByTagName("Slaves")[0];
+	var h = document.getElementById("ip_tx_slaves");
+	if (!f || !h) return;
+	if (f.childNodes[0].nodeValue == last_slaves) return;
+	last_slaves = f.childNodes[0].nodeValue;
+	var ips = last_slaves.split(',');
+	if (ips.length == 0) return;
+
+	while (h.firstChild) h.removeChild(h.lastChild);
+
+	for (i=0; i<ips.length; i++)
+	{
+		var ip = subnet + ips[i];
+		var a = document.createElement('a');
+		a.appendChild(document.createTextNode(ip));
+		a.href = "http://" + ip + "/";
+		a.target = "_blank";
+		h.appendChild(a);
+		h.appendChild(document.createElement('br'));
+	}
 }
 
 function GetStatus()
@@ -131,6 +157,7 @@ function GetStatus()
 						st(this, "led_mode", 'Mode');
 						st(this, "led_level", 'Level');
 						st(this, "lastcode", 'LastCode');
+						slaves(this);
 						lc=document.getElementById("log_count").innerHTML;
 						st(this, "log_count", 'Log');
 						if (document.getElementById("log_count").innerHTML != lc &&
@@ -147,7 +174,7 @@ function GetStatus()
 		// send HTTP GET request
 		request.open("GET", "xml");
 		request.send(null);
-	} 
+	}
 }
 
 function Call(url)
@@ -183,7 +210,7 @@ function Test(dir, speed)
 	delay=document.getElementById("delay" + speed).value;
 	pwm=document.getElementById("pwm" + speed).value;
 	var xhttp = new XMLHttpRequest();
-	xhttp.onreadystatechange = function() 
+	xhttp.onreadystatechange = function()
 	{
 		if (this.readyState == 4)
 		{
@@ -314,7 +341,7 @@ function MSChange()
 
 function AddOption(sel_id, opts, selected)
 {
-    select = document.getElementById(sel_id);
+	select = document.getElementById(sel_id);
 	for (var i = 0; i<opts.length/2; i++)
 	{
 		var opt = document.createElement('option');
@@ -328,13 +355,13 @@ function AddOption(sel_id, opts, selected)
 function EnableEl(id)
 {
 	h = document.getElementById(id);
-	if(h) h.disabled = false; 
+	if(h) h.disabled = false;
 }
 
 function DisableEl(id)
 {
 	h = document.getElementById(id);
-	if(h) h.disabled = true; 
+	if(h) h.disabled = true;
 }
 
 function ShowEl(id)
@@ -359,13 +386,13 @@ function stt(t, id, tag)
 {
 	f=t.responseXML.getElementsByTagName(tag)[0];
 	h = document.getElementById(id);
-	if(f && h) h.value = f.childNodes[0].nodeValue; 
+	if(f && h) h.value = f.childNodes[0].nodeValue;
 }
 
 function SetVal(id, val)
 {
 	h = document.getElementById(id);
-	if(h) h.value = val; 
+	if(h) h.value = val;
 }
 
 function GetRFKey(cmd, msg)
@@ -410,7 +437,7 @@ function SetCoord(lat, lng)
 
 function AddWeek(sel_id, opts, selected)
 {
-    td = document.getElementById(sel_id);
+	td = document.getElementById(sel_id);
 	if (!td) return;
 	for (var i = 0; i<7; i++)
 	{
@@ -431,7 +458,7 @@ function AddWeek(sel_id, opts, selected)
 
 function AddMasterSlave(sel_id, opts, selected)
 {
-    td = document.getElementById(sel_id);
+	td = document.getElementById(sel_id);
 	if (!td) return;
 	for (var i = 0; i<=5; i++)
 	{
@@ -689,7 +716,7 @@ var MaxIPSlaves = 10;
 function SetIPSlaves(ip_slaves)
 {
 	var ip = self_ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-    if(!ip) return;
+	if(!ip) return;
 	subnet = ip[1] + '.' + ip[2] + '.' + ip[3] + '.';
 
 	for (var i = 0; i<ip_slaves.length/2; i++)
@@ -748,8 +775,8 @@ function ShowIPSlaves()
 		var ip = subnet + IPSlaves[i].ip;
 		var a = document.createElement('a');
 		a.appendChild(document.createTextNode(ip));
-      	//a.title = "my title text";
-      	a.href = "http://" + ip + "/";
+		//a.title = "my title text";
+		a.href = "http://" + ip + "/";
 		a.target = "_blank";
 		if (i >= MaxIPSlaves) a.classList.add("limit");
 		td = document.createElement('td');
@@ -768,12 +795,12 @@ function ShowIPSlaves()
 		td = document.createElement('td');
 		tr.appendChild(td);
 		td.appendChild(hn);
-		
+
 		hn.innerHTML = ' ' + IPSlaves[i].hostname;
 		td = document.createElement('td');
 		tr.appendChild(td);
 		td.appendChild(hn);
-		
+
 	}
 	for (var i = 0; i<MaxIPSlaves; i++)
 	{
@@ -820,7 +847,7 @@ function SearchIPSlaves()
 
 function ScanNext()
 {
-	if (thr > 0 && ip < 255) 
+	if (thr > 0 && ip < 255)
 	{
 		request = new XMLHttpRequest();
 		request.onerror = function(e) { };
@@ -851,7 +878,7 @@ function ScanNext()
 			ip++;
 			request.send(null);
 			thr--;
-    };
+	};
 	if (ip<255) setTimeout(ScanNext, 60);
 	if (ip == 255)
 	{
@@ -863,7 +890,7 @@ function ScanNext()
 function AddNewIPSlave(ip, hostname)
 {
 	var ips = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-    if(!ips) return;
+	if(!ips) return;
 	if (ip == self_ip) return;
 
 	for (var i = 0; i<IPSlaves.length; i++)
@@ -886,4 +913,27 @@ function AddIP()
 	if (ip <= 0 || ip >= 255) return;
 	if (subnet + ip == self_ip) return;
 	AddNewIPSlave(subnet + ip, '');
+}
+
+function WakeUp(n)
+{
+	if (n)
+		Call("set?wake&addr=" + n);
+	else
+		Call("set?wake");
+}
+
+function AddWakeUp()
+{
+	var id = document.getElementById('wake_btns');
+	if (!id) return;
+	for (var i=0; i<=5; i++)
+	{
+		var btn = document.createElement('button');
+		btn.type = 'button';
+		btn.innerHTML = (i ? i : '*');
+		btn.id = 'btn_wake_' + i;
+		btn.setAttribute("onClick", 'WakeUp(' + i + ');');
+		id.appendChild(btn);
+	}
 }
