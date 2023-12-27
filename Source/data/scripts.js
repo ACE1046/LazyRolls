@@ -286,11 +286,13 @@ function AddEventHandler(id)
 
 function MSChange()
 {
-	var master = false;
+	var uart_master = false;
 	var standalone = false;
 	var slave = document.getElementById('slave');
-	if (slave && slave.selectedIndex == 1) master = true;
+	var ip_master = IPSlaves.length > 0;
+	if (slave && slave.selectedIndex == 1) uart_master = true;
 	if (slave && slave.selectedIndex == 0) standalone = true;
+	var master = uart_master || (ip_master && standalone);
 
 	SetMSEnabled('b1c', master);
 	SetMSEnabled('b1l', master);
@@ -304,7 +306,7 @@ function MSChange()
 	AddEventHandler('b1l_0');
 	AddEventHandler('b2c_0');
 	AddEventHandler('b2l_0');
-	if (master || standalone)
+	if (uart_master || standalone)
 		ShowEl('tr_ips');
 	else
 		HideEl('tr_ips');
@@ -732,32 +734,36 @@ function ShowIPSlaves()
 	id.appendChild(table);
 	for (var i = 0; i<IPSlaves.length; i++)
 	{
-		let tr = document.createElement('tr');
+		var tr = document.createElement('tr');
 		table.appendChild(tr);
-		let sel = document.createElement('select');
+		var sel = document.createElement('select');
 		sel.id = "ip_sl" + i;
 		sel.name = 'snm' + i;
 		sel.setAttribute("onChange", 'SetIPSlaveGr(' + i +');');
-		let td = document.createElement('td');
+		var td = document.createElement('td');
 		tr.appendChild(td);
 		td.appendChild(sel);
 		AddOption(sel.id, [0,'1',1,'2',2,'3',3,'4',4,'5'], IPSlaves[i].num);
-		var lbl = document.createElement('label');
-		lbl.htmlFor = sel.id;
-		if (i >= MaxIPSlaves) lbl.classList.add("limit");
-		lbl.innerHTML = ' ' + subnet + IPSlaves[i].ip + ' ';
+
+		var ip = subnet + IPSlaves[i].ip;
+		var a = document.createElement('a');
+		a.appendChild(document.createTextNode(ip));
+      	//a.title = "my title text";
+      	a.href = "http://" + ip + "/";
+		a.target = "_blank";
+		if (i >= MaxIPSlaves) a.classList.add("limit");
 		td = document.createElement('td');
 		tr.appendChild(td);
-		td.appendChild(lbl);
+		td.appendChild(a);
 
-		let btn = document.createElement('button');
+		var btn = document.createElement('button');
 		btn.innerHTML = '−';
 		btn.setAttribute("onClick", 'DelIPSlave(' + i + ');');
 		td = document.createElement('td');
 		tr.appendChild(td);
 		td.appendChild(btn);
 
-		let hn = document.createElement('span');
+		var hn = document.createElement('span');
 		hn.innerHTML = ' ' + IPSlaves[i].hostname;
 		td = document.createElement('td');
 		tr.appendChild(td);
@@ -771,7 +777,7 @@ function ShowIPSlaves()
 	}
 	for (var i = 0; i<MaxIPSlaves; i++)
 	{
-		let he = document.createElement('input');
+		var he = document.createElement('input');
 		he.type = 'hidden';
 		he.name = 'sip' + i;
 		if (i < IPSlaves.length) he.value = IPSlaves[i].ip; else he.value = 0;
@@ -784,6 +790,7 @@ function ShowIPSlaves()
 		mx.classList.add("maxIPsWarn");
 		id.appendChild(mx);
 	}
+	MSChange();
 }
 
 function DelIPSlave(n)

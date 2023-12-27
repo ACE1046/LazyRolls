@@ -295,3 +295,4 @@ section.info {
 .limit { color: #b82027; }
 #edt_ip { width: 45px; }
 .slave_ips td { padding: 0px; padding-right: 5px; }
+#tr_ips td { vertical-align: top; }

@@ -20,6 +20,7 @@ http://imlazy.ru/rolls/
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include <ESP8266HTTPClient.h>
 #define FS_NO_GLOBALS 1
 #include <FS.h>
 #include <WiFiUdp.h>
@@ -186,6 +187,7 @@ uint16_t ticks_per_step = 4; // timer ticks per motor step, used for soft start
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
+WiFiClient espClient;
 
 typedef struct {
 	uint32_t time;
@@ -354,10 +356,12 @@ const char ET_Auto[] PROGMEM = "Open/Close";
 const char ET_Cmd_Zero[] PROGMEM = "Zero reset";
 const char ET_Pingfail[] PROGMEM = "Ping failed ";
 const char ET_Cmd_Wakeup[] PROGMEM = "Wake up";
+const char ET_IP_Slave_Err[] PROGMEM = "WiFi slave error";
 
 const char EQ_HTTP[] PROGMEM = "Src: HTTP";
 const char EQ_MQTT[] PROGMEM = "Src: MQTT";
-const char EQ_MASTER[] PROGMEM = "Src: Master";
+const char EQ_UART_MASTER[] PROGMEM = "Src: TX/RX master";
+const char EQ_HTTP_MASTER[] PROGMEM = "Src: WIFI master";
 const char EQ_SCHEDULE[] PROGMEM = "Src: Scheduler";
 const char EQ_BUTTON[] PROGMEM = "Src: Button";
 const char EQ_RF[] PROGMEM = "Src: RF";
@@ -366,14 +370,14 @@ enum EVENT_LEVEL { EL_NONE = 0, EL_DEBUG, EL_INFO, EL_WARN, EL_ERROR };
 enum EVENT_ID                           { EI_Err1, EI_NTP_Sync, EI_Settings_Loaded, EI_Settings_Saved, EI_Settings_Not_Loaded, EI_Cmd_Stop, EI_Cmd_Open, EI_Cmd_Close,
 	EI_Cmd_Percent, EI_Cmd_Steps, EI_Cmd_Preset, EI_Cmd_Click, EI_Cmd_LClick, EI_Cmd_Click2, EI_Cmd_LClick2, EI_Slave_No_Ping, EI_Wifi_Close_AP, EI_Wifi_Reconnect,
 	EI_Wifi_Got_IP, EI_Wifi_Start_AP, EI_Endstop_Hit, EI_Endstop_Hit_Error, EI_MQTT_Connect, EI_MQTT_Connecting, EI_Started, EI_Wifi_Disconnect, EI_Stall, EI_Auto,
-	EI_Cmd_Zero, EI_Pingfail, EI_Cmd_Wakeup };
+	EI_Cmd_Zero, EI_Pingfail, EI_Cmd_Wakeup, EI_IP_Slave_Err };
 const char* const event_txt[] PROGMEM = { ET_Err1, ET_NTP_Sync, ET_Settings_Loaded, ET_Settings_Saved, ET_Settings_Not_Loaded, ET_Cmd_Stop, ET_Cmd_Open, ET_Cmd_Close,
 	ET_Cmd_Percent, ET_Cmd_Steps, ET_Cmd_Preset, ET_Cmd_Click, ET_Cmd_LClick, ET_Cmd_Click2, ET_Cmd_LClick2, ET_Slave_No_Ping, ET_Wifi_Close_AP, ET_Wifi_Reconnect,
 	ET_Wifi_Got_IP, ET_Wifi_Start_AP, ET_Endstop_Hit, ET_Endstop_Hit_Error, ET_MQTT_Connect, ET_MQTT_Connecting, ET_Started, ET_Wifi_Disconnect, ET_Stall, ET_Auto,
-	ET_Cmd_Zero, ET_Pingfail, ET_Cmd_Wakeup };
+	ET_Cmd_Zero, ET_Pingfail, ET_Cmd_Wakeup, ET_IP_Slave_Err };
 
-enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
-const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
+enum EVENT_SRC                              { ES_HTTP, ES_MQTT, ES_UART_MASTER, ES_HTTP_MASTER, ES_SCHEDULE, ES_BUTTON, ES_RF };
+const char* const event_src_txt[] PROGMEM = { EQ_HTTP, EQ_MQTT, EQ_UART_MASTER, EQ_HTTP_MASTER, EQ_SCHEDULE, EQ_BUTTON, EQ_RF };
 
 typedef struct {
 	uint32_t time; // timecode
@@ -796,6 +800,7 @@ uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 
 uint32_t lastUARTping = 0;
 char const *int2hex="0123456789ABCDEF";
+
 void SendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 {
 	uint8_t buf[11], crc;
@@ -855,6 +860,30 @@ void UARTPingReceived(uint32_t time)
 	//	Serial.println(TimeStr() + " ["+ DoWName(DayOfWeek(getTime())) +"]");
 }
 
+void ExecuteSlaveCommand(char cmd, uint32_t val, EVENT_SRC src = ES_UART_MASTER)
+{
+	int speed = 0;
+	if (cmd > 0x80) speed = SPEED2; // 2nd speed
+	switch (cmd & 0x7F)
+	{
+		case UART_CMD_OPEN:       Open(ADDR_SELF_ONLY, speed);            elog.Add(EI_Cmd_Open,    EL_INFO, src); break;
+		case UART_CMD_CLOSE:      Close(ADDR_SELF_ONLY, speed);           elog.Add(EI_Cmd_Close,   EL_INFO, src); break;
+		case UART_CMD_STOP:       Stop(ADDR_SELF_ONLY);                   elog.Add(EI_Cmd_Stop,    EL_INFO, src); break;
+		case UART_CMD_PERCENT:    ToPercent(val, ADDR_SELF_ONLY, speed);  elog.Add(EI_Cmd_Percent, EL_INFO, src + (val<<8)); break;
+		case UART_CMD_POSITION:   ToPosition(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Steps,   EL_INFO, src + (val<<8)); break;
+		case UART_CMD_PRESET:     ToPreset(val, ADDR_SELF_ONLY, speed);   elog.Add(EI_Cmd_Preset,  EL_INFO, src + (val<<8)); break;
+		//case UART_CMD_WAKE:       WiFi_On();                              elog.Add(EI_Cmd_Wakeup,  EL_INFO, src); break;
+		case UART_CMD_BLINK:      LED_Blink(LED_HIGH); break;
+		//case UART_CMD_PING:       UARTPingReceived(val); break;
+		case UART_CMD_CLICK:      ButtonClick(1, ADDR_SELF_ONLY);         elog.Add(EI_Cmd_Click,   EL_INFO, src); break;
+		case UART_CMD_LONGCLICK:  ButtonLongClick(1, ADDR_SELF_ONLY);     elog.Add(EI_Cmd_LClick,  EL_INFO, src); break;
+		case UART_CMD_CLICK2:     ButtonClick(2, ADDR_SELF_ONLY);         elog.Add(EI_Cmd_Click,   EL_INFO, src); break;
+		case UART_CMD_LONGCLICK2: ButtonLongClick(2, ADDR_SELF_ONLY);     elog.Add(EI_Cmd_LClick,  EL_INFO, src); break;
+	}
+	// All commands received from HTTP master will be sent to UART slaves
+	if (src == ES_HTTP_MASTER && MASTER) SendUART(cmd, ADDR_ALL, val);
+}
+
 void ProcessUART()
 {
 	static uint8_t buf[11];
@@ -882,29 +911,12 @@ void ProcessUART()
 			{ // valid command
 				if (buf[1] == '*' || buf[1]-'0' == ini.slave)
 				{ // our address
-					char cmd = buf[2] & 0x7F;
-					int speed = 0;
-					if (buf[2] > 0x80) speed = SPEED2; // 2nd speed
-					if (cmd == UART_CMD_PING)
+					char cmd = buf[2];
+					if ((cmd & 0x7F) == UART_CMD_PING)
 						val = ((uint32_t)buf[3] << 24) + ((uint32_t)buf[4] << 16) + ((uint32_t)buf[5] << 8) + buf[6];
 					else
 						val = (buf[3]-'0')*10000 + (buf[4]-'0')*1000 + (buf[5]-'0')*100 + (buf[6]-'0')*10 + (buf[7]-'0');
-					switch (cmd)
-					{
-						case UART_CMD_OPEN: Open(ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Open, EL_INFO, ES_MASTER);  break;
-						case UART_CMD_CLOSE: Close(ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Close, EL_INFO, ES_MASTER); break;
-						case UART_CMD_STOP: Stop(ADDR_SELF_ONLY); elog.Add(EI_Cmd_Stop, EL_INFO, ES_MASTER); break;
-						case UART_CMD_PERCENT: ToPercent(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Percent, EL_INFO, ES_MASTER + (val<<8)); break;
-						case UART_CMD_POSITION: ToPosition(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Steps, EL_INFO, ES_MASTER + (val<<8)); break;
-						case UART_CMD_PRESET: ToPreset(val, ADDR_SELF_ONLY, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MASTER + (val<<8)); break;
-						case UART_CMD_WAKE: WiFi_On(); elog.Add(EI_Cmd_Wakeup, EL_INFO, ES_MASTER); break;
-						case UART_CMD_BLINK: LED_Blink(LED_HIGH); break;
-						case UART_CMD_PING: UARTPingReceived(val); break;
-						case UART_CMD_CLICK: ButtonClick(1, ADDR_SELF_ONLY); elog.Add(EI_Cmd_Click, EL_INFO, ES_MASTER); break;
-						case UART_CMD_LONGCLICK: ButtonLongClick(1, ADDR_SELF_ONLY); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MASTER); break;
-						case UART_CMD_CLICK2: ButtonClick(2, ADDR_SELF_ONLY); elog.Add(EI_Cmd_Click, EL_INFO, ES_MASTER); break;
-						case UART_CMD_LONGCLICK2: ButtonLongClick(2, ADDR_SELF_ONLY); elog.Add(EI_Cmd_LClick, EL_INFO, ES_MASTER); break;
-					}
+					ExecuteSlaveCommand(cmd, val);
 				}
 				inbuf=0;
 			} else
@@ -919,6 +931,47 @@ void ProcessUART()
 			}
 		}
 	}
+}
+
+#define WIFI_SLAVE_ATTEMPTS 2
+void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
+{
+	// UART slaves
+	if (MASTER && (address != ADDR_MASTER)) SendUART(cmd, address, val);
+
+	// IP slaves
+	if (SLAVE || !WiFi_connected) return;
+	HTTPClient http;
+	char url[50];
+
+	for (int i=0; i<MAX_IP_SLAVE; i++)
+	{
+		uint8_t ip = ini.ip_slaves[i].ip4;
+		if (ip !=0 && (address == ADDR_ALL || ini.ip_slaves[i].num + 1 == address))
+		{
+			int httpResponseCode;
+			snprintf_P(url, sizeof(url), PSTR("http://10.0.2.%d/set?slave=%d&val=%d"), ip, cmd, val);
+			for (int r=0; r<WIFI_SLAVE_ATTEMPTS; r++)
+			{
+				http.setTimeout(1000);
+				http.begin(espClient, url);
+				httpResponseCode = http.GET();
+				if (httpResponseCode == 200) break; // OK
+			}
+			if (httpResponseCode != 200)
+				elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + ip); 
+		}
+	}
+      // Free resources
+      http.end();
+}
+
+bool IsIPMaster()
+{
+	if (SLAVE) return false; // UART slave can't be IP Master
+	for (int i=0; i<MAX_IP_SLAVE; i++)
+		if (ini.ip_slaves[i].ip4) return true; // IP Master if there is non zero slave IP
+	return false;
 }
 
 //----------------------- Motor ----------------------------------------
@@ -1063,11 +1116,6 @@ int Position2Percents(int pos)
 	else percent=(pos*100 + (ini.full_length/2)) / ini.full_length;
 	if (ini.sw_at_bottom) percent=100-percent;
 	return percent;
-}
-
-void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
-{
-	if (MASTER && (address != ADDR_MASTER)) SendUART(cmd, address, val);
 }
 
 uint8_t speed2(int step_delay)
@@ -1252,7 +1300,6 @@ volatile uint8_t aux_state;
 uint32_t last_mqtt=0, last_mqtt_info=0;
 String mqtt_topic_sub, mqtt_topic_pub, mqtt_topic_lwt, mqtt_topic_aux, mqtt_topic_inf, mqtt_node_id;
 
-WiFiClient espClient;
 PubSubClient *mqtt = NULL;
 enum AUX_STATES { AUX_NONE, AUX_ON, AUX_OFF };
 
@@ -4061,7 +4108,7 @@ void HTTP_handleAlarms(void)
 		FLF("Action:", "Действие:"),
 		FLF("Speed:", "Скорость:"),
 		FLF("Repeat:", "Повтор:"),
-		(MASTER ? F("true") : F("false")));
+		(MASTER || IsIPMaster() ? F("true") : F("false")));
 	ChangeQuoteSymbol(buf);
 	out += buf;
 
@@ -4259,6 +4306,14 @@ void HTTP_handleSet(void)
 	{
 		elog.Add(EI_Cmd_Zero, EL_INFO, ES_HTTP);
 		ResetZero();
+		Return200();
+	}
+	else if (httpServer.hasArg("slave"))
+	{
+		int val = 0;
+		char cmd = atoi(httpServer.arg("slave").c_str());
+		if (httpServer.hasArg("val")) val = atoi(httpServer.arg("val").c_str());
+		ExecuteSlaveCommand(cmd, val, ES_HTTP_MASTER);
 		Return200();
 	}
 	else
@@ -4519,6 +4574,12 @@ void HTTP_handleLog(void)
 					out += (int32_t)e->val;
 					out += F(" times");
 					break;
+				case EI_IP_Slave_Err:
+					out += F("IP: ");
+					out += (int32_t)e->val & 0xFF;
+					out += F(" Code: ");
+					out += (int)e->val >> 8;
+					break;
 				default: break;//out += e->val; break;
 			}
 			out += F("</td></tr>\n");
@@ -4583,7 +4644,7 @@ void Scheduler()
 		// select master and slaves, from settings
 		for (uint8_t i=0; i<=MAX_SLAVE; i++)
 		{
-			if (MASTER)
+			if (MASTER || IsIPMaster())
 				slave[i] = ini.alarms[a].m_s & (0x01 << i);
 			else
 				slave[i] = (i==0 ? 1 : 0);
