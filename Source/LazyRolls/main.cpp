@@ -14,7 +14,7 @@ http://imlazy.ru/rolls/
 27.01.2022 v0.12
 09.12.2022 v0.13
 20.04.2023 v0.14
-12.11.2023 v0.15
+28.12.2023 v0.15
 
 */
 #include <ESP8266WiFi.h>
@@ -31,9 +31,9 @@ extern "C" {
 #include <ping.h>
 }
 
-#define VERSION "0.14 ++"
+#define VERSION "0.15 beta"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
