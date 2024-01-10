@@ -485,6 +485,8 @@ function a_ch(n)
 	if (f) f.hidden = !r.checked;
 	f=document.getElementById('a_ss'+n);
 	if (f) f.hidden = r.checked;
+	f=document.getElementById('a_sf'+n);
+	if (f) f.hidden = r.checked;
 }
 
 function AddRadio(id, val, label, n, ch)
@@ -513,7 +515,7 @@ function AlarmRadio(n, l, v)
 	a_ch(n);
 }
 
-function SetAlarm(n, v1, v2, v3, v4, v5, ms, en, time)
+function SetAlarm(n, v1, v2, v3, v4, v5, ms, en, time, tmin)
 {
 	AddOption('dest'+n, sh_a, v1);
 	AddWeek('d'+n, dow, v2);
@@ -523,18 +525,20 @@ function SetAlarm(n, v1, v2, v3, v4, v5, ms, en, time)
 	AddMasterSlave("ms"+n, m_s, ms);
 	SetChecked('en'+n, en);
 	SetVal('time'+n, time);
+	SetVal('tmin'+n, tmin);
 }
 
-function AddAlarms(ALARMS, en, time, height, action, speed, repeat, master)
+function AddAlarms(ALARMS, en, time, tmin, height, action, speed, repeat, master)
 {
 	for (n=0; n<ALARMS; n++)
 	{
 		document.write('<tr><td colspan="3"><hr/></td></tr>\n<tr><td class="en"><label for="en' + n + '">\n');
 		document.write('<input type="checkbox" id="en' + n + '" name="en' + n + '"/>' + en + '</label></td>\n');
 		//out += ((ini.alarms[a].flags & ALARM_FLAG_ENABLED) ? " checked" : "");
-		document.write('<td colspan="2" id="a_sel' + n + '" class="a_radio"></td></tr>\n<tr><td></td><td class="narrow">\n<span id="a_st' + n +'">');
-		document.write('<label for="time' + n + '">' + time + '</label> <br/><input type="time" id="time' + n + '" name="time' + n + '" value="00:00" required></span>\n');
-		document.write('<span id="a_ss' + n + '"><label for="sunh' + n + '">' + height + '</label> <br/><select id="sunh' + n + '" name="sunh' + n + '"></select></span>\n</td>\n');
+		document.write('<td colspan="2" id="a_sel' + n + '" class="a_radio"></td></tr>\n<tr><td></td><td>\n');
+		document.write('<span id="a_st' + n + '"><label for="time' + n + '">' + time + '</label> <br/><input type="time" id="time' + n + '" name="time' + n + '" value="00:00" required></span>\n');
+		document.write('<span id="a_ss' + n + '"><label for="sunh' + n + '">' + height + '</label> <br/><select id="sunh' + n + '" name="sunh' + n + '"></select></span>\n</td><td>\n');
+		document.write('<span id="a_sf' + n + '"><label for="tmin' + n + '">' + tmin + '</label> <br/><input type="time" id="tmin' + n + '" name="tmin' + n + '" value="00:00" required></span>\n</td>');
 
 		document.write('</tr><tr><td></td><td><label for="dest' + n + '"> ' + action + '</label> <br/><select id="dest' + n + '" name="dest' + n + '">\n</select>\n</td>');
 		document.write('<td><label for="spd' + n + '"> ' + speed + '</label> <br/><select id="spd' + n + '" name="spd' + n + '">\n</select>\n</td></tr>');

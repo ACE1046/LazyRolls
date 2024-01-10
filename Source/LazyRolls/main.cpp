@@ -33,7 +33,7 @@ extern "C" {
 
 #define VERSION "0.15 beta"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
@@ -192,7 +192,8 @@ ESP8266HTTPUpdateServer httpUpdater;
 WiFiClient espClient;
 
 typedef struct {
-	uint32_t time;
+	uint16_t tmin; // minimal time to sun option
+	uint16_t time;
 	uint8_t percent_open; // 0 - open, 100 - close, 101-105 - presets
 	uint8_t day_of_week; // LSB - monday
 	uint8_t flags;
@@ -724,10 +725,10 @@ int DayOfWeek(uint32_t time)
 
 #if DAYLIGHT
 
-uint32_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
+uint16_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 {
 	int y, m, d;
-	if (sun_height < -5 || sun_height > 5) return (uint32_t)-1;
+	if (sun_height < -5 || sun_height > 5) return (uint16_t)-1;
 	Time2YMD(getTime(), y, m, d);
 	d = computeDayOfYear(y, m, d);
 	ZENITH = FROMFLOAT(-.83f + sun_height);
@@ -4046,6 +4047,8 @@ void HTTP_handleAlarms(void)
 			{ // sun time
 				if (httpServer.hasArg("sunh" + n))
 					ini.alarms[a].time = 10 + atoi(httpServer.arg("sunh" + n).c_str());
+				if (httpServer.hasArg("tmin" + n))
+					ini.alarms[a].tmin = StrToTime(httpServer.arg("tmin" + n));
 			} else
 			{ // clock time
 				if (httpServer.hasArg("time" + n))
@@ -4137,10 +4140,11 @@ void HTTP_handleAlarms(void)
 
 	char buf[700];
 	out += F("<script>\n");
-	snprintf_P(buf, sizeof(buf), PSTR("AddAlarms(%i,'%s','%s','%s','%s','%s','%s',%s);\n"),
+	snprintf_P(buf, sizeof(buf), PSTR("AddAlarms(%i,'%s','%s','%s','%s','%s','%s','%s',%s);\n"),
 		ALARMS,
 		FLF("Enable", "Вкл."),
 		FLF("Time:", "Время:"),
+		FLF("Not earlier:", "Не ранее:"),
 		FLF("Height:", "Высота:"),
 		FLF("Action:", "Действие:"),
 		FLF("Speed:", "Скорость:"),
@@ -4170,7 +4174,7 @@ void HTTP_handleAlarms(void)
 		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET) r = 2;
 		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET) t = ini.alarms[a].time - 10;
 		snprintf_P(buf, sizeof(buf),
-			PSTR("SetAlarm(%i,%i,%i,%i,%i,%i,%i,%i,'%s');\n"),
+			PSTR("SetAlarm(%i,%i,%i,%i,%i,%i,%i,%i,'%s','%s');\n"),
 			a,
 			ini.alarms[a].percent_open,
 			ini.alarms[a].day_of_week,
@@ -4179,7 +4183,8 @@ void HTTP_handleAlarms(void)
 			(ini.alarms[a].flags & ALARM_FLAG_SLOW ? 1 : 0),
 			ini.alarms[a].m_s,
 			ini.alarms[a].flags & ALARM_FLAG_ENABLED,
-			(ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET ? PSTR("00:00") : TimeToStr(ini.alarms[a].time).c_str()));
+			(ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET ? PSTR("00:00") : TimeToStr(ini.alarms[a].time).c_str()),
+			(ini.alarms[a].flags & ALARM_FLAG_SUNRISE || ini.alarms[a].flags & ALARM_FLAG_SUNSET ? TimeToStr(ini.alarms[a].tmin).c_str() : PSTR("00:00")));
 		ChangeQuoteSymbol(buf);
 		out += buf;
 	}
@@ -4650,9 +4655,10 @@ void CalcAlarmTimes()
 {
 	for (int a=0; a<ALARMS; a++)
 	{
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) alarm_time[a] = GetSunTime(ini.alarms[a].time - 10, 1); else
-		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET)  alarm_time[a] = GetSunTime(ini.alarms[a].time - 10, 0); else
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNRISE) alarm_time[a] = max(GetSunTime(ini.alarms[a].time - 10, 1), ini.alarms[a].tmin); else
+		if (ini.alarms[a].flags & ALARM_FLAG_SUNSET)  alarm_time[a] = max(GetSunTime(ini.alarms[a].time - 10, 0), ini.alarms[a].tmin); else
 		alarm_time[a] = ini.alarms[a].time;
+		//Serial.println(alarm_time[a]);
 	}
 }
 
