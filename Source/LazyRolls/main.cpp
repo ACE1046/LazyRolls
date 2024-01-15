@@ -2770,7 +2770,7 @@ void WritePosition(int pos)
 	LoadCurrentPosition(&flash_pos);
 	if (flash_pos.pos == pos) return;
 	File f = SPIFFS.open(POS_FILE, "w");
-	if (f) 
+	if (f)
 	{
 		flash_pos.flash_writes++;
 		flash_pos.pos = pos;
@@ -3907,7 +3907,7 @@ void HTTP_handleSettings(void)
 		out += HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
 	}
 	out += HTML_addCheckbox(L("Save position to flash", "Сохранять положение во флэш-память"), "save_pos", ini.save_pos_to_flash);
-	out += HTML_hint(FLF("(not recommended, may lead to increased flash wearing and a shortened device lifespan)", 
+	out += HTML_hint(FLF("(not recommended, may lead to increased flash wearing and a shortened device lifespan)",
 		"(не рекомендуется, может привести к износу памяти и сократить срок службы)"));
 
 	out += HTML_section(FLF("Endstop", "Концевик"));
