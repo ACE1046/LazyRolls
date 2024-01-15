@@ -110,6 +110,7 @@ uint16_t def_step_delay_mks = 1500;
 #define CLASS_FILE "/styles.css"
 #define JS_FILE "/scripts.js"
 #define INI_FILE "/settings.ini"
+#define POS_FILE "/position.dat"
 #define PIN_SWITCH 14
 #define PIN_A 5
 #define PIN_B 4
@@ -219,6 +220,12 @@ typedef struct {
 	uint16_t reserved;
 } ip_slave_type;
 
+typedef struct {
+	int pos;
+	uint32_t flash_writes;
+} flash_pos_type;
+#define UNKNOWN_POS (INT_MIN)
+
 #define MAX_SLAVE 5
 #define MAX_IP_SLAVE 10
 #define MAX_PRESETS 5
@@ -280,6 +287,7 @@ struct {
 	uint8_t ping_act; // action on no ping response
 	ip4_addr ping_ip; // ip address for pinger
 	ip_slave_type ip_slaves[MAX_IP_SLAVE]; // ip slaves list
+	uint8_t save_pos_to_flash; // save current position
 } ini;
 
 // language functions
@@ -323,6 +331,7 @@ uint32_t getTimeUTC();
 String MakeNode(const __FlashStringHelper *name, String val);
 void CalcAlarmTimes();
 void AdjustTimerInterval(int step_delay_mks = 0); // 0 - default, -1 - 2nd speed
+void WritePosition(int pos);
 
 //===================== Event Logger ===================================
 
@@ -1156,6 +1165,12 @@ uint8_t speed2(int step_delay)
 	if (step_delay == -1) return 0x80; else return 0;
 }
 
+void RollTo(int val)
+{
+	if (ini.save_pos_to_flash) WritePosition(UNKNOWN_POS);
+	roll_to = val;
+}
+
 void ToPercent(uint8_t pos, uint8_t address, int step_delay)
 {
 	if ((pos<0) || (pos>100)) return;
@@ -1168,9 +1183,9 @@ void ToPercent(uint8_t pos, uint8_t address, int step_delay)
 		if (position<0) position=0;
 		AdjustTimerInterval(step_delay);
 		if (pos == 0)
-			roll_to=0-ini.up_safe_limit; // up to 0 and beyond (a little)
+			RollTo(0 - ini.up_safe_limit); // up to 0 and beyond (a little)
 		else
-			roll_to=ini.full_length * pos / 100;
+			RollTo(ini.full_length * pos / 100);
 	}
 }
 
@@ -1182,7 +1197,7 @@ void ToPosition(int pos, uint8_t address, int step_delay)
 		if (pos<0 || pos>ini.full_length) return;
 		if (position<0) position=0;
 		AdjustTimerInterval(step_delay);
-		roll_to=pos;
+		RollTo(pos);
 	}
 }
 
@@ -1194,7 +1209,7 @@ void ToPreset(uint8_t preset, uint8_t address, int step_delay)
 		if (preset==0 || preset > MAX_PRESETS) return;
 		if (position<0) position=0;
 		AdjustTimerInterval(step_delay);
-		roll_to=ini.preset[preset-1];
+		RollTo(ini.preset[preset-1]);
 	}
 }
 
@@ -2735,6 +2750,50 @@ void init_SPIFFS()
 #endif
 }
 
+void LoadCurrentPosition(flash_pos_type *flash_pos)
+{
+	flash_pos->flash_writes = 0;
+	flash_pos->pos = UNKNOWN_POS;
+
+	File f = SPIFFS.open(POS_FILE, "r");
+	if (f)
+	{
+		f.read((uint8_t *)flash_pos, sizeof(flash_pos_type));
+		f.close();
+	}
+}
+
+void WritePosition(int pos)
+{
+	flash_pos_type flash_pos;
+
+	LoadCurrentPosition(&flash_pos);
+	if (flash_pos.pos == pos) return;
+	File f = SPIFFS.open(POS_FILE, "w");
+	if (f) 
+	{
+		flash_pos.flash_writes++;
+		flash_pos.pos = pos;
+		f.write((uint8_t *)&flash_pos, sizeof(flash_pos_type));
+		f.close();
+		Serial.println(F("pos file written"));
+	}
+	else
+		Serial.println(F("pos file write error"));
+}
+
+void SaveCurrentPosition()
+{
+	static int last_saved = UNKNOWN_POS;
+
+	if (!ini.save_pos_to_flash) return;
+	if (roll_to != position) return;
+	if (position == last_saved) return;
+
+	WritePosition(position);
+	last_saved = position;
+}
+
 void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
@@ -3002,6 +3061,15 @@ void setup()
 	setup_MQTT();
 
 	ResetZero();
+	if (ini.save_pos_to_flash)
+	{
+		flash_pos_type flash_pos;
+		LoadCurrentPosition(&flash_pos);
+		if (flash_pos.pos != UNKNOWN_POS)
+			roll_to = position = flash_pos.pos;
+		else
+			roll_to = position = ini.full_length; // if position can't be loaded make it at bottom. This is for endstopless operation.
+	}
 
 	FillStepsTable();
 
@@ -3618,6 +3686,7 @@ void HTTP_saveSettings()
 	}
 	SaveString(F("ap_pswd"), ini.ap_pswd, sizeof(ini.ap_pswd));
 	ini.ping_enabled = httpServer.hasArg("ping_en");
+	ini.save_pos_to_flash = httpServer.hasArg("save_pos");
 	SaveIP(IP_ID("ping_ip"),  &ini.ping_ip);
 	SaveInt(F("ping_act"), &ini.ping_act);
 
@@ -3837,6 +3906,9 @@ void HTTP_handleSettings(void)
 	{
 		out += HTML_steps(SL("Preset", "Позиция")+" "+String(i+1)+":", "preset"+String(i), ini.preset[i], "preset"+String(i));
 	}
+	out += HTML_addCheckbox(L("Save position to flash", "Сохранять положение во флэш-память"), "save_pos", ini.save_pos_to_flash);
+	out += HTML_hint(FLF("(not recommended, may lead to increased flash wearing and a shortened device lifespan)", 
+		"(не рекомендуется, может привести к износу памяти и сократить срок службы)"));
 
 	out += HTML_section(FLF("Endstop", "Концевик"));
 	out += F("<tr><td>");
@@ -4291,7 +4363,7 @@ void HTTP_handleSet(void)
 	{
 		int pos=atoi(httpServer.arg("stepsovr").c_str());
 		if (position<0) position=0;
-		roll_to=pos;
+		RollTo(pos);
 		Return200();
 	}
 	else if (httpServer.hasArg("preset"))
@@ -4678,6 +4750,7 @@ void Scheduler()
 	t=t/60; // in minutes
 
 	if (t == last_t) return; // this minute already handled
+
 	last_t=t;
 	if (last_dow != dayofweek)
 	{
@@ -4783,6 +4856,7 @@ void loop(void)
 	if (SLAVE) ProcessUART();
 	MotorFailsafe();
 	ProcessPing();
+	SaveCurrentPosition();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
