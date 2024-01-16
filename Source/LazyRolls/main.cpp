@@ -14,7 +14,7 @@ http://imlazy.ru/rolls/
 27.01.2022 v0.12
 09.12.2022 v0.13
 20.04.2023 v0.14
-28.12.2023 v0.15
+16.01.2024 v0.15
 
 */
 #include <ESP8266WiFi.h>
@@ -31,9 +31,9 @@ extern "C" {
 #include <ping.h>
 }
 
-#define VERSION "0.15 beta"
+#define VERSION "0.15"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
@@ -193,8 +193,8 @@ ESP8266HTTPUpdateServer httpUpdater;
 WiFiClient espClient;
 
 typedef struct {
-	uint16_t tmin; // minimal time to sun option
 	uint16_t time;
+	uint16_t tmin; // minimal time to sun option
 	uint8_t percent_open; // 0 - open, 100 - close, 101-105 - presets
 	uint8_t day_of_week; // LSB - monday
 	uint8_t flags;
