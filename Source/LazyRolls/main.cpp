@@ -31,7 +31,7 @@ extern "C" {
 #include <ping.h>
 }
 
-#define VERSION "0.15"
+#define VERSION "0.15.1"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -3379,7 +3379,7 @@ void HTTP_handleRoot(void)
 		out += FLF("<p style=\"color:red;\">Incorrect memory size selected. Please use correct firmware or build with at least 16K FS</p>\n",
 			"<p style=\"color:red;\">Неверный размер памяти. Используйте подходящую прошивку или откомпилируйте с минимумом 16K FS</p>\n");
 	out += F("<table>");
-	if (MASTER)
+	if (MASTER || IsIPMaster())
 	{
 		out += F("<tr><td colspan=\"2\"><ul class=\"addr\">");
 		for (int8_t i=-1; i<=MAX_SLAVE; i++)
@@ -3775,7 +3775,7 @@ String AddIPSlaves()
 		p2 = snprintf_P(buf2+p, sizeof(buf2)-p, PSTR("%d,%d"), ini.ip_slaves[i].ip4, ini.ip_slaves[i].num);
 		if (p2 > 0) p += p2;
 	}
-	snprintf_P(buf, sizeof(buf), PSTR("<script>self_ip='%s';SetIPSlaves([%s]);ShowIPSlaves();</script>\n"), WiFi.localIP().toString(), buf2);
+	snprintf_P(buf, sizeof(buf), PSTR("<script>self_ip='%s';SetIPSlaves([%s]);ShowIPSlaves();</script>\n"), WiFi.localIP().toString().c_str(), buf2);
 	return buf;
 
 }
