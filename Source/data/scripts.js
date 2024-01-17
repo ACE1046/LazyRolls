@@ -337,6 +337,10 @@ function MSChange()
 		ShowEl('tr_ips');
 	else
 		HideEl('tr_ips');
+	if (uart_master)
+		ShowEl('tr_sl_ips');
+	else
+		HideEl('tr_sl_ips');
 }
 
 function AddOption(sel_id, opts, selected)

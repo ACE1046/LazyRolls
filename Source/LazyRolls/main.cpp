@@ -31,7 +31,7 @@ extern "C" {
 #include <ping.h>
 }
 
-#define VERSION "0.15.1"
+#define VERSION "0.15.2"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -819,10 +819,11 @@ void ReportToMaster()
 	if (Master_IP == 0) return;
 
 	HTTPClient http;
-	char url[50];
+	char url[70];
 
 	int httpResponseCode;
-	snprintf_P(url, sizeof(url), PSTR("http://10.0.2.%d/set?slave_ip=%d"), Master_IP, WiFi.localIP()[3]);
+	IPAddress ip = WiFi.localIP();
+	snprintf_P(url, sizeof(url), PSTR("http://%d.%d.%d.%d/set?slave_ip=%d"), ip[0], ip[1], ip[2], Master_IP, WiFi.localIP()[3]);
 	for (int r=0; r<WIFI_SLAVE_ATTEMPTS; r++)
 	{
 		http.setTimeout(1000);
@@ -985,15 +986,16 @@ void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 	// IP slaves
 	if (SLAVE || !WiFi_connected) return;
 	HTTPClient http;
-	char url[50];
+	char url[70];
 
+	IPAddress ip = WiFi.localIP();
 	for (int i=0; i<MAX_IP_SLAVE; i++)
 	{
-		uint8_t ip = ini.ip_slaves[i].ip4;
-		if (ip !=0 && (address == ADDR_ALL || ini.ip_slaves[i].num + 1 == address))
+		uint8_t ip4 = ini.ip_slaves[i].ip4;
+		if (ip4 !=0 && (address == ADDR_ALL || ini.ip_slaves[i].num + 1 == address))
 		{
 			int httpResponseCode;
-			snprintf_P(url, sizeof(url), PSTR("http://10.0.2.%d/set?slave=%d&val=%d"), ip, cmd, val);
+			snprintf_P(url, sizeof(url), PSTR("http://%d.%d.%d.%d/set?slave=%d&val=%d"), ip[0], ip[1], ip[2], ip4, cmd, val);
 			for (int r=0; r<WIFI_SLAVE_ATTEMPTS; r++)
 			{
 				http.setTimeout(1000);
@@ -1002,7 +1004,7 @@ void IfMasterSendUART(uint8_t cmd, uint8_t address, uint32_t val=0)
 				if (httpResponseCode == 200) break; // OK
 			}
 			if (httpResponseCode != 200)
-				elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + ip);
+				elog.Add(EI_IP_Slave_Err, EL_WARN, httpResponseCode * 256 + ip4);
 		}
 	}
 	http.end();
@@ -4015,7 +4017,7 @@ void HTTP_handleSettings(void)
 
 	out += HTML_section(FLF("Master/slave", "Главный/ведомый"));
 	out += F("<tr><td>");
-	out += FLF("Wired:", "Провод:");
+	out += FLF("Wired:", "По проводу:");
 	out += F("</td><td><select id=\"slave\" name=\"slave\" onchange=\"PinChange();MSChange();\">\n");
 	out += F("</select></td></tr>\n");
 	out += AddOptions(F("slave"), F("mss"),
