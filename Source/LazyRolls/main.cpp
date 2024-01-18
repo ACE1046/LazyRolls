@@ -31,7 +31,7 @@ extern "C" {
 #include <ping.h>
 }
 
-#define VERSION "0.15.2"
+#define VERSION "0.15.3"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
 #define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -1812,9 +1812,10 @@ int8_t IRAM_ATTR getEncoder()
 #define MAX_SPEED 1000
 void IRAM_ATTR timer1Isr()
 {
-	static uint8_t step=0;
-	static uint16_t speed=0;
-	static uint16_t skip=0;
+	static uint8_t step = 0;
+	static uint16_t speed = 0;
+	static uint16_t skip = 0;
+	static int8_t last_dir = 0;
 	bool dir_up;
 
 	if (pwm_LED)
@@ -1826,14 +1827,7 @@ void IRAM_ATTR timer1Isr()
 
 	if (ini.pinout == PINOUT_SD) GPOC = 1 << PIN_ST; // Finish previous step
 
-	if (skip>0)
-	{
-		// this skip used to reduce total time in ISR.
-		skip--;
-		return;
-	}
-
-	if (position==roll_to)
+	if (((skip & 0x0F) == 0) && (position == roll_to))
 	{
 		MotorOff();
 		speed = 0;
@@ -1847,7 +1841,24 @@ void IRAM_ATTR timer1Isr()
 		return; // stopped, do nothing
 	}
 
+	if (skip > 0)
+	{
+		// this skip used to reduce total time in ISR.
+		skip--;
+		return;
+	}
+
 	dir_up=(roll_to < position); // up - true
+
+	bool b = (dir_up && (last_dir==DIR_DN)) || (!dir_up && (last_dir==DIR_UP));
+	if (dir_up) last_dir = DIR_UP; else last_dir = DIR_DN;
+	if (b)
+	{ // reverse
+		MotorOff();
+		speed = 0;
+		skip = 1000; // some delay before reverse
+		return;
+	}
 
 	if (position==0 && !dir_up) switch_ignore_steps=ini.switch_ignore_steps;
 	if (dir_up) switch_ignore_steps=0;
@@ -1995,7 +2006,7 @@ void AdjustTimerInterval(int step_delay_mks /*= 0*/)
 	}
 	else
 	{
-		ticks_per_step = (uint32_t)step_delay_mks / 25;
+		ticks_per_step = (uint32_t)step_delay_mks / 25; // 25 mks per tick
 		if (ticks_per_step < 4) ticks_per_step = 4; // at least 4 timer ticks per step
 		if (ticks_per_step > 40) ticks_per_step = 40; // at max 40
 		timer1_write((uint32_t)step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step);
@@ -2161,7 +2172,7 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, uint8_t 
 	uint8_t open;
 	bool slave[1 + MAX_SLAVE] = { 0, 0, 0, 0, 0, 0 }; // master([0]) and slaves([1 - MAX_SLAVE])
 
-	if (MASTER)
+	if (MASTER || IsIPMaster())
 	{
 		if (address == ADDR_DEFAULT) // from settings
 		{
@@ -3679,7 +3690,13 @@ void HTTP_saveSettings()
 	SaveIntAndBit(F("btn1_long"), F("btn1_l_spd"), &ini.btn1_long);
 	SaveIntAndBit(F("btn2_click"), F("btn2_c_spd"), &ini.btn2_click);
 	SaveIntAndBit(F("btn2_long"), F("btn2_l_spd"), &ini.btn2_long);
-	if (MASTER)
+	for (int i=0; i < MAX_IP_SLAVE; i++)
+	{
+		SaveIntA(F("sip"), i, &ini.ip_slaves[i].ip4);
+		SaveIntA(F("snm"), i, &ini.ip_slaves[i].num);
+	}
+
+	if (MASTER || IsIPMaster())
 	{
 		SaveMasterSlave(F("b1c_"), &ini.btn1_c_addr);
 		SaveMasterSlave(F("b1l_"), &ini.btn1_l_addr);
@@ -3691,12 +3708,6 @@ void HTTP_saveSettings()
 	ini.save_pos_to_flash = httpServer.hasArg("save_pos");
 	SaveIP(IP_ID("ping_ip"),  &ini.ping_ip);
 	SaveInt(F("ping_act"), &ini.ping_act);
-
-	for (int i=0; i < MAX_IP_SLAVE; i++)
-	{
-		SaveIntA(F("sip"), i, &ini.ip_slaves[i].ip4);
-		SaveIntA(F("snm"), i, &ini.ip_slaves[i].num);
-	}
 
 	led_mode=ini.led_mode;
 	led_level=ini.led_level;
@@ -4152,7 +4163,7 @@ void HTTP_handleAlarms(void)
 			}
 			ini.alarms[a].day_of_week = b;
 
-			if (MASTER) SaveMasterSlave("ms"+n+"_", &(ini.alarms[a].m_s));
+			if (MASTER || IsIPMaster()) SaveMasterSlave("ms"+n+"_", &(ini.alarms[a].m_s));
 		}
 
 		SaveSettings(&ini, sizeof(ini));
