@@ -4,6 +4,9 @@ Automatic motorized roller blinds project.
 
 Моторизированный привод для рулонных штор. Управление по Wi-Fi. Питание внешнее. Возможна интеграция в системы умного дома.
 
+[![GitHub version](https://img.shields.io/github/release/ACE1046/LazyRolls.svg)](https://github.com/ACE1046/LazyRolls/releases/latest)
+[![GitHub download](https://img.shields.io/github/downloads/ACE1046/LazyRolls/total.svg)](https://github.com/ACE1046/LazyRolls/releases/latest)
+
 ### Ссылки
 Описание проекта: [https://mysku.club/blog/diy/62110.html](https://mysku.club/blog/diy/62110.html)\
 Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)\
