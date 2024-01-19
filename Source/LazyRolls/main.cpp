@@ -34,7 +34,7 @@ extern "C" {
 #define VERSION "0.15.3"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 0 // Firmware update from Arduino IDE
-#define MDNSC 0 // mDNS responder. Required for ArduinoIDE web port discovery
+#define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
@@ -4850,6 +4850,13 @@ void MotorFailsafe()
 	}
 }
 
+void ProcessMDNS()
+{
+#if MDNSC
+	MDNS.update();
+#endif
+}
+
 void loop(void)
 {
 	ProcessWiFi();
@@ -4870,6 +4877,7 @@ void loop(void)
 	MotorFailsafe();
 	ProcessPing();
 	SaveCurrentPosition();
+	ProcessMDNS();
 
 	if (millis() - last_network_time > 10000)
 		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
