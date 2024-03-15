@@ -1,7 +1,8 @@
-﻿R1-R6, R8 - 10 kOm (0805 - "103")
-R7 - 150 kOm (0805 - "154")
-C1, C2 - 1uF (0805)
-C3 - 100nF (0805)
+﻿R1-R6, R8 - 10kOhm (0805 - "103")
+R7 - 150kOhm (0805 - "154") (optional, for voltage measurement)
+C1 - 1uF (0805) or more, 10-16V or more
+C2 - 1uF (0805) or more, 6V or more
+C3 - 0.1uF (100nF) (0805)
 U1 - AMS1117-3.3 / LD1117-3.3 (SOT-223)
 U2 - ESP07
 U3 - ULN2003ADR (SO-16)
