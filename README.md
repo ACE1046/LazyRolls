@@ -17,8 +17,8 @@ Automatic motorized roller blinds project.
 [Hubitat Elevation](https://github.com/yix/Hubitat/blob/master/drivers/LazyRolls.groovy) (Автор [yix](https://github.com/yix))\
 Home Assistant (встроенная поддержка через MQTT Discovery с версии 0.09)\
 [Homebridge](https://github.com/vitva/Lazyroll-settings-for-homebridge) (Автор Vitva)\
-[Управление с пульта ИК / RF433](https://mysku.club/blog/diy/87912.html) (Автор SamoS)
-[Карточка управления шторами для HA](https://github.com/samoswall/pic-shutter-card) (Автор SamoS)
+[Управление с пульта ИК / RF433](https://mysku.club/blog/diy/87912.html) (Автор SamoS)\
+[Карточка управления шторами для HA](https://github.com/samoswall/pic-shutter-card) (Автор SamoS)\
 [Android приложение для управления шторами](https://github.com/samoswall/LazyRoll-Android-App) (Автор SamoS)
 
 ### Структура директорий
