@@ -332,6 +332,7 @@ String MakeNode(const __FlashStringHelper *name, String val);
 void CalcAlarmTimes();
 void AdjustTimerInterval(int step_delay_mks = 0); // 0 - default, -1 - 2nd speed
 void WritePosition(int pos);
+void SaveCurrentPosition();
 
 //===================== Event Logger ===================================
 
@@ -1327,6 +1328,9 @@ void ProcessPing()
 			if (ini.ping_act == 2) // reboot
 			{
 				Serial.println("Ping failed. Rebooting");
+				while (position != roll_to) delay(10); // wait until stop
+				delay(10);
+				SaveCurrentPosition();
 				ESP.reset();
 			}
 		}
@@ -2824,7 +2828,7 @@ void ValidateSettings()
 		if (ini.step_delay_mks2>= 65000) ini.step_delay_mks2= def_step_delay_mks;
 	}
 	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
-	if (ini.full_length<300 || ini.full_length>999999) ini.full_length=10000;
+	if (ini.full_length<5 || ini.full_length>999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
 	if (ini.switch2_reversed>1) ini.switch2_reversed=1;
 	if (ini.switch_ignore_steps<5) ini.switch_ignore_steps=DEFAULT_SWITCH_IGNORE_STEPS;
