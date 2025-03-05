@@ -3,7 +3,13 @@
 // (C) 2018 ACE
 
 #include <string.h>
-#include "FS.h"
+#if defined(ESP8266)
+  #include <FS.h>
+#else
+  #include <LittleFS.h>
+  #define FORMAT_LITTLEFS_IF_FAILED true
+  #define SPIFFS LittleFS
+#endif
 
 #define INIFILE "/settings.ini"
 #define ZEROCRC 0xAC

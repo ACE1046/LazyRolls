@@ -17,23 +17,46 @@ http://imlazy.ru/rolls/
 16.01.2024 v0.15
 
 */
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
-#include <ESP8266HTTPClient.h>
-#define FS_NO_GLOBALS 1
-#include <FS.h>
+#ifdef ESP8266
+	#include <ESP8266WiFi.h>
+	#include <ESP8266WebServer.h>
+	#include <ESP8266HTTPUpdateServer.h>
+	#include <ESP8266HTTPClient.h>
+	#include <ping.h>
+	#include <FS.h>
+#else
+	#include <WiFi.h>
+	#include <WebServer.h>
+	#include <HTTPUpdateServer.h>
+	#include <HTTPClient.h>
+	#include "ping32.h"
+	#include "FS.h"
+	#include <LittleFS.h>
+//	#include <rom/rtc.h> // for reset reason
+	#if CONFIG_IDF_TARGET_ESP32C3
+	#include "esp32c3/rom/spi_flash.h"
+	#endif
+	//#include "driver/gpio.h"
+	//gpio_get_level(gpio_num_t gpio_num);
+	#include "hal/gpio_hal.h"
+	#define SPIFFS LittleFS
+	#define GPOS GPIO.out_w1ts.val
+	#define GPOC GPIO.out_w1tc.val
+	#define GPI GPIO.in.val
+	#include <esp_task_wdt.h>
+	#define ESP32_WDT_TIMEOUT 10000  // WDT timeout
+#endif
 #include <WiFiUdp.h>
 #include <DNSServer.h>
 #include "settings.h"
 extern "C" {
-#include <lwip/etharp.h> // gratuitous arp
-#include <ping.h>
+#include "lwip/etharp.h" // gratuitous arp
+#include "lwip/tcpip.h" // gratuitous arp
 }
 
-#define VERSION "0.15.3"
+#define VERSION "0.16 beta"
 #define MQTT 1 // MQTT & HA functionality
-#define ARDUINO_OTA 0 // Firmware update from Arduino IDE
+#define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
@@ -58,7 +81,11 @@ extern "C" {
 #include "spiff_files.h"
 
 #if MDNSC
-	#include <ESP8266mDNS.h>
+	#ifdef ESP8266
+		#include <ESP8266mDNS.h>
+	#else
+		#include <ESPmDNS.h>
+	#endif
 #endif
 
 #if MQTT
@@ -71,7 +98,7 @@ extern "C" {
 #endif
 
 #if RF
-	// For MQTT support: Sketch - Include Library - Manage Libraries - rc-switch by Suat Ozgur - Install
+	// For RF support: Sketch - Include Library - Manage Libraries - rc-switch by Suat Ozgur - Install
 	#include "RCSwitch.h"
 	RCSwitch mySwitch = RCSwitch();
 #endif
@@ -111,6 +138,7 @@ uint16_t def_step_delay_mks = 1500;
 #define JS_FILE "/scripts.js"
 #define INI_FILE "/settings.ini"
 #define POS_FILE "/position.dat"
+#ifdef ESP8266
 #define PIN_SWITCH 14
 #define PIN_A 5
 #define PIN_B 4
@@ -121,6 +149,19 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_DR 12
 #define PIN_LED 2
 #define PIN_PWM 15
+#else
+#define PIN_SWITCH 7
+#define PIN_A 4
+#define PIN_B 3
+#define PIN_C 6
+#define PIN_D 5
+#define PIN_EN 3
+#define PIN_ST 6
+#define PIN_DR 5
+#define PIN_LED 8
+#define PIN_PWM 4 // ?
+#define PIN_ADC 0 // voltage
+#endif
 #define PIN_ENC_A PIN_C
 #define PIN_ENC_B PIN_D
 #define DIR_UP (-1)
@@ -147,7 +188,7 @@ uint16_t def_step_delay_mks = 1500;
 #define ADDR_SELF_ONLY 0
 #define ADDR_ALL 255
 #define ADDR_DEFAULT 254
-#define MQTT_INFO_SECONDS 5*60 // Send mqtt info (rssi, uptime, etc) every N seconds
+#define MQTT_INFO_SECONDS 1*60 // Send mqtt info (rssi, uptime, etc) every N seconds
 
 const int Languages = 2;
 const char ru_ru[] PROGMEM = "Русский";
@@ -188,8 +229,13 @@ uint16_t ticks_per_step = 4; // timer ticks per motor step, used for soft start
 uint8_t Master_IP = 0; // Master's IP, last byte. Slaves report to it after wakeup
 uint8_t Slaves_IP[6]; // IPs of slaves after they woke up
 
-ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
+#ifdef ESP8266
+	ESP8266WebServer httpServer(80);
+	ESP8266HTTPUpdateServer httpUpdater;
+#else
+	WebServer httpServer(80);
+	HTTPUpdateServer httpUpdater;
+#endif	
 WiFiClient espClient;
 
 typedef struct {
@@ -235,12 +281,12 @@ struct {
 	char ssid[32+1];
 	char password[32+1];
 	char ntpserver[32+1];
-	int lang;
+	int32_t lang;
 	uint8_t pinout; // index in "steps" array, according to motor wiring
 	bool reversed; // up-down reverse
 	uint16_t step_delay_mks; // delay (mks) for each step of motor
-	int timezone; // timezone in minutes relative to UTC
-	int full_length; // steps from open to close
+	int32_t timezone; // timezone in minutes relative to UTC
+	int32_t full_length; // steps from open to close
 	uint32_t spiffs_time; // time of files in spiffs for version checking
 	alarm_type alarms[ALARMS];
 	uint8_t switch_reversed; // reverse switch logic. 0 - NC, 1 - NO
@@ -261,7 +307,7 @@ struct {
 	uint8_t sw_at_bottom; // 0 - switch at opened position, 1 - switch at closed position
 	uint8_t mqtt_invert; // mqtt percents inverted, 0% = closed
 	char mqtt_topic_alive[127+1]; // publish availability topic (Birth & LWT)
-	int up_safe_limit; // make extra rotations up if not hit switch
+	int32_t up_safe_limit; // make extra rotations up if not hit switch
 	uint8_t btn1_pin; // hardware button pin selection
 	uint8_t btn_mode; // auto/mqtt report (reserved)
 	uint8_t slave; // master/slave mode
@@ -309,9 +355,44 @@ String SL(String s1, String s2)
 	return (ini.lang == 0) ? s1 : s2;
 }
 
+uint32_t ESP_getChipId()
+{
+	uint32_t id;
+#ifdef ESP8266	
+	id = ESP.getChipId();
+#else
+	id = ESP.getEfuseMac() >> 24; // Get MAC (in reversed format), cut last 3 bytes
+	id = (id >> 16) | (id & 0xFF00) | ((id & 0xFF) << 16); // reverse it
+#endif
+	return id;
+}
+
+void ESP_setSleepMode(bool enable)
+{
+#ifdef ESP8266
+	WiFi.setSleepMode(enable ? WIFI_MODEM_SLEEP : WIFI_NONE_SLEEP);
+#else
+	WiFi.setSleep(enable);
+#endif
+}
+
+static uint32_t ESP_getFlashChipId()
+{
+#ifdef ESP8266
+	return ESP.getFlashChipId();
+#else
+	uint32_t id = 0;
+#if CONFIG_IDF_TARGET_ESP32C3
+	id = g_rom_flashchip.device_id;
+#endif
+	id = ((id & 0xff) << 16) | ((id >> 16) & 0xff) | (id & 0xff00);
+	return id;
+#endif
+}
+
 void NetworkActivity(void)
 {
-	WiFi.setSleepMode(WIFI_NONE_SLEEP);
+	ESP_setSleepMode(false);
 	last_network_time = millis();
 }
 
@@ -644,7 +725,11 @@ void SyncNTPTime()
 			UpdateMQTTInfo();
 		}
 	}
-	UDP.flush();
+#ifdef ESP8266
+	UDP.flush(); // update?
+#else
+	UDP.clear();
+#endif
 }
 
 uint32_t getTime()
@@ -1030,8 +1115,16 @@ bool IsIPMaster()
 #define MOTOR_WITH_PWM (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
 #define MOTOR_WITH_ENC (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
 
+#ifdef ESP32
+hw_timer_t *Timer0_Cfg = NULL;
+hw_timer_t *Timer1_Cfg = NULL;
+bool Timer0_Started = 0;
+bool Timer1_Started = 0;
+#endif 
+
 void IRAM_ATTR EnablePWM(bool en)
 {
+#ifdef ESP8266	
 	volatile static bool pwm_active = 0;
 	if (en)
 	{
@@ -1047,6 +1140,18 @@ void IRAM_ATTR EnablePWM(bool en)
 		pwm_active = 0;
 		ETS_CCOMPARE0_DISABLE();
 	}
+#else
+	if (en && !Timer0_Started)
+	{
+    	timerStart(Timer0_Cfg);
+		Timer0_Started = 1;
+	}
+	if (!en && Timer0_Started)
+	{
+    	timerStop(Timer0_Cfg);
+		Timer0_Started = 0;
+	}
+#endif
 }
 
 const uint8_t microstep[8][4]={
@@ -1144,13 +1249,21 @@ uint8_t IRAM_ATTR pin2hw_pin(uint8_t pin)
 bool IRAM_ATTR IsSwitchPressed()
 {
 	// return GPIP(PIN_SWITCH) ^^ ini.switch_reversed;
+#ifdef ESP8266	
 	return (((GPI >> ((PIN_SWITCH) & 0xF)) & 1) != ini.switch_reversed);
+#else
+	return (digitalRead(PIN_SWITCH) != ini.switch_reversed);
+#endif
 }
 
 bool IRAM_ATTR IsSwitch2Pressed()
 {
 	if (!ini.end2_pin) return 0;
+#ifdef ESP8266	
 	return (((GPI >> ((pin2hw_pin(ini.end2_pin)) & 0xF)) & 1) != ini.switch2_reversed);
+#else
+	return (digitalRead(pin2hw_pin(ini.end2_pin)) != ini.switch2_reversed);
+#endif
 }
 
 int Position2Percents(int pos)
@@ -1240,6 +1353,7 @@ void Stop(uint8_t address = ADDR_ALL)
 
 uint32_t GetVoltage()
 {
+#ifdef ESP8266
 	int v, i, min;
 
 	// We need to get a minimal value from a few samples with small delay for better accuracy
@@ -1252,6 +1366,13 @@ uint32_t GetVoltage()
 		if (v<min) min=v;
 	}
 	return min*121/8; // *1000*16/1024 mV, 150K:10K divider gives *125/8, but can be adjusted a little
+#else
+  #ifdef PIN_ADC
+	return analogReadMilliVolts(PIN_ADC) * 16; // 16-to-1 (150K:10K) voltage divider
+  #else
+    return 0;
+  #endif
+#endif
 }
 
 const char * GetVoltageStr()
@@ -1331,7 +1452,7 @@ void ProcessPing()
 				while (position != roll_to) delay(10); // wait until stop
 				delay(10);
 				SaveCurrentPosition();
-				ESP.reset();
+				ESP.restart();
 			}
 		}
 		ping_reply = 0;
@@ -1438,7 +1559,7 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "@", 1) == 0) { p=strtol(str+1, NULL, 10); ToPreset(p, address, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_MQTT + (p<<8)); }
 	else if (strncmp(str, "report", 6) == 0) { last_mqtt = 0; last_mqtt_info = 0; }
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
-	else if (strncmp(str, "reboot", 6) == 0) { ESP.reset(); }
+	else if (strncmp(str, "reboot", 6) == 0) { ESP.restart(); }
 	else if (strncmp(str, "zero", 4) == 0) { ResetZero(); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
 }
 
@@ -1644,7 +1765,7 @@ void MQTT_discover()
 {
 	char id[17];
 
-	snprintf_P(id, sizeof(id), PSTR("lazyroll%08X"), ESP.getChipId());
+	snprintf_P(id, sizeof(id), PSTR("lazyroll%08X"), ESP_getChipId());
 	MQTT_discover_device(id);
 
 	// Additional HA sensors
@@ -1814,7 +1935,11 @@ int8_t IRAM_ATTR getEncoder()
 }
 
 #define MAX_SPEED 1000
+#ifdef ESP8266
 void IRAM_ATTR timer1Isr()
+#else
+void ARDUINO_ISR_ATTR timer1Isr()
+#endif
 {
 	static uint8_t step = 0;
 	static uint16_t speed = 0;
@@ -2004,17 +2129,23 @@ void AdjustTimerInterval(int step_delay_mks /*= 0*/)
 	if (step_delay_mks == 0) step_delay_mks = ini.step_delay_mks;
 	if (step_delay_mks == SPEED2) step_delay_mks = ini.step_delay_mks2;
 
+	uint32_t interval;
 	if (MOTOR_TYPE_DC)
 	{ // Motor without feedback. Step = millisecond
-		timer1_write((uint32_t)50*TIMER1_TICKS_PER_US); // 20 kHz
+		interval = 50*TIMER1_TICKS_PER_US; // 20 kHz
 	}
 	else
 	{
 		ticks_per_step = (uint32_t)step_delay_mks / 25; // 25 mks per tick
 		if (ticks_per_step < 4) ticks_per_step = 4; // at least 4 timer ticks per step
 		if (ticks_per_step > 40) ticks_per_step = 40; // at max 40
-		timer1_write((uint32_t)step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step);
+		interval = step_delay_mks * TIMER1_TICKS_PER_US / ticks_per_step;
 	}
+#ifdef ESP8266
+	timer1_write(interval);
+#else
+	timerAlarm(Timer1_Cfg, interval, true, 0);
+#endif
 
 	if (MOTOR_WITH_PWM)
 	{
@@ -2035,24 +2166,37 @@ void AdjustTimerInterval(int step_delay_mks /*= 0*/)
 		pwm_phase_low_ticks = 0;
 }
 
+#ifdef ESP8266
 void IRAM_ATTR timer0Isr(void *para, void *frame)
+#else
+void ARDUINO_ISR_ATTR timer0Isr()
+#endif
 {
 	static uint8_t pwm_phase = 0;
+#ifdef ESP8266
 	(void) para;
 	(void) frame;
+#endif
 	pwm_phase = !pwm_phase;
+	uint32_t interval;
 	if (pwm_phase)
 	{
 		GPOC = 1 << PIN_PWM;
-		timer0_write(ESP.getCycleCount() + pwm_phase_low_ticks);
+		interval = ESP.getCycleCount() + pwm_phase_low_ticks;
 	} else {
 		GPOS = 1 << PIN_PWM;
-		timer0_write(ESP.getCycleCount() + pwm_phase_high_ticks);
+		interval = ESP.getCycleCount() + pwm_phase_high_ticks;
 	}
+#ifdef ESP8266
+	timer0_write(interval);
+#else
+	timerWrite(Timer0_Cfg, interval);
+#endif
 }
 
 void SetupTimer()
 {
+#ifdef ESP8266
 	timer1_isr_init();
 	timer1_attachInterrupt(timer1Isr);
 	timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
@@ -2061,11 +2205,27 @@ void SetupTimer()
 	ETS_CCOMPARE0_INTR_ATTACH(timer0Isr, NULL);
 	EnablePWM(false);
 	interrupts();
+#else
+    Timer0_Cfg = timerBegin(5000000UL); // 5MHz, todoesp32
+    Timer1_Cfg = timerBegin(TIMER1_TICKS_PER_US * 1000000UL);
+    timerAttachInterrupt(Timer0_Cfg, &timer0Isr);
+    timerAttachInterrupt(Timer1_Cfg, &timer1Isr);
+	AdjustTimerInterval();
+	EnablePWM(false);
+    timerStart(Timer1_Cfg);
+	Timer1_Started = 1;
+#endif
 }
 
 void StopTimer()
 {
+#ifdef ESP8266
 	timer1_disable();
+#else
+	if (Timer1_Started)
+		timerStop(Timer1_Cfg);
+	Timer1_Started = 0;
+#endif
 }
 
 // ==================== button =======================================
@@ -2567,9 +2727,9 @@ void ProcessRF() {}
 void setup_IP()
 {
 	if (ini.ip.addr == 0) // IP address 0.0.0.0
-		WiFi.config(0, 0, 0, 0); // DHCP
+		WiFi.config((uint32_t)0, (uint32_t)0, (uint32_t)0, (uint32_t)0); // DHCP
 	else
-		WiFi.config(ini.ip, ini.gw, ini.mask, ini.dns); // Static
+		WiFi.config(ini.ip.addr, ini.gw.addr, ini.mask.addr, ini.dns.addr); // Static
 }
 
 void StartSoftAP()
@@ -2628,7 +2788,7 @@ void ProcessWiFi()
 			WiFi_connected = true;
 			WiFi_AP_disabled = true; // Disabling AP mode until next reboot
 			WiFi_attempts = 0;
-			WiFi.setSleepMode(WIFI_NONE_SLEEP);
+			ESP_setSleepMode(false);
 
 			Serial.println(WiFi.localIP());
 			ping_fails = 0;
@@ -2661,7 +2821,19 @@ void ProcessWiFi()
 	}
 }
 
-WiFiEventHandler disconnectedEventHandler, authModeChangedEventHandler;
+void WiFi_EventDisconnected()
+{
+	if (WiFi_connected)
+	{
+		WiFi_connected = false;
+		Serial.println(F("Disconnected"));
+		elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
+		//delay(500);
+		//WiFi_On();
+		if (WiFi_active) WiFi.begin(ini.ssid, ini.password);
+	}
+}
+
 void WiFi_On()
 {
 	if (SLAVE) Serial.println(F("Enabling WiFi"));
@@ -2676,19 +2848,15 @@ void WiFi_On()
 		WiFi.begin(ini.ssid, ini.password);
 	else
 		StartSoftAP();
-	disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)
-	{
-		if (WiFi_connected)
-		{
-			WiFi_connected = false;
-			Serial.println(F("Disconnected"));
-			elog.Add(EI_Wifi_Disconnect, EL_ERROR, 0);
-			//delay(500);
-			//WiFi_On();
-			if (WiFi_active) WiFi.begin(ini.ssid, ini.password);
-		}
-	});
-	authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
+#ifdef ESP8266
+	WiFiEventHandler disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)
+		{ WiFi_EventDisconnected(); });
+	WiFiEventHandler authModeChangedEventHandler = WiFi.onStationModeAuthModeChanged([](const WiFiEventStationModeAuthModeChanged & event) { Serial.println(F("Auth mode changed")); });
+#else
+    WiFiEventId_t eventID = WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+		{ WiFi_EventDisconnected(); },
+    	WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+#endif
 	ProcessWiFi();
 }
 
@@ -2696,8 +2864,11 @@ void WiFi_Off()
 {
 	WiFi_active = false;
 	WiFi_connected = false;
-	WiFi.mode(WIFI_OFF);
+#ifdef ESP8266
 	WiFi.forceSleepBegin();
+#else
+	WiFi.mode(WIFI_OFF);
+#endif
 }
 
 // ==================== initialization ===============================
@@ -2713,7 +2884,7 @@ void CreateFile(const char *filename, const uint8_t *data, int len)
 	if ((ini.spiffs_time!=0 && ini.spiffs_time != spiffs_time) ||
 		(!SPIFFS.exists(filename)))
 	{
-		File f = SPIFFS.open(filename, "w");
+		fs::File f = SPIFFS.open(filename, "w");
 		if (!f) {
 			Serial.println(F("file creation failed"));
 		} else
@@ -2772,7 +2943,7 @@ void LoadCurrentPosition(flash_pos_type *flash_pos)
 	flash_pos->flash_writes = 0;
 	flash_pos->pos = UNKNOWN_POS;
 
-	File f = SPIFFS.open(POS_FILE, "r");
+	fs::File f = SPIFFS.open(POS_FILE, "r");
 	if (f)
 	{
 		f.read((uint8_t *)flash_pos, sizeof(flash_pos_type));
@@ -2786,7 +2957,7 @@ void WritePosition(int pos)
 
 	LoadCurrentPosition(&flash_pos);
 	if (flash_pos.pos == pos) return;
-	File f = SPIFFS.open(POS_FILE, "w");
+	fs::File f = SPIFFS.open(POS_FILE, "w");
 	if (f)
 	{
 		flash_pos.flash_writes++;
@@ -2843,7 +3014,7 @@ void ValidateSettings()
 	if (ini.mqtt_topic_alive[0] == 0) strcpy_P(ini.mqtt_topic_alive, def_mqtt_topic_alive);
 	if (ini.mqtt_topic_aux[0] == 0) strcpy_P(ini.mqtt_topic_aux, def_mqtt_topic_aux);
 	if (ini.mqtt_topic_info[0] == 0) strcpy_P(ini.mqtt_topic_info, def_mqtt_topic_info);
-	if (ini.hostname[0] == 0) sprintf_P(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
+	if (ini.hostname[0] == 0) sprintf_P(ini.hostname , def_hostname, ESP_getChipId() & 0xFFFFFF);
 	if (ini.mqtt_state_type>3) ini.mqtt_state_type=0;
 	if (ini.led_mode >= LED_MODE_MAX) ini.led_mode=0;
 	if (ini.led_level >= LED_LEVEL_MAX) ini.led_level=0;
@@ -2874,7 +3045,7 @@ void setup_Settings(void)
 		elog.Add(EI_Settings_Loaded, EL_INFO, 0);
 	} else
 	{
-		sprintf_P(ini.hostname , def_hostname, ESP.getChipId() & 0xFFFFFF);
+		sprintf_P(ini.hostname , def_hostname, ESP_getChipId() & 0xFFFFFF);
 		strcpy_P(ini.ssid      , def_ssid);
 		strcpy_P(ini.password  , def_password);
 		strcpy_P(ini.ntpserver , def_ntpserver);
@@ -2914,40 +3085,20 @@ void setup_Settings(void)
 	led_level=ini.led_level;
 }
 
-void print_SPIFFS_info()
-{
-	FSInfo fs_info;
-	if (SPIFFS.info(fs_info))
-	{
-		Serial.printf_P(PSTR("SPIFFS totalBytes: %i\n"), fs_info.totalBytes);
-		Serial.printf_P(PSTR("SPIFFS usedBytes: %i\n"), fs_info.usedBytes);
-		Serial.printf_P(PSTR("SPIFFS blockSize: %i\n"), fs_info.blockSize);
-		Serial.printf_P(PSTR("SPIFFS pageSize: %i\n"), fs_info.pageSize);
-		Serial.printf_P(PSTR("SPIFFS maxOpenFiles: %i\n"), fs_info.maxOpenFiles);
-		Serial.printf_P(PSTR("SPIFFS maxPathLength: %i\n"), fs_info.maxPathLength);
-		Dir dir = SPIFFS.openDir("/");
-		while (dir.next()) {
-				Serial.print(dir.fileName());
-				Serial.print(" ");
-				File f = dir.openFile("r");
-				Serial.println(f.size());
-				f.close();
-		}
-	} else
-		Serial.println(F("SPIFFS.info() failed"));
-}
-
 void setup_SPIFFS()
 {
+#ifdef ESP8266
 	DEBUGV("Chip size %d\n", flashchip->chip_size);
 	DEBUGV("Real Chip size %d\n", ESP.getFlashChipRealSize());
 	flashchip->chip_size = ESP.getFlashChipRealSize();
 	if (SPIFFS.begin())
+#else
+	if (SPIFFS.begin(true)) // FORMAT_LITTLEFS_IF_FAILED
+#endif
 	{
-		Serial.println(F("SPIFFS Active"));
-		// print_SPIFFS_info();
+		Serial.println(F("File System Active"));
 	} else {
-		Serial.println(F("Unable to activate SPIFFS"));
+		Serial.println(F("Unable to activate File System"));
 	}
 }
 
@@ -3007,10 +3158,27 @@ void HTTP_uploadCfg();
 	//volatile uint32_t i;
 void setup()
 {
-	rst_info *resetInfo;
-
 	pinMode(PIN_LED, OUTPUT);
 	LED_On();
+
+#ifdef ESP32
+	#if CONFIG_IDF_TARGET_ESP32C3
+		#define CONFIG_FREERTOS_NUMBER_OF_CORES 1
+	#endif
+	// enable wathdog
+	esp_task_wdt_config_t twdt_config = {
+		.timeout_ms = ESP32_WDT_TIMEOUT,
+		.idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,  // Bitmask of all cores
+		.trigger_panic = true,
+	};
+	esp_task_wdt_deinit();            //wdt is enabled by default, so we need to deinit it first
+	esp_task_wdt_init(&twdt_config);  //enable panic so ESP32 restarts
+	esp_task_wdt_add(NULL);           //add current thread to WDT watch
+
+	// setup ADC, 2.5dB attenuation, 0 mV ~ 1050 mV measurement range for C3 and S2
+	analogSetAttenuation(ADC_2_5db);
+	//analogSetPinAttenuation(PIN_ADC, ADC_2_5db); // not working
+#endif
 
 	if (WiFi.getMode() != WIFI_OFF)
 	{
@@ -3023,8 +3191,13 @@ void setup()
 	Serial.println();
 	Serial.println(F("Booting..."));
 
+#ifdef ESP8266
+	rst_info *resetInfo;
 	resetInfo = ESP.getResetInfoPtr();
 	elog.Add(EI_Started, EL_INFO, resetInfo->reason);
+#else
+	elog.Add(EI_Started, EL_INFO, esp_reset_reason());
+#endif
 
 	setup_SPIFFS();
 	setup_Settings(); // setup and load settings.
@@ -3036,7 +3209,18 @@ void setup()
 	lastUARTping = millis();
 
 	LED_Off();
-	if (!SLAVE) WiFi_On(); else { WiFi.setSleepMode(WIFI_MODEM_SLEEP); WiFi.forceSleepBegin(); }
+	if (!SLAVE)
+		WiFi_On();
+	else
+	{
+		ESP_setSleepMode(true);
+#ifdef ESP8266
+		WiFi.forceSleepBegin();
+#else
+		WiFi.disconnect();
+		WiFi.mode(WIFI_OFF);
+#endif
+	}
 
 	httpUpdater.setup(&httpServer, update_path, update_username, update_password);
 	httpServer.on("/",         HTTP_handleRoot);
@@ -3260,8 +3444,12 @@ String MemSize2Str(uint32_t mem)
 
 String HTML_status()
 {
-	uint32_t realSize = ESP.getFlashChipRealSize();
 	uint32_t ideSize = ESP.getFlashChipSize();
+#ifdef ESP8266
+	uint32_t realSize = ESP.getFlashChipRealSize();
+#else
+	uint32_t realSize = ideSize;
+#endif
 	FlashMode_t ideMode = ESP.getFlashChipMode();
 	String out;
 
@@ -3291,7 +3479,7 @@ String HTML_status()
 		out += HTML_tableLine(L("Switch 2", "Концевик 2"), onoff[ini.lang][IsSwitch2Pressed()], "end2");
 
 	out += HTML_section(FLF("Memory", "Память"));
-	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP.getFlashChipId(), HEX));
+	out += HTML_tableLine(L("Flash id", "ID чипа"), String(ESP_getFlashChipId(), HEX));
 	out += HTML_tableLine(L("Real size", "Реально"), MemSize2Str(realSize));
 	out += HTML_tableLine(L("IDE size", "Прошивка"), MemSize2Str(ideSize));
 	if (ideSize != realSize) {
@@ -3303,8 +3491,9 @@ String HTML_status()
 	out += HTML_tableLine(L("Speed", "Частота"), String(ESP.getFlashChipSpeed()/1000000)+SL("MHz", "МГц"));
 	out += HTML_tableLine(L("Mode", "Режим"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 	//out += HTML_tableLine("Host", String(ini.hostname));
-	FSInfo fs_info;
 	out += HTML_section(FLF("SPIFFS", "SPIFFS"));
+#ifdef ESP8266
+	FSInfo fs_info;
 	if (SPIFFS.info(fs_info))
 	{
 		if (fs_info.totalBytes < 10240) mem_problem = 1;
@@ -3315,6 +3504,10 @@ String HTML_status()
 		mem_problem = 1;
 		out += HTML_tableLine(L("Error", "Ошибка"), "<a href=\"/format\">"+SL("Format", "Формат-ть")+"</a>");
 	}
+#else
+	out += HTML_tableLine(L("Size", "Выделено"), MemSize2Str(SPIFFS.totalBytes()));
+	out += HTML_tableLine(L("Used", "Занято"), MemSize2Str(SPIFFS.usedBytes()));
+#endif
 #if MQTT
 	out += HTML_section(FLF("MQTT", "MQTT"));
 	out += HTML_tableLine(L("MQTT", "MQTT"), MQTTstatus(), "mqtt");
@@ -3470,7 +3663,7 @@ void SaveInt(const __FlashStringHelper *id, uint32_t *iniint)
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
 }
-void SaveInt(const __FlashStringHelper *id, int *iniint)
+void SaveInt(const __FlashStringHelper *id, int32_t *iniint)
 {
 	if (!httpServer.hasArg(id)) return;
 	*iniint=atoi(httpServer.arg(id).c_str());
@@ -3573,14 +3766,24 @@ void HTTP_downloadCfg()
 	uint8_t buf[sizeof(ini.password)];
 	memcpy(buf, ini.password, sizeof(ini.password));
 	memset(ini.password, 0, sizeof(ini.password));
+#ifdef ESP8266
 	httpServer.send(200, "application/force-download", (uint8_t*)&ini, sizeof(ini));
+#else
+	httpServer.send(200, "application/force-download", "");
+	httpServer.sendContent((char*)&ini, sizeof(ini));
+	httpServer.client().stop();
+#endif
 	memcpy(ini.password, buf, sizeof(ini.password));
 }
 
 void HTTP_handleUpdate(void)
 {
 	String out;
+#ifdef ESP8266
 	int mem = ESP.getFlashChipRealSize();
+#else
+	int mem = ESP.getFlashChipSize();
+#endif
 
 	HTTP_Activity();
 
@@ -3602,7 +3805,16 @@ void HTTP_handleUpdate(void)
 	out += FL(F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nSettings will be lost, if downgrading to previous version.<br>Default password admin admin.</p>"),
 		F("Mbyte.bin.gz / *_auto.bin.gz.<br>\nНастройки сбрасываются, если прошивается более старая версия.<br>Пароль по умолчанию admin admin.</p>"));
 	out += FLF("<hr><p>Information:<br>", "<hr><p>Информация:<br>");
+#ifdef ESP8266
 	out += ESP.getFullVersion();
+#else
+	out += F("Chip model: ");
+	out += ESP.getChipModel();
+//	out += F("<br>SDK version: ");
+//	out += ESP.getSdkVersion();
+	out += F("<br>IDF version: ");
+	out += esp_get_idf_version();
+#endif
 	#ifdef AUTOMEMSIZE
 	out += F("</p><p>Auto memory size build");
 	#endif
@@ -4297,7 +4509,7 @@ void HTTP_handleReboot(void)
 {
 	HTTP_redirect(String("/"));
 	delay(500);
-	ESP.reset();
+	ESP.restart();
 }
 
 void HTTP_handleFormat(void)
@@ -4310,7 +4522,7 @@ void HTTP_handleFormat(void)
 	SaveSettings(&ini, sizeof(ini));
 	Serial.println(F("SPIFFS formatted. rebooting"));
 	delay(500);
-	ESP.reset();
+	ESP.restart();
 }
 
 const char * const blank_xml = "<xml></xml>";
@@ -4538,8 +4750,12 @@ void HTTP_handleXML(void)
 #endif
 
 	String XML, s;
-	uint32_t realSize = ESP.getFlashChipRealSize();
 	uint32_t ideSize = ESP.getFlashChipSize();
+#ifdef ESP8266
+	uint32_t realSize = ESP.getFlashChipRealSize();
+#else
+	uint32_t realSize = ideSize;
+#endif
 	FlashMode_t ideMode = ESP.getFlashChipMode();
 
 	XML.reserve(1024);
@@ -4579,8 +4795,8 @@ void HTTP_handleXML(void)
 	XML += F("</Presets>");
 
 	XML += F("<ChipInfo>");
-	XML += MakeNode(F("ID"), String(ESP.getChipId(), HEX));
-	XML += MakeNode(F("FlashID"), String(ESP.getFlashChipId(), HEX));
+	XML += MakeNode(F("ID"), String(ESP_getChipId(), HEX));
+	XML += MakeNode(F("FlashID"), String(ESP_getFlashChipId(), HEX));
 	XML += MakeNode(F("RealSize"), MemSize2Str(realSize));
 	XML += MakeNode(F("IdeSize"), MemSize2Str(ideSize));
 	XML += MakeNode(F("Speed"), String(ESP.getFlashChipSpeed() / 1000000) + SL("MHz", "МГц"));
@@ -4704,6 +4920,7 @@ void HTTP_handleLog(void)
 					out += F("after ");
 					switch (e->val)
 					{
+#ifdef ESP8266
 						case REASON_DEFAULT_RST: out += F("power on"); break;
 						case REASON_WDT_RST: out += F("WDT reset"); break;
 						case REASON_EXCEPTION_RST: out += F("exception"); break;
@@ -4711,6 +4928,24 @@ void HTTP_handleLog(void)
 						case REASON_SOFT_RESTART: out += F("soft restart"); break;
 						case REASON_DEEP_SLEEP_AWAKE: out += F("deep sleep"); break;
 						case REASON_EXT_SYS_RST: out += F("external reset"); break;
+#else
+						case ESP_RST_UNKNOWN   : out += F("Reset reason can not be determined.");break;
+						case ESP_RST_POWERON   : out += F("Reset due to power-on event.");break;
+						case ESP_RST_EXT       : out += F("Reset by external pin (not applicable for ESP32)");break;
+						case ESP_RST_SW        : out += F("Software reset via esp_restart.");break;
+						case ESP_RST_PANIC     : out += F("Software reset due to exception/panic.");break;
+						case ESP_RST_INT_WDT   : out += F("Reset (software or hardware) due to interrupt watchdog.");break;
+						case ESP_RST_TASK_WDT  : out += F("Reset due to task watchdog.");break;
+						case ESP_RST_WDT       : out += F("Reset due to other watchdogs.");break;
+						case ESP_RST_DEEPSLEEP : out += F("Reset after exiting deep sleep mode.");break;
+						case ESP_RST_BROWNOUT  : out += F("Brownout reset (software or hardware)");break;
+						case ESP_RST_SDIO      : out += F("Reset over SDIO.");break;
+						case ESP_RST_USB       : out += F("Reset by USB peripheral.");break;
+						case ESP_RST_JTAG      : out += F("Reset by JTAG.");break;
+						case ESP_RST_EFUSE     : out += F("Reset due to efuse error.");break;
+						case ESP_RST_PWR_GLITCH: out += F("Reset due to power glitch detected.");break;
+						case ESP_RST_CPU_LOCKUP: out += F("Reset due to CPU lock up (double exception)");break;
+#endif
 						default: out += F("Unknown"); break;
 					}
 					break;
@@ -4823,7 +5058,17 @@ void GratuitousARP()
 	last_garp_time = millis();
 	while (netif)
 	{
-		etharp_gratuitous(netif);
+		if(netif->hwaddr_len == 6)
+		{
+#if defined(ESP32) && defined(CONFIG_LWIP_TCPIP_CORE_LOCKING)
+// https://github.com/espressif/arduino-esp32/issues/10526
+			if (!sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER)) LOCK_TCPIP_CORE();
+#endif
+			etharp_gratuitous(netif);
+#if defined(ESP32) && defined(CONFIG_LWIP_TCPIP_CORE_LOCKING)
+			if (sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER)) UNLOCK_TCPIP_CORE();
+#endif
+		}
 		netif = netif->next;
 	}
 }
@@ -4857,7 +5102,9 @@ void MotorFailsafe()
 void ProcessMDNS()
 {
 #if MDNSC
+#ifdef ESP8266
 	MDNS.update();
+#endif
 #endif
 }
 
@@ -4884,7 +5131,7 @@ void loop(void)
 	ProcessMDNS();
 
 	if (millis() - last_network_time > 10000)
-		WiFi.setSleepMode(WIFI_MODEM_SLEEP);
+		ESP_setSleepMode(true);
 	if (SLAVE && WiFi_active &&
 		(millis() - last_network_time > SLAVE_SLEEP_TIMEOUT_MS) &&
 		(millis() - lastUARTping < SLAVE_MAX_NO_PING_MS))
@@ -4901,6 +5148,9 @@ void loop(void)
 		endstop_hit = EL_NONE;
 	}
 
+#ifdef ESP32
+	esp_task_wdt_reset();
+#endif
 	delay(10); // this delay enables light sleep mode
 	// static int heap = 65536;
 	// int h;

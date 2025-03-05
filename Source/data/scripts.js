@@ -94,7 +94,7 @@ function UpdateLog()
 		}
 	}
 	// send HTTP GET request
-	request.open("GET", "log?table");
+	request.open("GET", "log?table=1"); // Need =1 while not fixed https://github.com/espressif/arduino-esp32/issues/6759
 	request.send(null);
 }
 
@@ -165,7 +165,7 @@ function GetStatus()
 						if (document.getElementById("pos").innerHTML != document.getElementById("dest").innerHTML)
 						timeout=500;
 						else
-						timeout=5000;
+						timeout=1000;
 					}
 				}
 				timerId = setTimeout('GetStatus()', timeout);
