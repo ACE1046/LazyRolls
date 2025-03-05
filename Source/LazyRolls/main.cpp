@@ -54,7 +54,7 @@ extern "C" {
 #include "lwip/tcpip.h" // gratuitous arp
 }
 
-#define VERSION "0.16 beta"
+#define VERSION "0.16 beta2"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -3223,6 +3223,21 @@ void setup()
 	}
 
 	httpUpdater.setup(&httpServer, update_path, update_username, update_password);
+	Update.onProgress([](size_t progress, size_t total)
+	{
+		static int8_t percent = INT8_MIN;
+#ifdef ESP32
+		esp_task_wdt_reset();
+#endif
+
+		int8_t p = Update.progress() * 100 / Update.size();
+		if (p < percent || p - percent >= 5)
+		{
+			percent = p;
+			Serial.print(p);
+			Serial.println('%');
+		}
+	});
 	httpServer.on("/",         HTTP_handleRoot);
 	httpServer.on("/open",     HTTP_handleOpen);
 	httpServer.on("/close",    HTTP_handleClose);
@@ -4929,21 +4944,21 @@ void HTTP_handleLog(void)
 						case REASON_DEEP_SLEEP_AWAKE: out += F("deep sleep"); break;
 						case REASON_EXT_SYS_RST: out += F("external reset"); break;
 #else
-						case ESP_RST_UNKNOWN   : out += F("Reset reason can not be determined.");break;
-						case ESP_RST_POWERON   : out += F("Reset due to power-on event.");break;
+						case ESP_RST_UNKNOWN   : out += F("Reset reason can not be determined");break;
+						case ESP_RST_POWERON   : out += F("Reset due to power-on event");break;
 						case ESP_RST_EXT       : out += F("Reset by external pin (not applicable for ESP32)");break;
-						case ESP_RST_SW        : out += F("Software reset via esp_restart.");break;
-						case ESP_RST_PANIC     : out += F("Software reset due to exception/panic.");break;
-						case ESP_RST_INT_WDT   : out += F("Reset (software or hardware) due to interrupt watchdog.");break;
-						case ESP_RST_TASK_WDT  : out += F("Reset due to task watchdog.");break;
-						case ESP_RST_WDT       : out += F("Reset due to other watchdogs.");break;
-						case ESP_RST_DEEPSLEEP : out += F("Reset after exiting deep sleep mode.");break;
+						case ESP_RST_SW        : out += F("Software reset via esp_restart");break;
+						case ESP_RST_PANIC     : out += F("Software reset due to exception/panic");break;
+						case ESP_RST_INT_WDT   : out += F("Reset (software or hardware) due to interrupt watchdog");break;
+						case ESP_RST_TASK_WDT  : out += F("Reset due to task watchdog");break;
+						case ESP_RST_WDT       : out += F("Reset due to other watchdogs");break;
+						case ESP_RST_DEEPSLEEP : out += F("Reset after exiting deep sleep mode");break;
 						case ESP_RST_BROWNOUT  : out += F("Brownout reset (software or hardware)");break;
-						case ESP_RST_SDIO      : out += F("Reset over SDIO.");break;
-						case ESP_RST_USB       : out += F("Reset by USB peripheral.");break;
-						case ESP_RST_JTAG      : out += F("Reset by JTAG.");break;
-						case ESP_RST_EFUSE     : out += F("Reset due to efuse error.");break;
-						case ESP_RST_PWR_GLITCH: out += F("Reset due to power glitch detected.");break;
+						case ESP_RST_SDIO      : out += F("Reset over SDIO");break;
+						case ESP_RST_USB       : out += F("Reset by USB peripheral");break;
+						case ESP_RST_JTAG      : out += F("Reset by JTAG");break;
+						case ESP_RST_EFUSE     : out += F("Reset due to efuse error");break;
+						case ESP_RST_PWR_GLITCH: out += F("Reset due to power glitch detected");break;
 						case ESP_RST_CPU_LOCKUP: out += F("Reset due to CPU lock up (double exception)");break;
 #endif
 						default: out += F("Unknown"); break;
