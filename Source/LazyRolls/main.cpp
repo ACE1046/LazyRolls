@@ -54,7 +54,7 @@ extern "C" {
 #include "lwip/tcpip.h" // gratuitous arp
 }
 
-#define VERSION "0.16 beta2"
+#define VERSION "0.15.4"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
