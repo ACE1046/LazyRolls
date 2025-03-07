@@ -3825,8 +3825,8 @@ void HTTP_handleUpdate(void)
 #else
 	out += F("Chip model: ");
 	out += ESP.getChipModel();
-//	out += F("<br>SDK version: ");
-//	out += ESP.getSdkVersion();
+	out += F("<br>Arduino core version: ");
+	out += ESP_ARDUINO_VERSION_STR ;
 	out += F("<br>IDF version: ");
 	out += esp_get_idf_version();
 #endif
