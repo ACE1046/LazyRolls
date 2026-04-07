@@ -39,6 +39,7 @@ http://imlazy.ru/rolls/
 	//#include "driver/gpio.h"
 	//gpio_get_level(gpio_num_t gpio_num);
 	#include "hal/gpio_hal.h"
+	#include "driver/temperature_sensor.h"
 	#define SPIFFS LittleFS
 	#define GPOS GPIO.out_w1ts.val
 	#define GPOC GPIO.out_w1tc.val
@@ -54,13 +55,14 @@ extern "C" {
 #include "lwip/tcpip.h" // gratuitous arp
 }
 
-#define VERSION "0.15.4"
+#define VERSION "0.15.5"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
 #define DAYLIGHT 1 // Sunrise functions
 #define RF 1 // RF receiver support
 #define SPIFFS_AUTO_INIT
+#define SWAP_AB_CD 0
 
 #if FLASH_MAP_SUPPORT
 #define AUTOMEMSIZE
@@ -140,15 +142,22 @@ uint16_t def_step_delay_mks = 1500;
 #define POS_FILE "/position.dat"
 #ifdef ESP8266
 #define PIN_SWITCH 14
+#if SWAP_AB_CD
+#define PIN_A 13
+#define PIN_B 12
+#define PIN_C 5
+#define PIN_D 4
+#else
 #define PIN_A 5
 #define PIN_B 4
 #define PIN_C 13
 #define PIN_D 12
+#endif
 #define PIN_EN 4
 #define PIN_ST 13
 #define PIN_DR 12
 #define PIN_LED 2
-#define PIN_PWM 15
+uint8_t PIN_PWM = 15;
 #else
 #define PIN_SWITCH 7
 #define PIN_A 4
@@ -159,7 +168,8 @@ uint16_t def_step_delay_mks = 1500;
 #define PIN_ST 6
 #define PIN_DR 5
 #define PIN_LED 8
-#define PIN_PWM 4 // ?
+//#define PIN_PWM 4 // ?
+uint8_t PIN_PWM = 4;
 #define PIN_ADC 0 // voltage
 #endif
 #define PIN_ENC_A PIN_C
@@ -189,6 +199,8 @@ uint16_t def_step_delay_mks = 1500;
 #define ADDR_ALL 255
 #define ADDR_DEFAULT 254
 #define MQTT_INFO_SECONDS 1*60 // Send mqtt info (rssi, uptime, etc) every N seconds
+#define MOTOR_OFF_DELAY 2000 // Delay before powering off stepper motor (around 1 sec)
+#define STEPS_BREAKING 25 // Decrease speed on last steps
 
 const int Languages = 2;
 const char ru_ru[] PROGMEM = "Русский";
@@ -235,6 +247,7 @@ uint8_t Slaves_IP[6]; // IPs of slaves after they woke up
 #else
 	WebServer httpServer(80);
 	HTTPUpdateServer httpUpdater;
+	temperature_sensor_handle_t temp_handle = NULL;
 #endif	
 WiFiClient espClient;
 
@@ -1240,6 +1253,11 @@ void IRAM_ATTR MotorOff()
 	}
 }
 
+void IRAM_ATTR MotorStop()
+{
+	if (MOTOR_TYPE_DC) MotorOff();
+}
+
 uint8_t IRAM_ATTR pin2hw_pin(uint8_t pin)
 {
 	if (pin >= ARRAYSIZE(hardware_pins)) return 0;
@@ -1347,7 +1365,7 @@ void Stop(uint8_t address = ADDR_ALL)
 	if (address == ADDR_MASTER || address == ADDR_ALL)
 	{
 		roll_to=position;
-		MotorOff();
+		MotorStop();
 	}
 }
 
@@ -1944,6 +1962,7 @@ void ARDUINO_ISR_ATTR timer1Isr()
 	static uint8_t step = 0;
 	static uint16_t speed = 0;
 	static uint16_t skip = 0;
+	static uint16_t off_delay = 0;
 	static int8_t last_dir = 0;
 	bool dir_up;
 
@@ -1958,14 +1977,25 @@ void ARDUINO_ISR_ATTR timer1Isr()
 
 	if (((skip & 0x0F) == 0) && (position == roll_to))
 	{
-		MotorOff();
-		speed = 0;
-		skip = 10;
-		if (MOTOR_WITH_ENC)
+		if (MOTOR_TYPE_DC)
 		{
-			position += getEncoder();
-			roll_to = position;
-			skip = 3;
+			MotorOff();
+			speed = 0;
+			skip = 10;
+			if (MOTOR_WITH_ENC)
+			{
+				position += getEncoder();
+				roll_to = position;
+				skip = 3;
+			}
+		} else
+		{ // stepper
+			if (off_delay > 0 || off_delay <= MOTOR_OFF_DELAY)
+				off_delay--;
+			else
+				MotorOff();
+			skip = 10;
+			speed = 0;
 		}
 		return; // stopped, do nothing
 	}
@@ -1977,13 +2007,15 @@ void ARDUINO_ISR_ATTR timer1Isr()
 		return;
 	}
 
+	off_delay = MOTOR_OFF_DELAY;
+
 	dir_up=(roll_to < position); // up - true
 
 	bool b = (dir_up && (last_dir==DIR_DN)) || (!dir_up && (last_dir==DIR_UP));
 	if (dir_up) last_dir = DIR_UP; else last_dir = DIR_DN;
 	if (b)
 	{ // reverse
-		MotorOff();
+		MotorStop();
 		speed = 0;
 		skip = 1000; // some delay before reverse
 		return;
@@ -2003,7 +2035,7 @@ void ARDUINO_ISR_ATTR timer1Isr()
 			{ // full open, done
 				roll_to=0;
 				position=0; // zero point found
-				MotorOff();
+				MotorStop();
 				return;
 			} else
 			{ // destination - [partialy] closed
@@ -2018,7 +2050,7 @@ void ARDUINO_ISR_ATTR timer1Isr()
 					endstop_hit_pos = position;
 					endstop_hit = EL_ERROR;  // Set flag, will add event in Log, but not in ISR
 					roll_to=position;
-					MotorOff();
+					MotorStop();
 					return;
 				}
 			}
@@ -2031,7 +2063,7 @@ void ARDUINO_ISR_ATTR timer1Isr()
 		endstop_hit_pos = position;
 		endstop_hit = EL_INFO; // Set flag, will add event in Log, but not in ISR
 		roll_to = position = ini.full_length; // end point found
-		MotorOff();
+		MotorStop();
 		return;
 	}
 
@@ -2074,17 +2106,37 @@ void ARDUINO_ISR_ATTR timer1Isr()
 			{
 				step = (step + 1) & 0x07;
 				if (step == 0) pos_change++;
+				if (roll_to - position < STEPS_BREAKING)
+				{
+					uint16_t new_speed;
+					new_speed = (roll_to - position) * MAX_SPEED / STEPS_BREAKING;
+					new_speed = MAX_SPEED - new_speed;
+					new_speed = new_speed * new_speed / MAX_SPEED;
+					new_speed = MAX_SPEED - new_speed;
+					if (new_speed < speed) speed = new_speed;
+				}
 			}
 			if (speed < MAX_SPEED)
 			{
-				skip = ticks_per_step - 1 + 3 * ticks_per_step * (MAX_SPEED - speed) / MAX_SPEED;
-				speed += (MAX_SPEED - speed) / 200 + 1;
+				skip = ticks_per_step - 1 + 4 * ticks_per_step * (MAX_SPEED - speed) / MAX_SPEED;
+				speed += (MAX_SPEED - speed) / 150 + 1;
 			} else skip = ticks_per_step - 1;
 	}
 	if (!dir_up && pos_change !=0 && switch_ignore_steps>0) switch_ignore_steps--;
 	position += pos_change;
 
-	if (MOTOR_WITH_PWM)
+	if (ini.pinout == PINOUT_DC || ini.pinout == PINOUT_DC_ENC)
+	{
+		if (dir_up ^ ini.reversed)
+		{
+			PIN_PWM = PIN_A;
+		} else
+		{
+			PIN_PWM = PIN_B;
+		}
+	}
+
+	if (MOTOR_TYPE_DC)
 	{
 		if (pwm_phase_high_ticks == 0) GPOC = 1 << PIN_PWM; else // pwm 0%
 		if (pwm_phase_low_ticks  == 0) GPOS = 1 << PIN_PWM; else // pwm 100%
@@ -2104,11 +2156,11 @@ void ARDUINO_ISR_ATTR timer1Isr()
 		case PINOUT_DC_PWM_ENC:
 			if (dir_up ^ ini.reversed)
 			{
-				GPOS = 1 << PIN_A;
+				if (PIN_PWM != PIN_A) GPOS = 1 << PIN_A;
 				GPOC = 1 << PIN_B;
 			} else
 			{
-				GPOS = 1 << PIN_B;
+				if (PIN_PWM != PIN_B) GPOS = 1 << PIN_B;
 				GPOC = 1 << PIN_A;
 			}
 		break;
@@ -2147,7 +2199,7 @@ void AdjustTimerInterval(int step_delay_mks /*= 0*/)
 	timerAlarm(Timer1_Cfg, interval, true, 0);
 #endif
 
-	if (MOTOR_WITH_PWM)
+	if (MOTOR_TYPE_DC)
 	{
 		s = step_delay_mks;
 		if (s >= 100) s = 100;
@@ -2986,7 +3038,7 @@ void ValidateSettings()
 {
 	if (ini.lang<0 || ini.lang>=Languages) ini.lang=0;
 	if (ini.pinout<0 || ini.pinout>=MAX_PINOUT) ini.pinout=0;
-	if (MOTOR_WITH_PWM)
+	if (MOTOR_TYPE_DC)
 	{
 		if (ini.step_delay_mks > 100) ini.step_delay_mks = 100;
 		if (ini.step_delay_mks2> 100) ini.step_delay_mks2= 100;
@@ -3161,9 +3213,21 @@ void setup()
 	pinMode(PIN_LED, OUTPUT);
 	LED_On();
 
+	if (WiFi.getMode() != WIFI_OFF)
+	{
+		WiFi.persistent(true);
+		WiFi.mode(WIFI_OFF);
+	}
+	WiFi.persistent(false);
+
+	Serial.begin(115200);
+	Serial.println();
+	Serial.println(F("Booting..."));
+
 #ifdef ESP32
 	#if CONFIG_IDF_TARGET_ESP32C3
 		#define CONFIG_FREERTOS_NUMBER_OF_CORES 1
+		WiFi.setTxPower(WIFI_POWER_8_5dBm);
 	#endif
 	// enable wathdog
 	esp_task_wdt_config_t twdt_config = {
@@ -3178,18 +3242,18 @@ void setup()
 	// setup ADC, 2.5dB attenuation, 0 mV ~ 1050 mV measurement range for C3 and S2
 	analogSetAttenuation(ADC_2_5db);
 	//analogSetPinAttenuation(PIN_ADC, ADC_2_5db); // not working
+
+	// temperature sensor
+	temp_handle = NULL;
+	temperature_sensor_config_t temp_sensor = {
+		.range_min = -10,
+		.range_max = 80,
+	};
+	if (temperature_sensor_install(&temp_sensor, &temp_handle) != ESP_OK)
+		Serial.println(F("Failed to install temperature sensor"));
+	else if (temperature_sensor_enable(temp_handle) != ESP_OK)
+		Serial.println(F("Failed to enable temperature sensor"));
 #endif
-
-	if (WiFi.getMode() != WIFI_OFF)
-	{
-		WiFi.persistent(true);
-		WiFi.mode(WIFI_OFF);
-	}
-	WiFi.persistent(false);
-
-	Serial.begin(115200);
-	Serial.println();
-	Serial.println(F("Booting..."));
 
 #ifdef ESP8266
 	rst_info *resetInfo;
@@ -3483,6 +3547,13 @@ String HTML_status()
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
 	if (voltage_available)
 		out += HTML_tableLine(L("Power", "Питание"), GetVoltageStr()+SL("V", "В"), "voltage");
+#ifdef ESP32
+	float tsens_out;
+	if (temperature_sensor_get_celsius(temp_handle, &tsens_out) == ESP_OK)
+	{
+		out += HTML_tableLine(L("Temp", "Темп."), String(tsens_out, 1) + "°C", "temp");
+	}
+#endif
 	out += HTML_tableLine(L("<a href=\"/log\" onclick=\"return ShowLog();\">Log</a>",
 		"<a href=\"/log\" onclick=\"return ShowLog();\">Лог</a>"), String((int)elog.Count()), "log_count");
 
@@ -3829,6 +3900,12 @@ void HTTP_handleUpdate(void)
 	out += ESP_ARDUINO_VERSION_STR ;
 	out += F("<br>IDF version: ");
 	out += esp_get_idf_version();
+	float tsens_out;
+	if (temperature_sensor_get_celsius(temp_handle, &tsens_out) == ESP_OK)
+	{
+		out += F("<br>Chip temperature (°C): ");
+		out += String(tsens_out, 1);
+	}
 #endif
 	#ifdef AUTOMEMSIZE
 	out += F("</p><p>Auto memory size build");
@@ -3871,7 +3948,7 @@ void HTTP_saveSettings()
 	SaveInt(F("lang"), &ini.lang);
 	SaveInt(F("pinout"), &ini.pinout);
 	SaveInt(F("reversed"), &ini.reversed);
-	if (MOTOR_WITH_PWM)
+	if (MOTOR_TYPE_DC)
 	{
 		SaveInt(F("pwm"), &ini.step_delay_mks);
 		SaveInt(F("pwm2"), &ini.step_delay_mks2);
@@ -4132,7 +4209,7 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("Step delay 2:", "Время шага 2:"), F("delay2"), String(i2).c_str(), 5);
 	i = ini.step_delay_mks;
 	i2 = ini.step_delay_mks2;
-	if (!MOTOR_WITH_PWM) i = i2 = 100;
+	//if (!MOTOR_WITH_PWM) i = i2 = 100;
 
 	out += HTML_speed(PSTR(""), PSTR(""), i);
 	out += HTML_speed(PSTR(" 2"), PSTR("2"), i2);
@@ -4704,8 +4781,9 @@ void HTTP_handleTest(void)
 	if (httpServer.hasArg("reversed")) ini.reversed=atoi(httpServer.arg("reversed").c_str());
 	if (httpServer.hasArg("pinout")) ini.pinout=atoi(httpServer.arg("pinout").c_str());
 	if (ini.pinout>=MAX_PINOUT) ini.pinout=2;
-	if (MOTOR_WITH_PWM)
+	if (MOTOR_TYPE_DC)
 	{
+		steps = 1200; // more steps for DC motors
 		if (httpServer.hasArg("pwm")) ini.step_delay_mks = atoi(httpServer.arg("pwm").c_str());
 		if (ini.step_delay_mks > 100) ini.step_delay_mks = 100;
 	} else
@@ -4790,6 +4868,13 @@ void HTTP_handleXML(void)
 	XML += MakeNode(F("MQTT"), MQTTstatus());
 	if (voltage_available)
 		XML += MakeNode(F("Voltage"), GetVoltageStr() + SL("V", "В"));
+#ifdef ESP32
+	float tsens_out;
+	if (temperature_sensor_get_celsius(temp_handle, &tsens_out) == ESP_OK)
+	{
+		XML += MakeNode(F("Temp"), String(tsens_out, 1) + "°C");
+	}
+#endif
 	XML += MakeNode(F("Log"), String(elog.Count()));
 	XML += MakeNode(F("Master"), (MASTER ? "yes" : "no"));
 //XML += MakeNode(F("Debug"), payload);

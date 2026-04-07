@@ -154,6 +154,7 @@ function GetStatus()
 						st(this, "end2", 'End2');
 						st(this, "mqtt", 'MQTT');
 						st(this, "voltage", 'Voltage');
+						st(this, "temp", 'Temp');
 						st(this, "led_mode", 'Mode');
 						st(this, "led_level", 'Level');
 						st(this, "lastcode", 'LastCode');
@@ -595,7 +596,7 @@ function PinoutChange()
 	var i = pinout.selectedIndex;
 	if (i<4) ShowEl('po_step'); else HideEl('po_step');
 	if (i==4 || i==5) ShowEl('po_ms'); else HideEl('po_ms');
-	if (i==5 || i==7)
+	if (i>=4 && i<=7)
 	{
 		ShowEl('po_pwm');
 		ShowEl('po_pwm2');
