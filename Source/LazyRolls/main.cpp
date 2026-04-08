@@ -2859,6 +2859,7 @@ void ProcessWiFi()
 	{
 		if (SSID_NOT_EMPTY && (WiFi_AP_disabled || WiFi_attempts < MAX_RECONNECT_ATTEMPS))
 		{
+			WiFi.disconnect();
 			WiFi.begin(ini.ssid, ini.password);
 			Serial.println(F("WiFi failed, retrying."));
 			LED_On();
