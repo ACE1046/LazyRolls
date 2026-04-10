@@ -862,7 +862,7 @@ void UpdateTZ(void)
 uint16_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 {
 	int d, t, utc;
-	if (sun_height < -5 || sun_height > 5) return (uint16_t)-1;
+	if (sun_height < -10 || sun_height > 10) return (uint16_t)-1;
 	utc = getTimeUTC();
 	if (tomorrow) utc += DAY;
 	struct tm *lt = getTimeStruct(utc);
@@ -895,8 +895,10 @@ String PrintSunriseTable()
 	out += F("</th><th>");
 	out += FLF("Sunset", "Закат");
 	out += F("</th></tr>\n");
-	for (int i = 5; i >= -5; i--)
+	const int8_t e[] = { 10, 7, 5, 3, 1, 0, -1, -3, -5, -7, -10 };
+	for (unsigned int n = 0; n < ARRAYSIZE(e); n++)
 	{
+		int i = e[n];
 		out += ("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
 		if (i > 0) out += "+" + String(i);
@@ -4590,10 +4592,8 @@ void HTTP_handleAlarms(void)
 
 	snprintf_P(buf, sizeof(buf),
 		PSTR("const sh_a=[%s];\n" \
-			"a_shs=[5,'+5&deg;',4,'+4&deg;',3,'+3&deg;',2,'+2&deg;',1,'+1&deg;',0,'&nbsp;&nbsp;0&deg;',-1,'−1&deg;',-2,'−2&deg;',-3,'−3&deg;',-4,'−4&deg;',-5,'−5&deg;'];\n" \
 			"a_srs=[%s];\n" \
 			"const dow=[%s];\n" \
-			"const a_spd=[0,'1',1,'2'];\n" \
 			"const m_s=[%s];\n"),
 		actions.c_str(),
 		FLF("'clock', 'sunrise', 'sunset'", "'часы', 'восход', 'закат'"),
