@@ -736,7 +736,7 @@ void SyncNTPTime()
 		lastSync = millis();
 		if (!last_restart_time)
 		{
-			last_restart_time = UNIXTime;
+			last_restart_time = UNIXTime - millis() / 1000;
 			UpdateMQTTInfo();
 		}
 	}
@@ -813,7 +813,11 @@ String TimeToStr(int32_t t)
 String UptimeStr()
 {
 	char buf[9];
-	uint32_t t = millis() / 1000;
+	uint32_t t;
+	if (last_restart_time > 0)
+		t = getTimeUTC() - last_restart_time;
+	else
+		t = millis() / 1000;
 	sprintf_P(buf, PSTR("%dd %02d:%02d"), t/60/60/24, t/60/60%24, t/60%60);
 	return String(buf);
 }
