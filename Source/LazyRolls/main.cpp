@@ -1612,6 +1612,7 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
 	else if (strncmp(str, "reboot", 6) == 0) { ESP.restart(); }
 	else if (strncmp(str, "zero", 4) == 0) { ResetZero(); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
+	else if (strncmp(str, "gotozero", 4) == 0) { ResetZero(); RollTo(0 - ini.up_safe_limit); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
 }
 
 String ReplaceHostname(const char *topic)
@@ -1619,10 +1620,10 @@ String ReplaceHostname(const char *topic)
 	String s;
 	s = String(topic);
 	s.replace("%HOSTNAME%", String(ini.hostname));
-	s.replace("$", "_");
-	s.replace("*", "_");
-	s.replace("+", "_");
-	s.replace("#", "_");
+	s.replace('$', '_');
+	s.replace('*', '_');
+	s.replace('+', '_');
+	s.replace('#', '_');
 	return s;
 }
 
@@ -2409,10 +2410,10 @@ void setup_Button()
 }
 
 #define BTN_ACTIONS FLF("1,'Open',2,'Open/stop',3,'Close',4,'Close/stop',5,'Change',6,'Change/stop',7,'Stop',8,'Change/stop/reverse'," \
-	"9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2'", \
+	"9,'Preset 1',10,'Preset 2',11,'Preset 3',12,'Preset 4',13,'Preset 5',14,'Preset 1/2',15,'Reset zero',", \
 	"1,'Открыть',2,'Открыть/стоп',3,'Закрыть',4,'Закрыть/стоп',5,'Наоборот',6,'Наоборот/стоп',7,'Стоп',8,'Наоборот/стоп/обратно'," \
-	"9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2'")
-enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2 };
+	"9,'Позиция 1',10,'Позиция 2',11,'Позиция 3',12,'Позиция 4',13,'Позиция 5',14,'Позиция 1/2',15,'Сброс нуля'")
+enum eBTN_ACTIONS { BA_OPEN = 1, BA_OPEN_STOP, BA_CLOSE, BA_CLOSE_STOP, BA_CHANGE, BA_CHANGE_STOP, BA_STOP, BA_AUTO, BA_P1, BA_P2, BA_P3, BA_P4, BA_P5, BA_P1_P2, BA_ZERO };
 
 void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, uint8_t uart_cmd, bool speed2)
 {
@@ -2486,6 +2487,12 @@ void ButtonAction(uint8_t action, uint8_t addr_bitmap, uint8_t address, uint8_t 
 				action = (position > ini.full_length/2 ? BA_OPEN : BA_CLOSE);
 		}
 		if (action == BA_P1_P2) action = (position == ini.preset[0] ? BA_P2 : BA_P1);
+		if (action == BA_ZERO)
+		{
+			ResetZero();
+			RollTo(0 - ini.up_safe_limit);
+			elog.Add(EI_Cmd_Zero, EL_INFO, ES_BUTTON); 
+		}
 
 		for (address=0; address <= MAX_SLAVE; address++) if (slave[address])
 		{
@@ -2557,7 +2564,7 @@ bool rf_repeat = 0;
 
 // 0, 'None', 101, 'Open', 20, '20%', 40, '40%', 60, '60%', 80, '80%', 100, 'Close', 111, 'Preset 1', 112, 'Preset 2', 113, 'Preset 3',
 // 114, 'Preset 4', 115, 'Preset 5',102, 'Open/Close', 103, 'Stop', 104, 'Blink',
-// 105, 'Button 1 Click', 106, 'Button 2 Click', 107, 'Button 1 Long', 108, 'Button 2 Long'
+// 105, 'Button 1 Click', 106, 'Button 2 Click', 107, 'Button 1 Long', 108, 'Button 2 Long', 109, 'Reset zero'
 
 void RF_Action(uint8_t action, uint8_t flags)
 {
@@ -2581,6 +2588,7 @@ void RF_Action(uint8_t action, uint8_t flags)
 	if (action == 108) { ButtonLongClick(2, ADDR_DEFAULT); elog.Add(EI_Cmd_LClick2, EL_INFO, ES_RF); } else
 	if (action == 103) { Stop(ADDR_ALL); elog.Add(EI_Cmd_Stop, EL_INFO, ES_RF); } else
 	if (action == 104) LED_Blink(); else
+	if (action == 109) { ResetZero(); RollTo(0 - ini.up_safe_limit); elog.Add(EI_Cmd_Zero, EL_INFO, ES_RF); } else
 	if (action > 0 && action < 100) { ToPercent(action, ADDR_ALL, speed); elog.Add(EI_Cmd_Percent, EL_INFO, ES_RF); } else
 	if (action > 110 && action <= 110+MAX_PRESETS) { ToPreset(action-110, ADDR_ALL, speed); elog.Add(EI_Cmd_Preset, EL_INFO, ES_RF); }
 }
@@ -2772,9 +2780,9 @@ void RF_handleHTTP()
 
 	out += F("<script>\nconst opts1 = ");
 	out += FLF("[0,'None',101,'Open',20,'20%',40,'40%',60,'60%',80,'80%',100,'Close',111,'Preset 1',112,'Preset 2',113,'Preset 3',114,'Preset 4',115,'Preset 5'," \
-		"102,'Open/Close',103,'Stop',104,'Blink',105,'Button 1',106,'Button 2',107,'Button 1 Long',108,'Button 2 Long'];\n",
+		"102,'Open/Close',103,'Stop',104,'Blink',105,'Button 1',106,'Button 2',107,'Button 1 Long',108,'Button 2 Long',109,'Reset zero'];\n",
 			   "[0,'Нет',101,'Открыть',20,'20%',40,'40%',60,'60%',80,'80%',100,'Закрыть',111,'Пресет 1',112,'Пресет 2',113,'Пресет 3',114,'Пресет 4',115,'Пресет 5'," \
-		"102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть',105,'Кнопка 1',106,'Кнопка 2',107,'Кнопка 1 длинное',108,'Кнопка 2 длинное'];\n");
+		"102,'Открыть/Закрыть',103,'Стоп',104,'Мигнуть',105,'Кнопка 1',106,'Кнопка 2',107,'Кнопка 1 длинное',108,'Кнопка 2 длинное',109,'Сброс нуля'];\n");
 	out += F("const spds = [");
 	out += BTN_SPEED;
 	out += F("];\n");
@@ -4784,6 +4792,13 @@ void HTTP_handleSet(void)
 	{
 		elog.Add(EI_Cmd_Zero, EL_INFO, ES_HTTP);
 		ResetZero();
+		Return200();
+	}
+	else if (httpServer.hasArg("gotozero"))
+	{
+		elog.Add(EI_Cmd_Zero, EL_INFO, ES_HTTP);
+		ResetZero();
+		RollTo(0 - ini.up_safe_limit);
 		Return200();
 	}
 	else if (httpServer.hasArg("slave"))
