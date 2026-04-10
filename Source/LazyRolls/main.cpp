@@ -899,20 +899,20 @@ String PrintSunriseTable()
 	for (unsigned int n = 0; n < ARRAYSIZE(e); n++)
 	{
 		int i = e[n];
-		out += ("<tr><td>");
+		out += F("<tr><td>");
 		out += FLF("Horizon ", "Горизонт ");
 		if (i > 0) out += "+" + String(i);
 		if (i < 0) out += "−" + String(-i);
 		if (i != 0) out += ("&deg;");
 		out += F("</td><td>");
 		out += TimeToStr(GetSunTime(i, 1));
-		out += ("</td><td>");
+		out += F("</td><td>");
 		out += TimeToStr(GetSunTime(i, 0));
-		out += ("</td><td>");
+		out += F("</td><td>");
 		out += TimeToStr(GetSunTime(i, 1, true));
-		out += ("</td><td>");
+		out += F("</td><td>");
 		out += TimeToStr(GetSunTime(i, 0, true));
-		out += ("</td></tr>\n");
+		out += F("</td></tr>\n");
 	}
 	out += ("</table>\n");
 	return out;
@@ -4180,7 +4180,7 @@ void HTTP_handleSettings(void)
 
 	out += F("<table>\n");
 	out += HTML_save();
-	out += "<tr><td>";
+	out += F("<tr><td>");
 	out += FLF("Language: ", "Язык: ");
 	out += F("</td><td><select id=\"lang\" name=\"lang\">\n");
 	for (int i=0; i < Languages; i++)
