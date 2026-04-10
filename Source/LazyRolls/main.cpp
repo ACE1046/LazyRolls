@@ -49,6 +49,7 @@ http://imlazy.ru/rolls/
 #endif
 #include <WiFiUdp.h>
 #include <DNSServer.h>
+#include <time.h>
 #include "settings.h"
 extern "C" {
 #include "lwip/etharp.h" // gratuitous arp
@@ -347,6 +348,8 @@ struct {
 	ip4_addr ping_ip; // ip address for pinger
 	ip_slave_type ip_slaves[MAX_IP_SLAVE]; // ip slaves list
 	uint8_t save_pos_to_flash; // save current position
+	uint16_t city; // selected city
+	char posix_tz[45]; // POSIX format timezone
 } ini;
 
 // language functions
@@ -420,7 +423,6 @@ void ButtonClick(uint8_t btnnumber, uint8_t address);
 void ButtonLongClick(uint8_t btnnumber, uint8_t address);
 void WiFi_On();
 void WiFi_Off();
-uint32_t getTime();
 uint32_t getTimeUTC();
 String MakeNode(const __FlashStringHelper *name, String val);
 void CalcAlarmTimes();
@@ -745,10 +747,30 @@ void SyncNTPTime()
 #endif
 }
 
-uint32_t getTime()
+struct tm *getTimeStruct(uint32_t utc = 0)
+{
+	struct tm *lt;
+	time_t t = utc;
+	if (!ini.posix_tz[0])
+	{
+		if (t == 0)	t = UNIXTime + (millis() - lastSync)/1000;
+		t += ini.timezone*60;
+		if (lastSync == 0) t = 0;
+		lt = gmtime(&t);
+	}
+	else
+	{
+		if (t == 0)	t = getTimeUTC();
+		lt = localtime(&t);
+	}
+	return lt;
+}
+
+uint32_t getTime(uint32_t utc = 0)
 {
 	if (lastSync == 0) return 0;
-	return UNIXTime+ini.timezone*60 + (millis() - lastSync)/1000;
+	struct tm *lt = getTimeStruct(utc);
+	return lt->tm_hour * 60 * 60 + lt->tm_min * 60 + lt->tm_sec;
 }
 
 uint32_t getTimeUTC()
@@ -760,9 +782,25 @@ uint32_t getTimeUTC()
 String TimeStr()
 {
 	char buf[9];
-	uint32_t t=getTime();
-	sprintf_P(buf, PSTR("%02d:%02d:%02d"), t/60/60%24, t/60%60, t%60);
+	struct tm *lt = getTimeStruct();
+	sprintf_P(buf, PSTR("%02d:%02d:%02d"), lt->tm_hour, lt->tm_min, lt->tm_sec);
 	return String(buf);
+}
+
+String DateStr()
+{
+	char buf[11];
+	struct tm *lt = getTimeStruct();
+	sprintf_P(buf, PSTR("%02d.%02d.%04d"), lt->tm_mday, lt->tm_mon + 1, lt->tm_year + 1900);
+	return String(buf);
+}
+
+String TzStr()
+{
+	if (!ini.posix_tz[0]) return "";
+	time_t t = getTimeUTC();
+	struct tm *lt = localtime(&t);
+	return tzname[lt->tm_isdst];
 }
 
 String TimeToStr(int32_t t)
@@ -770,35 +808,6 @@ String TimeToStr(int32_t t)
 	char buf[6];
 	sprintf_P(buf, PSTR("%02d:%02d"), t/60%24, t%60);
 	return String(buf);
-}
-
-void Time2YMD(uint32_t t, int &year, int &month, int &day)
-{
-	uint32_t days;
-	uint8_t leap = 2;
-	const uint32_t day_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-
-	t /= DAY;
-	year = 1970;
-	month = 1;
-	while(1)
-	{
-		days = 365;
-		if (!leap) days++;
-		if (t < days) break;
-		t -= days;
-		year++;
-		leap = (leap + 1) % 4;
-	}
-	while (1)
-	{
-		uint32_t dm = day_month[month-1];
-		if (!leap && month == 2) dm++; // Feb in leap year
-		if (t < dm) break;
-		month++;
-		t -= dm;
-	}
-	day = t + 1;
 }
 
 String UptimeStr()
@@ -824,9 +833,22 @@ const __FlashStringHelper* DoWName(int d)
 	return F("");
 }
 
-int DayOfWeek(uint32_t time)
+int DayOfWeek()
 {
-	return ((time / DAY) + 3) % 7;
+	struct tm *lt = getTimeStruct();
+	return (lt->tm_wday + 6) % 7;  // convert from 0=sunday to 0=monday 
+}
+
+void UpdateTZ(void)
+{
+	setenv("TZ", ini.posix_tz, 1);
+	tzset();
+	if (!ini.posix_tz[0])
+	{
+		_daylight = 0;
+		_timezone = ini.timezone * 60;
+		return;
+	}
 }
 
 // ===================== Daylight =============================
@@ -835,13 +857,18 @@ int DayOfWeek(uint32_t time)
 
 uint16_t GetSunTime(int sun_height, int sunrise, bool tomorrow = false)
 {
-	int y, m, d;
+	int d, t, utc;
 	if (sun_height < -5 || sun_height > 5) return (uint16_t)-1;
-	Time2YMD(getTime(), y, m, d);
-	d = computeDayOfYear(y, m, d);
+	utc = getTimeUTC();
+	if (tomorrow) utc += DAY;
+	struct tm *lt = getTimeStruct(utc);
+	
+	d = computeDayOfYear(lt->tm_year, lt->tm_mon+1, lt->tm_mday);
 	ZENITH = FROMFLOAT(-.83f + sun_height);
-	if (tomorrow) d++;
-	return calculateSunriseSunset(d, ini.lat, ini.lng, ini.timezone, 0, sunrise);
+	t = calculateSunriseSunset(d, ini.lat, ini.lng, 0, 0, sunrise);
+	utc = utc / DAY;
+	utc = utc * DAY + t * 60;
+	return getTime(utc) /60 % (24 * 60); // in minutes from midnight
 }
 
 String PrintSunriseTable()
@@ -3051,7 +3078,7 @@ void ValidateSettings()
 		if (ini.step_delay_mks >= 65000) ini.step_delay_mks = def_step_delay_mks;
 		if (ini.step_delay_mks2>= 65000) ini.step_delay_mks2= def_step_delay_mks;
 	}
-	if (ini.timezone<-11*60 || ini.timezone>=14*60) ini.timezone=0;
+	if (ini.timezone != -1000 && (ini.timezone<-11*60 || ini.timezone>=14*60)) ini.timezone=0;
 	if (ini.full_length<5 || ini.full_length>999999) ini.full_length=10000;
 	if (ini.switch_reversed>1) ini.switch_reversed=1;
 	if (ini.switch2_reversed>1) ini.switch2_reversed=1;
@@ -3336,6 +3363,7 @@ void setup()
 
 	SetupMotorPins();
 	MotorOff();
+	UpdateTZ();
 
 	setup_OTA();
 	setup_NTP();
@@ -3539,10 +3567,8 @@ String HTML_status()
 	out += HTML_section(FLF("Status", "Статус"));
 	out += HTML_tableLine(L("Version", "Версия"), VERSION);
 	out += HTML_tableLine(L("IP", "IP"), WiFi.localIP().toString());
-	if (lastSync==0)
-		out += HTML_tableLine(L("Time", "Время"), SL("unknown", "хз"), "time");
-	else
-		out += HTML_tableLine(L("Time", "Время"), TimeStr() + " [" + DoWName(DayOfWeek(getTime())) +"]", "time");
+	out += HTML_tableLine(L("Date", "Дата"), ((lastSync == 0) ? SL("unknown", "хз") : DateStr() + " [" + DoWName(DayOfWeek()) + "]"), "date");
+	out += HTML_tableLine(L("Time", "Время"), ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " " + TzStr()), "time");
 
 	out += HTML_tableLine(L("Uptime", "Аптайм"), UptimeStr(), "uptime");
 	out += HTML_tableLine(L("RSSI", "RSSI"), String(WiFi.RSSI())+SL(" dBm", " дБм"), "RSSI");
@@ -3958,6 +3984,8 @@ void HTTP_saveSettings()
 		SaveInt(F("delay2"), &ini.step_delay_mks2);
 	}
 	SaveInt(F("timezone"), &ini.timezone);
+	SaveInt(F("city"), &ini.city);
+	SaveString(F("tz"), ini.posix_tz, sizeof(ini.posix_tz));
 	SaveInt(F("length"), &ini.full_length);
 	SaveInt(F("switch"), &ini.switch_reversed);
 	SaveInt(F("switch2"), &ini.switch2_reversed);
@@ -4034,6 +4062,7 @@ void HTTP_saveSettings()
 	FillStepsTable();
 	AdjustTimerInterval();
 	SetupMotorPins();
+	UpdateTZ();
 	CalcAlarmTimes();
 
 	if(WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)
@@ -4176,11 +4205,19 @@ void HTTP_handleSettings(void)
 	out += HTML_editString(FLF("NTP-server:", "NTP-сервер:"),F("ntp"),     ini.ntpserver,sizeof(ini.ntpserver)-1);
 	out += F("<tr><td>");
 	out += FLF("Timezone: ", "Пояс: ");
-	out += F("</td><td><select id=\"timezone\" name=\"timezone\">\n");
+	out += F("</td><td><select id=\"timezone\" name=\"timezone\" onchange=\"UTCSelected();\">\n");
 	out += F("</select></td></tr>\n");
 	out += F("<script>AddOption('timezone', tzs, ");
 	out += ini.timezone;
 	out += F(");</script>\n");
+
+	out += F("<tr><td>");
+	out += FLF("City:", "Город:");
+	out += F("</td><td><select id=\"city\" name=\"city\" onchange=\"CitySelected();\">\n</select></td></tr>\n<script>AddCities(");
+	out += ini.city;
+	out += F(");</script>\n");
+
+	out += HTML_editString(FLF("POSIX tz:", "POSIX tz:"), F("tz"), ini.posix_tz, sizeof(ini.posix_tz)-1);
 
 	out += HTML_section(FLF("Motor", "Мотор"));
 	out += F("<tr><td>");
@@ -4830,6 +4867,8 @@ String MakeNode(const __FlashStringHelper *name, String val)
 {
 	char buf[128], buf2[16];
 	strcpy_P(buf2, (char*)name);
+	val.replace('<', '[');
+	val.replace('>', ']');
 	snprintf_P(buf, sizeof(buf),PSTR("<%s>%s</%s>"), buf2, val.c_str(), buf2);
 	return buf;
 }
@@ -4863,7 +4902,8 @@ void HTTP_handleXML(void)
 	s.replace(F(">"), F("&gt;"));
 	XML += MakeNode(F("Name"), s);
 	XML += MakeNode(F("Hostname"), String(ini.hostname));
-	XML += MakeNode(F("Time"), ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " [" + DoWName(DayOfWeek(getTime())) + "]"));
+	XML += MakeNode(F("Date"), ((lastSync == 0) ? SL("unknown", "хз") : DateStr() + " [" + DoWName(DayOfWeek()) + "]"));
+	XML += MakeNode(F("Time"), ((lastSync == 0) ? SL("unknown", "хз") : TimeStr() + " " + TzStr()));
 	XML += MakeNode(F("UpTime"), UptimeStr());
 	XML += MakeNode(F("RSSI"), String(WiFi.RSSI()) + SL(" dBm", " дБм"));
 	XML += MakeNode(F("MQTT"), MQTTstatus());
@@ -4931,15 +4971,9 @@ void HTTP_handleXML(void)
 
 void date2str(char* buf, uint32_t t)
 {
-	int year, month, day, hour, minute, sec;
+	struct tm *lt = getTimeStruct(t);
 
-	t += ini.timezone*60;
-	sec = t % 60;
-	minute = (t / 60) % 60;
-	hour = (t / (60*60)) % 24;
-	Time2YMD(t, year, month, day);
-	sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, sec);
-	//return String(year)+"."+String(month)+"."+String(t+1);
+	sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec);
 }
 
 #define STR_(X) #X
@@ -5098,7 +5132,7 @@ void Scheduler()
 
 	t = getTime();
 	if (t == 0) return;
-	dayofweek = DayOfWeek(t); // 0 - monday
+	dayofweek = DayOfWeek(); // 0 - monday
 	t=t % DAY; // time from day start
 	t=t/60; // in minutes
 
