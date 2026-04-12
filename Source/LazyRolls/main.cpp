@@ -56,7 +56,7 @@ extern "C" {
 #include "lwip/tcpip.h" // gratuitous arp
 }
 
-#define VERSION "0.15.5"
+#define VERSION "0.15.6"
 #define MQTT 1 // MQTT & HA functionality
 #define ARDUINO_OTA 1 // Firmware update from Arduino IDE
 #define MDNSC 1 // mDNS responder. Required for ArduinoIDE web port discovery
@@ -200,7 +200,7 @@ uint8_t PIN_PWM = 4;
 #define ADDR_ALL 255
 #define ADDR_DEFAULT 254
 #define MQTT_INFO_SECONDS 1*60 // Send mqtt info (rssi, uptime, etc) every N seconds
-#define MOTOR_OFF_DELAY 2000 // Delay before powering off stepper motor (around 1 sec)
+#define MOTOR_OFF_DELAY 10000 // Delay before powering off stepper motor (around 1 sec)
 #define STEPS_BREAKING 25 // Decrease speed on last steps
 
 const int Languages = 2;
@@ -350,6 +350,7 @@ struct {
 	uint8_t save_pos_to_flash; // save current position
 	uint16_t city; // selected city
 	char posix_tz[45]; // POSIX format timezone
+	uint8_t off_delay; // 5 sec stepper motor off delay
 } ini;
 
 // language functions
@@ -1158,6 +1159,7 @@ bool IsIPMaster()
 #define PINOUT_DC_PWM_ENC 7
 
 #define MOTOR_TYPE_DC (ini.pinout == PINOUT_DC || ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
+#define MOTOR_TYPE_STEPPER (ini.pinout <= PINOUT_SD)
 #define MOTOR_WITH_PWM (ini.pinout == PINOUT_DC_PWM || ini.pinout == PINOUT_DC_PWM_ENC)
 #define MOTOR_WITH_ENC (ini.pinout == PINOUT_DC_ENC || ini.pinout == PINOUT_DC_PWM_ENC)
 
@@ -1289,6 +1291,7 @@ void IRAM_ATTR MotorOff()
 void IRAM_ATTR MotorStop()
 {
 	if (MOTOR_TYPE_DC) MotorOff();
+	if (ini.off_delay == 0) MotorOff(); // no delay, stop immediately
 }
 
 uint8_t IRAM_ATTR pin2hw_pin(uint8_t pin)
@@ -1612,7 +1615,7 @@ void mqtt_callback(char* topic, uint8_t* payload, unsigned int len)
 	else if (strncmp(str, "endstop", 7) == 0) { virtual_endstop_hit = 1; }
 	else if (strncmp(str, "reboot", 6) == 0) { ESP.restart(); }
 	else if (strncmp(str, "zero", 4) == 0) { ResetZero(); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
-	else if (strncmp(str, "gotozero", 4) == 0) { ResetZero(); RollTo(0 - ini.up_safe_limit); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
+	else if (strncmp(str, "gotozero", 8) == 0) { ResetZero(); RollTo(0 - ini.up_safe_limit); elog.Add(EI_Cmd_Zero, EL_INFO, ES_MQTT); }
 }
 
 String ReplaceHostname(const char *topic)
@@ -2024,7 +2027,7 @@ void ARDUINO_ISR_ATTR timer1Isr()
 			}
 		} else
 		{ // stepper
-			if (off_delay > 0 || off_delay <= MOTOR_OFF_DELAY)
+			if (off_delay > 0 && off_delay <= MOTOR_OFF_DELAY)
 				off_delay--;
 			else
 				MotorOff();
@@ -3918,7 +3921,7 @@ void HTTP_handleUpdate(void)
 	out += F("<section class=\"main\" id=\"main\">\n<p>");
 	out += FL(F("Firmware:"), F("Прошивка:"));
 	out += F("</p>\n<form method='POST' action='/update2' enctype='multipart/form-data'>" \
-		"<input type='file' accept='.bin,.bin.gz' name='firmware'>" \
+		"<input type='file' accept='.bin,.gz' name='firmware'>" \
 		"<input type='submit' value='");
 	out += FL(F("Update Firmware"), F("Обновить прошивку"));
 	out += F("'></form>\n<p>");
@@ -4057,6 +4060,7 @@ void HTTP_saveSettings()
 	SaveString(F("ap_pswd"), ini.ap_pswd, sizeof(ini.ap_pswd));
 	ini.ping_enabled = httpServer.hasArg("ping_en");
 	ini.save_pos_to_flash = httpServer.hasArg("save_pos");
+	ini.off_delay = httpServer.hasArg("off_delay");
 	SaveIP(IP_ID("ping_ip"),  &ini.ping_ip);
 	SaveInt(F("ping_act"), &ini.ping_act);
 
@@ -4271,6 +4275,8 @@ void HTTP_handleSettings(void)
 	out += HTML_hint(SL(F("Help:"), F("Помощь:")) + " <a href=\"http://imlazy.ru/rolls/motor.html\">imlazy.ru/rolls/motor.html</a>");
 	out += HTML_test(FLF("Normal", "Обычная"), 1);
 	out += HTML_test(FLF("Speed 2", "Скорость 2"), 2);
+	out += HTML_addCheckbox(L("5-second stepper motor off-delay", "Задержка отключения шагового мотора в 5 сек"), "off_delay", ini.off_delay);
+	out += HTML_hint(FLF("(not recommended, unless needed)", "(не рекомендуется без необходимости)"));
 
 	out += HTML_section(FLF("Curtain", "Штора"));
 	out += HTML_steps(SL(F("Length:"), F("Длина:")), "length", ini.full_length, "length");
@@ -4809,6 +4815,19 @@ void HTTP_handleSet(void)
 		ExecuteSlaveCommand(cmd, val, ES_HTTP_MASTER);
 		Return200();
 	}
+	// else if (httpServer.hasArg("sleep"))
+	// {
+	// 	uint32_t sleepTimeMs = 10000;
+	// 	wifi_station_disconnect();
+	// 	wifi_set_opmode_current(NULL_MODE); // Switch to station mode
+	// 	wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+	// 	wifi_fpm_open(); // Enables force sleep
+	// 	// Wake up on GPIO2 (optional)
+	// 	// gpio_pin_wakeup_enable(GPIO_ID_PIN(2), GPIO_PIN_INTR_LOLEVEL); 
+	// 	wifi_fpm_do_sleep(sleepTimeMs * 1000); // Time in microseconds
+	// 	delay(sleepTimeMs + 1); // Delay must be > sleep time
+	// 	wifi_station_connect();
+	// }
 	else if (httpServer.hasArg("slave_ip"))
 	{
 		char ip = atoi(httpServer.arg("slave_ip").c_str());
@@ -5230,7 +5249,7 @@ void GratuitousARP()
 void MotorFailsafe()
 { // Shut down motor after some time of work in case of encoder fail or stall
 	static uint32_t last_idle, last_move;
-	static int last_pos = 0;
+	static int last_pos = -1;
 	if (MOTOR_WITH_ENC)
 	{
 		if (position == roll_to)
@@ -5244,11 +5263,28 @@ void MotorFailsafe()
 			last_pos = position;
 			return;
 		}
-		if ((millis() - last_idle > 3 * 60 * 1000) || //  3 min of continuous work
+		if ((millis() - last_idle > 3L * 60 * 1000) || //  3 min of continuous work
 			(millis() - last_move > 2 * 1000)) // 2 seconds of stall
 		{
 			Stop(ADDR_MASTER);
+			MotorOff();
 			elog.Add(EI_Stall, EL_ERROR, 0);
+		}
+	}
+	else if (MOTOR_TYPE_STEPPER)
+	{
+		if (position == roll_to) last_idle = millis();
+		if (position != roll_to) last_move = millis();
+		if (millis() - last_idle > 10L * 60 * 1000) // 10 min of continuous work
+		{
+			Stop(ADDR_MASTER);
+			elog.Add(EI_Stall, EL_ERROR, 0);
+			MotorOff();
+		}
+		if (millis() - last_move > 7 * 1000) // every 7 seconds after stop
+		{
+			last_move = millis();
+			MotorOff();
 		}
 	}
 }
