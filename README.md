@@ -11,7 +11,7 @@ Automatic motorized roller blinds project.
 Описание проекта: [https://mysku.club/blog/diy/62110.html](https://mysku.club/blog/diy/62110.html)\
 Файлы для печати: [https://www.thingiverse.com/thing:2857899](https://www.thingiverse.com/thing:2857899)\
 Видео работы: [https://www.youtube.com/watch?v=lvBh_m7pOAI](https://www.youtube.com/watch?v=lvBh_m7pOAI)\
-Альтернативные корпуса, доп. материалы по проекту от Samos: [https://samoswall.github.io/lazyrolls-additional-materials/](https://samoswall.github.io/lazyrolls-additional-materials/)
+Альтернативные корпуса: [https://samoswall.github.io/lazyrolls-additional-materials/](https://samoswall.github.io/lazyrolls-additional-materials/)
 
 ### Плагины для систем умного дома
 [Domoticz](https://github.com/ACE1046/LazyRollsDomoticz)\
